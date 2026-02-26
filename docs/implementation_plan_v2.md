@@ -7,13 +7,13 @@
 
 | # | Name | Status | Notes |
 |---|------|--------|-------|
-| 0 | Git init | ⏳ pending | |
-| 1 | Layout schematic plot | ⏳ pending | |
-| 2 | Mode B flow-flow BC | ⏳ pending | |
-| 3 | Design-from-targets sweep | ⏳ pending | |
-| 4 | Spatial comparison plot | ⏳ pending | |
-| 5 | Robustness in evaluate_candidate | ⏳ pending | |
-| 6 | Pareto front plots | ⏳ pending | |
+| 0 | Git init | ✅ complete | Initial commit 7b9beb9 |
+| 1 | Layout schematic plot | ✅ complete | `plot_layout_schematic`; serpentine top-view with arc turns |
+| 2 | Mode B flow-flow BC | ✅ complete | `--Qo` CLI flag; `Qo_in_mlhr` kwarg; `derived_Po_in_mbar` output |
+| 3 | Design-from-targets sweep | ✅ complete | `run_design_search`; `stepgen design`; template YAML |
+| 4 | Spatial comparison plot | ✅ complete | 3-panel plot; float position support; saved by `stepgen compare` |
+| 5 | Robustness in evaluate_candidate | ✅ complete | 9-pt sweep; window/margin/class fields |
+| 6 | Pareto front plots | ⏳ deferred | `plot_pareto` already exists; waits on robustness-in-design-search integration |
 
 ---
 
@@ -157,14 +157,45 @@ User picks their throughput/window tradeoff visually.
 
 | Date | Step | Action | Result |
 |------|------|--------|--------|
-| — | — | Plan created | — |
+| 2026-02-26 | 0 | `git init` + initial commit | commit 7b9beb9; 100 files, 10045 insertions |
+| 2026-02-26 | 1 | Added `plot_layout_schematic` to `plots.py` | serpentine top-view with filled arc turns; 17 plot tests pass |
+| 2026-02-26 | 1 | Updated `_cmd_report` in `cli.py` | `layout_schematic.png` saved alongside 5 existing plots |
+| 2026-02-26 | 2 | Added `Qo_in_mlhr` to `OperatingConfig`, updated `_parse_operating` | config.py; YAML Qo_in_mlhr optional field |
+| 2026-02-26 | 2 | Added `_mode_b_derive_po` + `Qo_in_mlhr` kwarg to `evaluate_candidate` | sweep.py; `derived_Po_in_mbar` returned when Mode B active |
+| 2026-02-26 | 2 | Added `--Qo` arg to `simulate` and `sweep` CLI subparsers | cli.py; 6 Mode B tests added to test_sweep.py |
+| 2026-02-26 | 3 | Added `DesignSearchSpec` dataclass hierarchy to `config.py` | DesignTargets, DesignHardConstraints, DesignSoftConstraints, SweepRanges |
+| 2026-02-26 | 3 | Added `load_design_search(path)` to `config.py` | YAML parser for design search spec |
+| 2026-02-26 | 3 | Created `stepgen/design/design_search.py` | `run_design_search(spec)→DataFrame`; Mcl derived from footprint; junction from target_droplet_um |
+| 2026-02-26 | 3 | Added `stepgen design` CLI subcommand and `plot_design_results(df)` | cli.py, plots.py |
+| 2026-02-26 | 3 | Created `examples/design_search_template.yaml` | 96-candidate smoke test passes in ~12 s |
+| 2026-02-26 | 3 | Created `tests/test_design_search.py` | 18 tests covering geometry derivation, Mcl_max, run_design_search, YAML loading |
+| 2026-02-26 | 4 | Added `plot_spatial_comparison` to `plots.py` | 3 panels: pressure / diameter / frequency |
+| 2026-02-26 | 4 | Updated `position` column in `experiments.py` to float | accepts int index OR float 0-1 fraction |
+| 2026-02-26 | 4 | `_cmd_compare` saves `spatial_comparison.png` | uses first (Po,Qw) operating point |
+| 2026-02-26 | 5 | Added `_compute_robustness_fields` + `compute_robustness=False` flag | sweep.py; 9-pt Po grid; window_width_mbar, margins, class |
+| 2026-02-26 | all | Final test run | **287 tests, all pass** (248 original + 39 new); commit e10f625 |
 
 ---
+
+## Deviations / Implementation Notes
+
+- **Step 2 (Mode B)**: `--mode` flag not added (unnecessary — Mode B is triggered purely by `--Qo`
+  being non-None, matching the "zero-risk, no matrix changes" approach from the plan)
+- **Step 3 junction derivation**: assumed square junction (exit_width = exit_depth); underdetermined
+  without an additional constraint — square is the simplest sensible default
+- **Step 3 Mcl_max**: computed via `_max_mcl_for_footprint()` which mirrors `compute_layout` algebra
+  but solves for the maximum number of lanes first, then Mcl = lanes × lane_length
+- **Step 3 error rows**: candidates that fail rung-resistance validation (e.g. depth/width > limit)
+  are caught and recorded as error rows with NaN numeric fields and `soft_flags="solver_error"`
+- **Step 4 position column**: changed from `int` to `float` dtype; `test_position_cast_to_int`
+  renamed `test_position_is_numeric`; fractional and integer values both round-trip correctly
+- **Step 6 (Pareto)**: `plot_pareto()` already existed before this roadmap; deferred until
+  `compute_robustness=True` is wired into `run_design_search` (enabling `max_window_width` objective)
 
 ## Notes / Decisions
 
 - Mode B caveat: iterative Q_oil will be ~10-15% below requested (physical, not a bug)
-- `max_window_width` as design target deferred until Step 5 complete
+- `max_window_width` as design target deferred until robustness integrated into design search sweep
 - Blowout threshold calibration deferred (needs real experimental data)
 - `stepgen_seed/` never modified — reference baseline only
-- All 248 existing tests must pass after every step
+- All tests pass after every step
