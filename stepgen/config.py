@@ -108,10 +108,11 @@ class ManufacturingConfig:
 @dataclass(frozen=True)
 class OperatingConfig:
     """Operating point. User-facing units stored; SI equivalents as properties."""
-    Po_in_mbar: float        # oil inlet pressure [mbar]
-    Qw_in_mlhr: float        # water inlet flow [mL/hr]
-    P_out_mbar: float = 0.0  # outlet reference pressure [mbar]
-    mode: str = "A"
+    Po_in_mbar: float           # oil inlet pressure [mbar]
+    Qw_in_mlhr: float           # water inlet flow [mL/hr]
+    P_out_mbar: float = 0.0     # outlet reference pressure [mbar]
+    mode: str = "A"             # "A" = pressure+flow BC; "B" = flow+flow BC
+    Qo_in_mlhr: float | None = None  # Mode B: oil inlet flow [mL/hr]
 
     @property
     def Po_in_Pa(self) -> float:
@@ -162,6 +163,65 @@ class DeviceConfig:
     footprint: FootprintConfig = field(default_factory=FootprintConfig)
     manufacturing: ManufacturingConfig = field(default_factory=ManufacturingConfig)
     droplet_model: DropletModelConfig = field(default_factory=DropletModelConfig)
+
+
+# ---------------------------------------------------------------------------
+# Design-search specification dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DesignTargets:
+    """Target performance specs for the design-from-targets search."""
+    target_droplet_um: float       # desired droplet diameter [µm]
+    target_emulsion_ratio: float   # Q_oil / Q_water (dimensionless)
+    Qw_in_mlhr: float = 10.0       # water inlet flow used for Mode-B evaluation
+
+
+@dataclass(frozen=True)
+class DesignHardConstraints:
+    """Manufacturing hard limits (non-negotiable — candidates that fail are excluded)."""
+    max_main_depth_um: float = 200.0
+    max_main_width_um: float = 1000.0
+    min_feature_width_um: float = 0.5
+    max_collapse_index: float = 8.0      # Mcw / Mcd
+
+
+@dataclass(frozen=True)
+class DesignSoftConstraints:
+    """Soft performance limits (failing keeps candidate in results but flags it)."""
+    max_Q_uniformity_pct: float = 20.0
+    max_freq_uniformity_pct: float = 20.0
+    max_Po_in_mbar: float = 500.0
+    min_active_fraction: float = 0.95
+
+
+@dataclass(frozen=True)
+class SweepRanges:
+    """Grid of geometry values to sweep in the design search."""
+    Mcd_um: tuple[float, ...]
+    Mcw_um: tuple[float, ...]
+    pitch_um: tuple[float, ...]
+    mcd_um: tuple[float, ...]
+    mcw_um: tuple[float, ...]
+    mcl_rung_um: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class DesignSearchSpec:
+    """
+    Complete specification for a design-from-targets parameter sweep.
+
+    Loaded from a ``design_search.yaml`` file by ``load_design_search()``.
+    """
+    design_targets: DesignTargets
+    footprint: FootprintConfig
+    hard_constraints: DesignHardConstraints
+    soft_constraints: DesignSoftConstraints
+    optimization_target: str         # "max_throughput" or "max_window_width"
+    sweep_ranges: SweepRanges
+    fluids: FluidConfig
+    droplet_model: DropletModelConfig
+    manufacturing: ManufacturingConfig
 
 
 # ---------------------------------------------------------------------------
@@ -216,11 +276,13 @@ def _parse_geometry(d: dict[str, Any]) -> GeometryConfig:
 
 
 def _parse_operating(d: dict[str, Any]) -> OperatingConfig:
+    qo_raw = d.get("Qo_in_mlhr", None)
     return OperatingConfig(
         Po_in_mbar=float(d["Po_in_mbar"]),
         Qw_in_mlhr=float(d["Qw_in_mlhr"]),
         P_out_mbar=float(d.get("P_out_mbar", 0.0)),
         mode=str(d.get("mode", "A")),
+        Qo_in_mlhr=float(qo_raw) if qo_raw is not None else None,
     )
 
 
@@ -268,4 +330,67 @@ def load_config(path: str | Path) -> DeviceConfig:
         footprint=_parse_footprint(raw.get("footprint", {})),
         manufacturing=_parse_manufacturing(raw.get("manufacturing", {})),
         droplet_model=_parse_droplet_model(raw.get("droplet_model", {})),
+    )
+
+
+def load_design_search(path: str | Path) -> "DesignSearchSpec":
+    """
+    Load a design-search YAML file and return a DesignSearchSpec.
+
+    The YAML schema has top-level keys: design_targets, fluids, footprint,
+    hard_constraints, soft_constraints, optimization_target, sweep_ranges,
+    and optionally droplet_model / manufacturing.
+    """
+    with open(path, "r") as fh:
+        raw: dict[str, Any] = yaml.safe_load(fh)
+
+    dt = raw["design_targets"]
+    targets = DesignTargets(
+        target_droplet_um=float(dt["target_droplet_um"]),
+        target_emulsion_ratio=float(dt["target_emulsion_ratio"]),
+        Qw_in_mlhr=float(dt.get("Qw_in_mlhr", 10.0)),
+    )
+
+    hc = raw.get("hard_constraints", {})
+    hard = DesignHardConstraints(
+        max_main_depth_um=float(hc.get("max_main_depth_um", 200.0)),
+        max_main_width_um=float(hc.get("max_main_width_um", 1000.0)),
+        min_feature_width_um=float(hc.get("min_feature_width_um", 0.5)),
+        max_collapse_index=float(hc.get("max_collapse_index", 8.0)),
+    )
+
+    sc = raw.get("soft_constraints", {})
+    soft = DesignSoftConstraints(
+        max_Q_uniformity_pct=float(sc.get("max_Q_uniformity_pct", 20.0)),
+        max_freq_uniformity_pct=float(sc.get("max_freq_uniformity_pct", 20.0)),
+        max_Po_in_mbar=float(sc.get("max_Po_in_mbar", 500.0)),
+        min_active_fraction=float(sc.get("min_active_fraction", 0.95)),
+    )
+
+    sr = raw["sweep_ranges"]
+    ranges = SweepRanges(
+        Mcd_um=tuple(float(v) for v in sr["Mcd_um"]),
+        Mcw_um=tuple(float(v) for v in sr["Mcw_um"]),
+        pitch_um=tuple(float(v) for v in sr["pitch_um"]),
+        mcd_um=tuple(float(v) for v in sr["mcd_um"]),
+        mcw_um=tuple(float(v) for v in sr["mcw_um"]),
+        mcl_rung_um=tuple(float(v) for v in sr["mcl_rung_um"]),
+    )
+
+    opt_target = str(raw.get("optimization_target", "max_throughput"))
+
+    return DesignSearchSpec(
+        design_targets=targets,
+        footprint=_parse_footprint(raw.get("footprint", {})),
+        hard_constraints=hard,
+        soft_constraints=soft,
+        optimization_target=opt_target,
+        sweep_ranges=ranges,
+        fluids=_parse_fluids(raw.get("fluids", {
+            "mu_continuous": 0.00089,
+            "mu_dispersed":  0.03452,
+            "emulsion_ratio": targets.target_emulsion_ratio,
+        })),
+        droplet_model=_parse_droplet_model(raw.get("droplet_model", {})),
+        manufacturing=_parse_manufacturing(raw.get("manufacturing", {})),
     )

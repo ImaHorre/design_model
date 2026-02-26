@@ -5,12 +5,13 @@ Command-line interface for StepGen Designer v1.
 
 Commands
 --------
-    stepgen simulate <config.yaml>  [--Po P] [--Qw Q] [--out results.json]
-    stepgen sweep    <cfg1> [cfg2 …] [--Po P] [--Qw Q] [--out sweep.csv]
+    stepgen simulate <config.yaml>  [--Po P] [--Qw Q] [--Qo Q] [--out results.json]
+    stepgen sweep    <cfg1> [cfg2 …] [--Po P] [--Qw Q] [--Qo Q] [--out sweep.csv]
     stepgen report   <config.yaml>  [--Po P] [--Qw Q] [--out-dir DIR]
     stepgen map      <config.yaml>  [--Po-min …] [--Po-max …] [--Po-n …]
                                     [--Qw-min …] [--Qw-max …] [--Qw-n …]
                                     [--out-dir DIR]
+    stepgen design   <design_search.yaml>  [--out design_results.csv]
     stepgen compare  <config.yaml>  <experiments.csv>
                                     [--out compare.csv] [--calibrate]
 
@@ -34,11 +35,23 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     from stepgen.design.sweep import evaluate_candidate
 
     config = load_config(args.config)
-    row    = evaluate_candidate(config, Po_in_mbar=args.Po, Qw_in_mlhr=args.Qw)
+    Qo = getattr(args, "Qo", None)
+    row = evaluate_candidate(
+        config,
+        Po_in_mbar=args.Po,
+        Qw_in_mlhr=args.Qw,
+        Qo_in_mlhr=Qo,
+    )
 
     print("=== simulate ===")
     print(f"  Config  : {args.config}")
-    print(f"  Po      : {row['Po_in_mbar']:.1f} mbar")
+    if "derived_Po_in_mbar" in row:
+        print(f"  Mode    : B (flow-flow)")
+        print(f"  Qo      : {row['Qo_in_mlhr']:.3f} mL/hr (requested)")
+        print(f"  Po      : {row['derived_Po_in_mbar']:.1f} mbar (derived)")
+    else:
+        print(f"  Mode    : A (pressure-flow)")
+        print(f"  Po      : {row['Po_in_mbar']:.1f} mbar")
     print(f"  Qw      : {row['Qw_in_mlhr']:.2f} mL/hr")
     print(f"  Nmc     : {row['Nmc']}")
     print(f"  active  : {row['active_fraction']*100:.1f} %")
@@ -51,14 +64,13 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     print(f"  hard OK : {row['passes_hard_constraints']}")
 
     if args.out:
-        from stepgen.config import load_config as _lc
         from stepgen.models.generator import iterative_solve
         from stepgen.models.metrics import compute_metrics
         from stepgen.design.layout import compute_layout
         from stepgen.io.results import export_candidate_json
 
-        Po = args.Po if args.Po is not None else config.operating.Po_in_mbar
-        Qw = args.Qw if args.Qw is not None else config.operating.Qw_in_mlhr
+        Po = row["Po_in_mbar"]
+        Qw = row["Qw_in_mlhr"]
         result  = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
         metrics = compute_metrics(config, result)
         layout  = compute_layout(config)
@@ -73,8 +85,9 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
     from stepgen.design.sweep import sweep
     from stepgen.io.results import save_results
 
+    Qo = getattr(args, "Qo", None)
     configs = [load_config(p) for p in args.configs]
-    df      = sweep(configs, Po_in_mbar=args.Po, Qw_in_mlhr=args.Qw)
+    df      = sweep(configs, Po_in_mbar=args.Po, Qw_in_mlhr=args.Qw, Qo_in_mlhr=Qo)
 
     out = args.out
     save_results(df, out)
@@ -91,21 +104,24 @@ def _cmd_report(args: argparse.Namespace) -> int:
     matplotlib.use("Agg")
 
     from stepgen.config import load_config
+    from stepgen.design.layout import compute_layout
     from stepgen.models.generator import iterative_solve
     from stepgen.viz.plots import (
-        plot_pressure_profiles, plot_rung_dP, plot_rung_flows,
-        plot_rung_frequencies, plot_regime_map,
+        plot_layout_schematic, plot_pressure_profiles, plot_rung_dP,
+        plot_rung_flows, plot_rung_frequencies, plot_regime_map,
     )
 
     config  = load_config(args.config)
     Po      = args.Po if args.Po is not None else config.operating.Po_in_mbar
     Qw      = args.Qw if args.Qw is not None else config.operating.Qw_in_mlhr
     result  = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
+    layout  = compute_layout(config)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     plots = {
+        "layout_schematic":  plot_layout_schematic(config, layout),
         "pressure_profiles": plot_pressure_profiles(result, config),
         "rung_dP":           plot_rung_dP(result, config),
         "rung_flows":        plot_rung_flows(result, config),
@@ -158,6 +174,54 @@ def _cmd_map(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_design(args: argparse.Namespace) -> int:
+    import matplotlib
+    matplotlib.use("Agg")
+
+    from stepgen.config import load_design_search
+    from stepgen.design.design_search import run_design_search
+    from stepgen.io.results import save_results
+    from stepgen.viz.plots import plot_design_results
+
+    spec = load_design_search(args.spec)
+    print("=== design ===")
+    print(f"  Spec            : {args.spec}")
+    print(f"  Target droplet  : {spec.design_targets.target_droplet_um} µm")
+    print(f"  Emulsion ratio  : {spec.design_targets.target_emulsion_ratio}")
+    print(f"  Qw              : {spec.design_targets.Qw_in_mlhr} mL/hr")
+    print(f"  Objective       : {spec.optimization_target}")
+
+    df = run_design_search(spec)
+    print(f"  Candidates      : {len(df)}")
+    if "passes_hard" in df.columns:
+        n_pass = int(df["passes_hard"].sum())
+        print(f"  Hard-pass       : {n_pass}")
+        if n_pass > 0:
+            top = df[df["passes_hard"]].iloc[0]
+            print(f"  Top candidate   : Mcd={top['Mcd_um']:.0f}µm  Mcw={top['Mcw_um']:.0f}µm  "
+                  f"Nmc={top['Nmc_derived']}  Q_total={top['Q_total_mlhr']:.2f} mL/hr  "
+                  f"Po={top['Po_required_mbar']:.1f} mbar")
+
+    out = args.out
+    save_results(df, out)
+    print(f"  → saved {out}")
+
+    # Optional plot
+    if "rank" in df.columns and len(df) > 0:
+        try:
+            fig = plot_design_results(df)
+            plot_path = Path(out).with_suffix("") / ".." / "design_results_plot.png"
+            # Save alongside output
+            import os
+            plot_path = Path(os.path.splitext(out)[0] + "_plot.png")
+            fig.savefig(plot_path, dpi=150)
+            print(f"  → {plot_path}")
+        except Exception:
+            pass   # plot failure never blocks the main result
+
+    return 0
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     import matplotlib
     matplotlib.use("Agg")
@@ -167,7 +231,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         calibrate_droplet_model, compare_to_predictions,
         compute_compare_report, load_experiments,
     )
-    from stepgen.viz.plots import plot_experiment_comparison
+    from stepgen.models.generator import iterative_solve
+    from stepgen.viz.plots import plot_experiment_comparison, plot_spatial_comparison
 
     config = load_config(args.config)
     exp_df = load_experiments(args.experiments)
@@ -200,6 +265,17 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         fig.savefig(path, dpi=150)
         print(f"  → {path}")
 
+    # Spatial comparison: use first unique (Po, Qw) operating point
+    if len(exp_df) > 0:
+        first_row = exp_df.iloc[0]
+        Po_sp = float(first_row["Po_in_mbar"])
+        Qw_sp = float(first_row["Qw_in_mlhr"])
+        result_sp = iterative_solve(config, Po_in_mbar=Po_sp, Qw_in_mlhr=Qw_sp)
+        fig_sp = plot_spatial_comparison(config, result_sp, comp_df)
+        path_sp = out_dir / "spatial_comparison.png"
+        fig_sp.savefig(path_sp, dpi=150)
+        print(f"  → {path_sp}")
+
     return 0
 
 
@@ -221,9 +297,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_sim.add_argument("config", help="Path to device YAML config.")
     p_sim.add_argument("--Po", type=float, default=None,
-                       metavar="MBAR", help="Oil inlet pressure [mbar] (overrides config).")
+                       metavar="MBAR", help="Oil inlet pressure [mbar] (overrides config; Mode A).")
     p_sim.add_argument("--Qw", type=float, default=None,
                        metavar="MLHR", help="Water inlet flow [mL/hr] (overrides config).")
+    p_sim.add_argument("--Qo", type=float, default=None,
+                       metavar="MLHR", help="Oil inlet flow [mL/hr] (Mode B: derives Po).")
     p_sim.add_argument("--out", type=str, default=None,
                        metavar="FILE", help="Save metrics JSON to FILE.")
 
@@ -234,9 +312,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_sw.add_argument("configs", nargs="+", help="One or more device YAML configs.")
     p_sw.add_argument("--Po", type=float, default=None,
-                      metavar="MBAR", help="Override oil pressure for all candidates.")
+                      metavar="MBAR", help="Override oil pressure for all candidates (Mode A).")
     p_sw.add_argument("--Qw", type=float, default=None,
                       metavar="MLHR", help="Override water flow for all candidates.")
+    p_sw.add_argument("--Qo", type=float, default=None,
+                      metavar="MLHR", help="Oil inlet flow [mL/hr] (Mode B: derives Po).")
     p_sw.add_argument("--out", type=str, default="sweep.csv",
                       metavar="FILE", help="Output CSV/parquet path (default: sweep.csv).")
 
@@ -265,6 +345,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--Qw-n",   type=int,   default=5,     metavar="N")
     p_map.add_argument("--out-dir", type=str,  default=".",
                        metavar="DIR", help="Directory for output PNGs (default: .).")
+
+    # ── design ────────────────────────────────────────────────────────────
+    p_des = sub.add_parser(
+        "design",
+        help="Design-from-targets sweep: find best geometry for a droplet size target.",
+    )
+    p_des.add_argument("spec", help="Path to design_search YAML file.")
+    p_des.add_argument("--out", type=str, default="design_results.csv",
+                       metavar="FILE", help="Output CSV path (default: design_results.csv).")
 
     # ── compare ───────────────────────────────────────────────────────────
     p_cmp = sub.add_parser(
@@ -302,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
         "sweep":    _cmd_sweep,
         "report":   _cmd_report,
         "map":      _cmd_map,
+        "design":   _cmd_design,
         "compare":  _cmd_compare,
     }
     return dispatch[args.command](args)

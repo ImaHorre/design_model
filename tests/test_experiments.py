@@ -127,11 +127,13 @@ class TestLoadExperiments:
         for col in REQUIRED_COLUMNS:
             assert col in df.columns
 
-    def test_position_cast_to_int(self, tmp_path):
+    def test_position_is_numeric(self, tmp_path):
+        """position is stored as float to support both int indices and 0-1 fractions."""
         p = tmp_path / "exp.csv"
         p.write_text(_make_csv([_default_row(position=3)]))
         df = load_experiments(p)
-        assert df["position"].dtype == int or np.issubdtype(df["position"].dtype, np.integer)
+        assert np.issubdtype(df["position"].dtype, np.number)
+        assert float(df["position"].iloc[0]) == pytest.approx(3.0)
 
     def test_numeric_columns_are_float(self, tmp_path):
         p = tmp_path / "exp.csv"

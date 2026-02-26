@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from stepgen.cli import main
 
@@ -174,6 +175,20 @@ class TestSweep:
 # report
 # ---------------------------------------------------------------------------
 
+class TestSimulateModeB:
+    def test_mode_b_via_qo_flag(self, cfg, capsys):
+        rc = main(["simulate", str(cfg), "--Qo", "0.5", "--Qw", "5"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Mode" in out and "B" in out
+        assert "derived" in out.lower()
+
+    def test_mode_b_prints_derived_po(self, cfg, capsys):
+        main(["simulate", str(cfg), "--Qo", "0.5"])
+        out = capsys.readouterr().out
+        assert "derived" in out.lower()
+
+
 class TestReport:
     def test_returns_zero(self, cfg, tmp_path):
         rc = main(["report", str(cfg), "--out-dir", str(tmp_path)])
@@ -182,7 +197,11 @@ class TestReport:
     def test_creates_png_files(self, cfg, tmp_path):
         main(["report", str(cfg), "--out-dir", str(tmp_path)])
         pngs = list(tmp_path.glob("*.png"))
-        assert len(pngs) >= 4
+        assert len(pngs) >= 5   # now includes layout_schematic
+
+    def test_layout_schematic_png_exists(self, cfg, tmp_path):
+        main(["report", str(cfg), "--out-dir", str(tmp_path)])
+        assert (tmp_path / "layout_schematic.png").exists()
 
     def test_pressure_profiles_png_exists(self, cfg, tmp_path):
         main(["report", str(cfg), "--out-dir", str(tmp_path)])
@@ -261,6 +280,74 @@ class TestCompare:
         assert rc == 0
         out = capsys.readouterr().out
         assert "calibration" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# design
+# ---------------------------------------------------------------------------
+
+_SMALL_DESIGN_YAML = textwrap.dedent("""\
+    design_targets:
+      target_droplet_um: 15.0
+      target_emulsion_ratio: 0.10
+      Qw_in_mlhr: 5.0
+    sweep_ranges:
+      Mcd_um: [100]
+      Mcw_um: [500]
+      pitch_um: [40]
+      mcd_um: [5]
+      mcw_um: [5]
+      mcl_rung_um: [200]
+""")
+
+
+@pytest.fixture()
+def design_spec(tmp_path) -> Path:
+    p = tmp_path / "design.yaml"
+    p.write_text(_SMALL_DESIGN_YAML)
+    return p
+
+
+class TestDesign:
+    def test_returns_zero(self, design_spec, tmp_path):
+        out = tmp_path / "res.csv"
+        rc  = main(["design", str(design_spec), "--out", str(out)])
+        assert rc == 0
+
+    def test_creates_csv(self, design_spec, tmp_path):
+        out = tmp_path / "res.csv"
+        main(["design", str(design_spec), "--out", str(out)])
+        assert out.exists()
+
+    def test_csv_has_rank_column(self, design_spec, tmp_path):
+        out = tmp_path / "res.csv"
+        main(["design", str(design_spec), "--out", str(out)])
+        df = pd.read_csv(out)
+        assert "rank" in df.columns
+
+    def test_csv_has_mcl_derived(self, design_spec, tmp_path):
+        out = tmp_path / "res.csv"
+        main(["design", str(design_spec), "--out", str(out)])
+        df = pd.read_csv(out)
+        assert "Mcl_derived_mm" in df.columns
+
+    def test_prints_summary(self, design_spec, tmp_path, capsys):
+        out = tmp_path / "res.csv"
+        main(["design", str(design_spec), "--out", str(out)])
+        stdout = capsys.readouterr().out
+        assert "design" in stdout.lower()
+        assert "Candidates" in stdout
+
+
+# ---------------------------------------------------------------------------
+# compare — spatial comparison output
+# ---------------------------------------------------------------------------
+
+class TestCompareSpatialt:
+    def test_saves_spatial_comparison_png(self, cfg, exp_csv, tmp_path):
+        out = tmp_path / "compare.csv"
+        main(["compare", str(cfg), str(exp_csv), "--out", str(out)])
+        assert (tmp_path / "spatial_comparison.png").exists()
 
 
 # ---------------------------------------------------------------------------

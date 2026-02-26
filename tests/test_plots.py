@@ -25,6 +25,9 @@ from stepgen.design.operating_map import compute_operating_map
 from stepgen.models.generator import iterative_solve
 from stepgen.models.hydraulics import simulate
 from stepgen.viz.plots import (
+    plot_design_results,
+    plot_experiment_comparison,
+    plot_layout_schematic,
     plot_operating_map,
     plot_pareto,
     plot_pressure_profiles,
@@ -32,6 +35,7 @@ from stepgen.viz.plots import (
     plot_rung_dP,
     plot_rung_flows,
     plot_rung_frequencies,
+    plot_spatial_comparison,
 )
 
 # ---------------------------------------------------------------------------
@@ -159,3 +163,65 @@ def test_plot_pareto_all_pareto():
     })
     fig = plot_pareto(df, x_col="x", y_col="y")
     assert isinstance(fig, matplotlib.figure.Figure)
+
+
+# ---------------------------------------------------------------------------
+# Layout schematic plot
+# ---------------------------------------------------------------------------
+
+def test_plot_layout_schematic_returns_figure(cfg):
+    fig = plot_layout_schematic(cfg)
+    assert isinstance(fig, matplotlib.figure.Figure)
+
+
+def test_plot_layout_schematic_with_layout(cfg):
+    from stepgen.design.layout import compute_layout
+    layout = compute_layout(cfg)
+    fig = plot_layout_schematic(cfg, layout)
+    assert isinstance(fig, matplotlib.figure.Figure)
+
+
+# ---------------------------------------------------------------------------
+# Spatial comparison plot
+# ---------------------------------------------------------------------------
+
+def test_plot_spatial_comparison_returns_figure(iter_result, cfg):
+    exp_df = pd.DataFrame({
+        "position": [0, 2, 5],
+        "droplet_diameter_um": [1.0, 1.0, 1.0],
+        "frequency_hz": [10.0, 10.0, 10.0],
+    })
+    fig = plot_spatial_comparison(cfg, iter_result, exp_df)
+    assert isinstance(fig, matplotlib.figure.Figure)
+
+
+def test_plot_spatial_comparison_fractional_positions(iter_result, cfg):
+    """Fractional positions in [0, 1] are accepted."""
+    exp_df = pd.DataFrame({
+        "position": [0.0, 0.5, 1.0],
+        "droplet_diameter_um": [1.0, 1.0, 1.0],
+        "frequency_hz": [10.0, 10.0, 10.0],
+    })
+    fig = plot_spatial_comparison(cfg, iter_result, exp_df)
+    assert isinstance(fig, matplotlib.figure.Figure)
+
+
+# ---------------------------------------------------------------------------
+# Design results plot
+# ---------------------------------------------------------------------------
+
+def test_plot_design_results_returns_figure():
+    df = pd.DataFrame({
+        "rank": [1, 2, 3],
+        "Q_total_mlhr": [5.0, 4.0, 3.0],
+        "Po_required_mbar": [200.0, 250.0, 300.0],
+        "passes_hard": [True, True, False],
+    })
+    fig = plot_design_results(df)
+    assert isinstance(fig, matplotlib.figure.Figure)
+
+
+def test_plot_design_results_missing_column_raises():
+    df = pd.DataFrame({"rank": [1], "Q_total_mlhr": [5.0]})
+    with pytest.raises(ValueError):
+        plot_design_results(df)

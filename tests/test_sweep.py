@@ -240,3 +240,61 @@ class TestResultsIO:
         export_candidate_json(cfg, metrics, layout, path)
         data = json.load(open(path))
         assert data["geometry"]["Nmc"] == 12
+
+
+# ---------------------------------------------------------------------------
+# Mode B (flow-flow BC)
+# ---------------------------------------------------------------------------
+
+class TestModeB:
+
+    def test_mode_b_returns_derived_po(self):
+        cfg = _make_config()
+        row = evaluate_candidate(cfg, Qw_in_mlhr=5.0, Qo_in_mlhr=0.5)
+        assert "derived_Po_in_mbar" in row
+        assert row["derived_Po_in_mbar"] > 0.0
+
+    def test_mode_b_records_qo(self):
+        cfg = _make_config()
+        row = evaluate_candidate(cfg, Qw_in_mlhr=5.0, Qo_in_mlhr=0.5)
+        assert row["Qo_in_mlhr"] == pytest.approx(0.5)
+
+    def test_mode_b_po_used_as_operating_po(self):
+        """The derived Po should match what is stored in Po_in_mbar."""
+        cfg = _make_config()
+        row = evaluate_candidate(cfg, Qw_in_mlhr=5.0, Qo_in_mlhr=0.5)
+        assert row["Po_in_mbar"] == pytest.approx(row["derived_Po_in_mbar"])
+
+    def test_mode_a_has_no_derived_po(self):
+        row = evaluate_candidate(_make_config())
+        assert "derived_Po_in_mbar" not in row
+
+    def test_mode_b_sweep(self):
+        cfgs = [_make_config(), _make_config(Nmc=8)]
+        df = sweep(cfgs, Qw_in_mlhr=5.0, Qo_in_mlhr=0.5)
+        assert "derived_Po_in_mbar" in df.columns
+        assert all(df["derived_Po_in_mbar"] > 0.0)
+
+    def test_mode_b_from_config_operating(self):
+        """mode='B' with Qo_in_mlhr in OperatingConfig triggers Mode B."""
+        cfg = DeviceConfig(
+            fluids=FluidConfig(
+                mu_continuous=0.00089, mu_dispersed=0.03452, emulsion_ratio=0.3,
+            ),
+            geometry=GeometryConfig(
+                main=MainChannelConfig(Mcd=100e-6, Mcw=500e-6, Mcl=_PITCH * 10),
+                rung=RungConfig(
+                    mcd=1e-6, mcw=1e-6, mcl=200e-6,
+                    pitch=_PITCH, constriction_ratio=1.0,
+                ),
+                junction=JunctionConfig(exit_width=1e-6, exit_depth=0.3e-6),
+            ),
+            operating=OperatingConfig(
+                Po_in_mbar=200.0, Qw_in_mlhr=5.0, mode="B", Qo_in_mlhr=0.5,
+            ),
+            droplet_model=DropletModelConfig(
+                dP_cap_ow_mbar=50.0, dP_cap_wo_mbar=30.0,
+            ),
+        )
+        row = evaluate_candidate(cfg)
+        assert "derived_Po_in_mbar" in row

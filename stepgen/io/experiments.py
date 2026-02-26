@@ -8,12 +8,16 @@ CSV Schema (required columns)
     device_id           : str
     Po_in_mbar          : float
     Qw_in_mlhr          : float
-    position            : int   (rung index, 0-based)
+    position            : int or float  (rung index 0-based, OR fractional 0–1)
     droplet_diameter_um : float
     frequency_hz        : float
 
 Optional column:
     notes               : str
+
+``position`` accepts two formats:
+  - Integer rung index (0, 1, 2, …, N-1) — original format
+  - Fractional position in [0, 1] (e.g. 0.15, 0.50) — maps to nearest rung index
 
 Usage
 -----
@@ -83,7 +87,9 @@ def load_experiments(path: str | Path) -> pd.DataFrame:
         raise ValueError(
             f"Experiment CSV missing required columns: {sorted(missing)}"
         )
-    df["position"]            = df["position"].astype(int)
+    # position: keep as float to support fractional 0–1 values;
+    # integer rung indices round-trip faithfully as float.
+    df["position"]            = df["position"].astype(float)
     df["Po_in_mbar"]          = df["Po_in_mbar"].astype(float)
     df["Qw_in_mlhr"]          = df["Qw_in_mlhr"].astype(float)
     df["droplet_diameter_um"] = df["droplet_diameter_um"].astype(float)
@@ -144,8 +150,14 @@ def compare_to_predictions(
             cache[key] = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
         sim = cache[key]
 
-        N            = len(sim.Q_rungs)
-        pos_clamped  = max(0, min(int(row["position"]), N - 1))
+        N   = len(sim.Q_rungs)
+        pos = float(row["position"])
+        # Accept fractional positions (0–1) or integer rung indices
+        if 0.0 <= pos <= 1.0 and not pos.is_integer():
+            idx = int(round(pos * (N - 1)))
+        else:
+            idx = int(round(pos))
+        pos_clamped = max(0, min(idx, N - 1))
 
         dP      = sim.P_oil - sim.P_water
         regimes = classify_rungs(
