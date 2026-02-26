@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 if TYPE_CHECKING:
     from stepgen.config import DesignSearchSpec
@@ -204,11 +205,13 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
 
     rows: list[dict] = []
 
-    combinations = itertools.product(
+    combinations = list(itertools.product(
         sr.Mcd_um, sr.Mcw_um, sr.pitch_um, sr.mcd_um, sr.mcw_um, sr.mcl_rung_um,
-    )
+    ))
 
-    for Mcd_um, Mcw_um, pitch_um, mcd_um, mcw_um, mcl_rung_um in combinations:
+    for Mcd_um, Mcw_um, pitch_um, mcd_um, mcw_um, mcl_rung_um in tqdm(
+        combinations, desc="design search", unit="candidate"
+    ):
         # ── SI conversions ──────────────────────────────────────────────────
         Mcd_m      = Mcd_um      * 1e-6
         Mcw_m      = Mcw_um      * 1e-6

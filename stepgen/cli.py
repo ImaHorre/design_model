@@ -114,26 +114,31 @@ def _cmd_report(args: argparse.Namespace) -> int:
     config  = load_config(args.config)
     Po      = args.Po if args.Po is not None else config.operating.Po_in_mbar
     Qw      = args.Qw if args.Qw is not None else config.operating.Qw_in_mlhr
+
+    print("=== report ===")
+    print(f"  solving  Po={Po} mbar  Qw={Qw} mL/hr  Nmc={config.geometry.Nmc} ...")
     result  = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
     layout  = compute_layout(config)
+    print("  rendering plots ...")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    plots = {
-        "layout_schematic":  plot_layout_schematic(config, layout),
-        "pressure_profiles": plot_pressure_profiles(result, config),
-        "rung_dP":           plot_rung_dP(result, config),
-        "rung_flows":        plot_rung_flows(result, config),
-        "rung_frequencies":  plot_rung_frequencies(result, config),
-        "regime_map":        plot_regime_map(result, config),
+    plot_fns = {
+        "layout_schematic":  lambda: plot_layout_schematic(config, layout),
+        "pressure_profiles": lambda: plot_pressure_profiles(result, config),
+        "rung_dP":           lambda: plot_rung_dP(result, config),
+        "rung_flows":        lambda: plot_rung_flows(result, config),
+        "rung_frequencies":  lambda: plot_rung_frequencies(result, config),
+        "regime_map":        lambda: plot_regime_map(result, config),
     }
 
-    print("=== report ===")
-    for name, fig in plots.items():
+    for name, fn in plot_fns.items():
+        print(f"  {name} ...", end="", flush=True)
+        fig  = fn()
         path = out_dir / f"{name}.png"
         fig.savefig(path, dpi=150)
-        print(f"  → {path}")
+        print(f"  saved")
 
     return 0
 

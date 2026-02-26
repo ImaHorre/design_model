@@ -82,10 +82,13 @@ class GeometryConfig:
     main: MainChannelConfig
     rung: RungConfig
     junction: JunctionConfig
+    Nmc_override: int | None = None  # if set, overrides floor(Mcl/pitch)
 
     @property
     def Nmc(self) -> int:
-        """Derived number of microchannels: floor(Mcl / pitch)."""
+        """Number of microchannels. Uses Nmc_override if set, else floor(Mcl/pitch)."""
+        if self.Nmc_override is not None:
+            return self.Nmc_override
         return int(math.floor(self.main.Mcl / self.rung.pitch))
 
 
@@ -272,7 +275,10 @@ def _parse_geometry(d: dict[str, Any]) -> GeometryConfig:
         junction_type=str(j.get("junction_type", "step")),
     )
 
-    return GeometryConfig(main=main, rung=rung, junction=junction)
+    nmc_override_raw = d.get("Nmc_override", None)
+    nmc_override = int(nmc_override_raw) if nmc_override_raw is not None else None
+
+    return GeometryConfig(main=main, rung=rung, junction=junction, Nmc_override=nmc_override)
 
 
 def _parse_operating(d: dict[str, Any]) -> OperatingConfig:

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
+from tqdm import tqdm
 
 from stepgen.models.generator import iterative_solve
 from stepgen.models.metrics import compute_metrics
@@ -179,7 +180,7 @@ def compute_operating_map(
     dP_unif       = np.zeros((nQw, nPo))
     P_peak        = np.zeros((nQw, nPo))
 
-    for i, Qw in enumerate(Qw_grid):
+    for i, Qw in enumerate(tqdm(Qw_grid, desc="operating map", unit="Qw")):
         for j, Po in enumerate(Po_grid):
             result  = iterative_solve(config, Po_in_mbar=float(Po), Qw_in_mlhr=float(Qw))
             metrics = compute_metrics(config, result)
