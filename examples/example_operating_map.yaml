@@ -1,51 +1,74 @@
 # example_operating_map.yaml
-# Configuration for an operating-map sweep.
+# ─────────────────────────────────────────────────────────────────────────────
+# Config for computing a 2D operating map over a (Po, Qw) grid.
+# The map shows which pressure/flow combinations give good device behaviour.
 #
-# Usage (programmatic):
+# CLI usage:
+#   stepgen map examples/example_operating_map.yaml \
+#       --Po-min 50 --Po-max 400 --Po-n 15 \
+#       --Qw-min 2  --Qw-max 15  --Qw-n 6  \
+#       --out-dir map_output/
+#
+# Programmatic usage:
 #   from stepgen.config import load_config
 #   from stepgen.design.operating_map import compute_operating_map
 #   from stepgen.viz.plots import plot_operating_map
 #   import numpy as np
 #
 #   cfg = load_config("examples/example_operating_map.yaml")
-#
-#   Po_grid = np.linspace(50, 400, 40)    # mbar
-#   Qw_grid = np.linspace(1,  20,  10)   # mL/hr
-#
-#   result = compute_operating_map(
-#       cfg, Po_grid, Qw_grid,
-#       active_fraction_min=0.8,
-#       reverse_fraction_max=0.1,
-#       Q_uniformity_max_pct=10.0,
-#       dP_uniformity_max_pct=10.0,
-#   )
+#   Po_grid = np.linspace(50, 400, 20)   # mbar
+#   Qw_grid = np.linspace(2,  15,  6)   # mL/hr
+#   result = compute_operating_map(cfg, Po_grid, Qw_grid)
 #
 #   fig = plot_operating_map(result, metric="active_fraction")
-#   fig.savefig("operating_map.png", dpi=150)
+#   fig.savefig("map.png", dpi=150)
 #
 #   for w in result.windows_strict:
-#       print(f"Qw={w.Qw_in_mlhr:.1f} mL/hr: "
-#             f"window [{w.P_min_ok:.0f}, {w.P_max_ok:.0f}] mbar  "
-#             f"(width={w.window_width:.0f} mbar)")
+#       print(f"Qw={w.Qw_in_mlhr:.1f}: window [{w.P_min_ok:.0f}, {w.P_max_ok:.0f}] mbar")
+#
+# WHAT YOU GET:
+#   'stepgen map' saves one heatmap PNG per metric:
+#     active_fraction, reverse_fraction, Q_uniformity_pct,
+#     dP_uniformity_pct, P_peak_Pa
+#   Also prints the count of strict + relaxed operating windows computed.
+#
+# REQUIRED vs OPTIONAL:
+#   fluids, geometry (main+rung+junction), operating, droplet_model  — REQUIRED
+#   operating.Po_in_mbar / Qw_in_mlhr  — used as defaults only if --Po/--Qw
+#                                        not passed on CLI; the map grid overrides them
+#   footprint    — OPTIONAL (not used by 'map'; only by 'report')
+#   manufacturing — OPTIONAL (only affects passes_hard_constraints flag)
+#   Nmc_override  — OPTIONAL (set under geometry: if rung count is known directly)
+# ─────────────────────────────────────────────────────────────────────────────
 
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
 fluids:
-  mu_continuous: 0.00089
-  mu_dispersed:  0.03452
+  mu_continuous: 0.00089      # Pa·s  water (continuous / carrier phase)
+  mu_dispersed:  0.03452      # Pa·s  oil   (dispersed / droplet phase)
   emulsion_ratio: 0.3
   gamma: 0.0
   temperature_C: 25.0
 
+
 geometry:
+  # ── Nmc override ─────────────────────────────────────────────────────────
+  # Nmc is derived here as floor(30e-3 / 3e-6) = 10 000.
+  # If your physical device has a specific known rung count, set:
+  #   Nmc_override: 200
+  # and the map will be computed using exactly that many rungs.
+  # Mcl and pitch must still be specified — they drive the resistance calculations.
+
   main:
-    Mcd: 100.0e-6
-    Mcw: 500.0e-6
-    Mcl: 30.0e-3    # 30 mm → Nmc ≈ 10 000 at 3 µm pitch
+    Mcd: 100.0e-6    # 100 µm depth
+    Mcw: 500.0e-6    # 500 µm width
+    Mcl: 30.0e-3     # 30 mm routed length → Nmc = 10 000 at 3 µm pitch
 
   rung:
-    mcd: 0.3e-6
-    mcw: 1.0e-6
-    mcl: 200.0e-6
-    pitch: 3.0e-6
+    mcd: 0.3e-6      # 0.3 µm depth
+    mcw: 1.0e-6      # 1 µm width
+    mcl: 200.0e-6    # 200 µm length
+    pitch: 3.0e-6    # 3 µm pitch
     constriction_ratio: 1.0
 
   junction:
@@ -53,12 +76,27 @@ geometry:
     exit_depth: 0.3e-6
     junction_type: step
 
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+# The Po_in_mbar and Qw_in_mlhr here are fallback defaults only.
+# 'stepgen map' replaces them with the --Po-min/max and --Qw-min/max grid.
 operating:
   mode: A
-  Po_in_mbar: 200.0   # nominal operating point (starting estimate)
+  Po_in_mbar: 200.0   # nominal operating point (starting estimate / fallback)
   Qw_in_mlhr: 5.0
   P_out_mbar: 0.0
 
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0   # capillary threshold oil→water [mbar]
+  dP_cap_wo_mbar: 30.0   # capillary threshold water→oil [mbar]
+
+
+# ── OPTIONAL — not used by 'map'; only needed for 'report' ────────────────────
 footprint:
   footprint_area_cm2: 10.0
   footprint_aspect_ratio: 1.5
@@ -66,14 +104,9 @@ footprint:
   turn_radius: 500.0e-6
   reserve_border: 2.0e-3
 
+
+# ── OPTIONAL — only affects passes_hard_constraints flag, not simulation ───────
 manufacturing:
   max_main_depth: 200.0e-6
   min_feature_width: 0.5e-6
   max_main_width: 1000.0e-6
-
-droplet_model:
-  k: 3.3935
-  a: 0.3390
-  b: 0.7198
-  dP_cap_ow_mbar: 50.0
-  dP_cap_wo_mbar: 30.0
