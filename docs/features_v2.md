@@ -100,6 +100,36 @@ Interactive/rotatable in notebook/GUI; saved as static PNG by CLI at
 `design_results_3d.png` (elev=25, azim=45 default angle).
 Inspired by legacy sweep visualisation code.
 
+### DS-13: Add device area + Mcl to results output
+Add a computed column `device_area_mm2 = Mcl_derived_mm × Mcw_um × 1e-3` to the
+`run_design_search` output DataFrame. Update the `stepgen design` CLI summary line
+to also print `Mcl` and `area`:
+```
+Top candidate : Mcd=200µm  Mcw=1000µm  Mcl=42.3mm  area=423mm²  Nmc=211  Q_total=10.00 mL/hr  Po=487.2 mbar
+```
+`Mcl_derived_mm` and `Mcw_um` are already in the CSV; this makes them visible at
+a glance in the terminal without opening the file.
+
+### DS-14: Rework design search plots — swept-parameter scatter grid
+The current `plot_design_results` two-panel layout has poor signal-to-noise:
+- **Left panel** (ranked bar chart of Q_total): useless — just re-shows the sorted
+  CSV as a picture. Replace entirely.
+- **Right panel** (Po vs Q scatter, pass/fail coloured): okay but anonymous — dots
+  don't reveal which swept variables drove each result.
+
+**Replacement**: a 2×3 grid of small scatter panels (one per swept axis), each
+showing that axis vs `Q_total_mlhr`. Points coloured by `Po_required_mbar`
+(viridis colormap with shared scale), passing candidates as filled circles,
+failing as hollow crosses. A single shared colourbar on the right edge.
+
+Swept axes to panel: `Mcd_um`, `Mcw_um`, `junction_ar`, `mcw_um`, `mcl_rung_um`
+plus one summary panel of `device_area_mm2` vs `Q_total_mlhr`.
+
+This directly answers "which swept variable drove throughput / pressure?"
+and whether the optimum is at the boundary of the swept range (signalling the
+range should be extended). Relates to DS-10: the 3D plot is the interactive/full
+version; this grid is the static printable complement saved as `design_results_plot.png`.
+
 ---
 
 ## Workflow
