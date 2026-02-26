@@ -1,0 +1,2 @@
+[console_scripts]
+stepgen = stepgen.cli:main

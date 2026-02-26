@@ -1,0 +1,271 @@
+"""
+stepgen.config
+==============
+YAML config loading into frozen dataclasses.
+
+All internal storage is SI (m, Pa, m³/s, Pa·s).
+User-facing YAML fields use convenient units (mbar, mL/hr); SI equivalents
+are exposed as read-only properties.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+# ---------------------------------------------------------------------------
+# Unit conversion helpers
+# ---------------------------------------------------------------------------
+
+def mbar_to_pa(mbar: float) -> float:
+    """Millibar → Pascal."""
+    return mbar * 100.0
+
+
+def mlhr_to_m3s(mlhr: float) -> float:
+    """mL/hr → m³/s."""
+    return mlhr * (1e-6 / 3600.0)
+
+
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class FluidConfig:
+    mu_continuous: float       # Pa·s  water (continuous phase)
+    mu_dispersed: float        # Pa·s  oil  (dispersed phase — forms droplets)
+    emulsion_ratio: float      # Q_oil / Q_water  (dimensionless)
+    gamma: float = 0.0          # N/m  interfacial tension (optional)
+    temperature_C: float = 25.0 # °C (informational)
+
+
+@dataclass(frozen=True)
+class MainChannelConfig:
+    Mcd: float   # depth  [m]
+    Mcw: float   # width  [m]
+    Mcl: float   # routed length [m]
+
+
+@dataclass(frozen=True)
+class MicrochannelSection:
+    """One section of a piecewise microchannel profile."""
+    length: float  # [m]
+    width: float   # [m]
+    depth: float   # [m]
+
+
+@dataclass(frozen=True)
+class RungConfig:
+    mcd: float               # depth  [m]
+    mcw: float               # width  [m]
+    mcl: float               # length [m]
+    pitch: float             # pitch along main channel [m]
+    constriction_ratio: float
+    profile: tuple[MicrochannelSection, ...] = ()  # optional piecewise sections
+
+
+@dataclass(frozen=True)
+class JunctionConfig:
+    exit_width: float            # [m]
+    exit_depth: float            # [m]
+    junction_type: str = "step"
+
+
+@dataclass(frozen=True)
+class GeometryConfig:
+    main: MainChannelConfig
+    rung: RungConfig
+    junction: JunctionConfig
+
+    @property
+    def Nmc(self) -> int:
+        """Derived number of microchannels: floor(Mcl / pitch)."""
+        return int(math.floor(self.main.Mcl / self.rung.pitch))
+
+
+@dataclass(frozen=True)
+class FootprintConfig:
+    footprint_area_cm2: float = 10.0
+    footprint_aspect_ratio: float = 1.5
+    lane_spacing: float = 500e-6   # [m]
+    turn_radius: float = 500e-6    # [m]
+    reserve_border: float = 2e-3   # [m]
+
+
+@dataclass(frozen=True)
+class ManufacturingConfig:
+    max_main_depth: float = 200e-6     # [m]
+    min_feature_width: float = 0.5e-6  # [m]
+    max_main_width: float = 1000e-6    # [m]
+
+
+@dataclass(frozen=True)
+class OperatingConfig:
+    """Operating point. User-facing units stored; SI equivalents as properties."""
+    Po_in_mbar: float        # oil inlet pressure [mbar]
+    Qw_in_mlhr: float        # water inlet flow [mL/hr]
+    P_out_mbar: float = 0.0  # outlet reference pressure [mbar]
+    mode: str = "A"
+
+    @property
+    def Po_in_Pa(self) -> float:
+        return mbar_to_pa(self.Po_in_mbar)
+
+    @property
+    def Qw_in_m3s(self) -> float:
+        return mlhr_to_m3s(self.Qw_in_mlhr)
+
+    @property
+    def P_out_Pa(self) -> float:
+        return mbar_to_pa(self.P_out_mbar)
+
+
+@dataclass(frozen=True)
+class DropletModelConfig:
+    """Power-law droplet diameter model: D = k * w^a * h^b.
+
+    Calibrated from empirical data (SI units throughout):
+      w=0.3µm, h=1µm  → D=1µm
+      w=30µm,  h=10µm → D=25µm
+      w=15µm,  h=5µm  → D=12µm
+
+    where w = junction exit_width, h = junction exit_depth.
+    Depth exponent b > width exponent a: depth dominates droplet size,
+    consistent with Rayleigh-Plateau step-emulsification scaling.
+    """
+    k: float = 3.3935  # SI units (m^(1-a-b)); calibrated from empirical data
+    a: float = 0.3390  # power on exit_width
+    b: float = 0.7198  # power on exit_depth
+    dP_cap_ow_mbar: float = 50.0   # oil→water capillary threshold [mbar]
+    dP_cap_wo_mbar: float = 30.0   # water→oil reverse threshold [mbar]
+
+    @property
+    def dP_cap_ow_Pa(self) -> float:
+        return mbar_to_pa(self.dP_cap_ow_mbar)
+
+    @property
+    def dP_cap_wo_Pa(self) -> float:
+        return mbar_to_pa(self.dP_cap_wo_mbar)
+
+
+@dataclass(frozen=True)
+class DeviceConfig:
+    fluids: FluidConfig
+    geometry: GeometryConfig
+    operating: OperatingConfig
+    footprint: FootprintConfig = field(default_factory=FootprintConfig)
+    manufacturing: ManufacturingConfig = field(default_factory=ManufacturingConfig)
+    droplet_model: DropletModelConfig = field(default_factory=DropletModelConfig)
+
+
+# ---------------------------------------------------------------------------
+# Parsing helpers (private)
+# ---------------------------------------------------------------------------
+
+def _parse_fluids(d: dict[str, Any]) -> FluidConfig:
+    return FluidConfig(
+        mu_continuous=float(d["mu_continuous"]),
+        mu_dispersed=float(d["mu_dispersed"]),
+        emulsion_ratio=float(d["emulsion_ratio"]),
+        gamma=float(d.get("gamma", 0.0)),
+        temperature_C=float(d.get("temperature_C", 25.0)),
+    )
+
+
+def _parse_geometry(d: dict[str, Any]) -> GeometryConfig:
+    m = d["main"]
+    main = MainChannelConfig(
+        Mcd=float(m["Mcd"]),
+        Mcw=float(m["Mcw"]),
+        Mcl=float(m["Mcl"]),
+    )
+
+    r = d["rung"]
+    raw_sections = r.get("microchannel_profile", {}).get("sections", [])
+    profile = tuple(
+        MicrochannelSection(
+            length=float(s["length"]),
+            width=float(s["width"]),
+            depth=float(s["depth"]),
+        )
+        for s in raw_sections
+    )
+    rung = RungConfig(
+        mcd=float(r["mcd"]),
+        mcw=float(r["mcw"]),
+        mcl=float(r["mcl"]),
+        pitch=float(r["pitch"]),
+        constriction_ratio=float(r["constriction_ratio"]),
+        profile=profile,
+    )
+
+    j = d.get("junction", {})
+    junction = JunctionConfig(
+        exit_width=float(j.get("exit_width", r["mcw"])),
+        exit_depth=float(j.get("exit_depth", r["mcd"])),
+        junction_type=str(j.get("junction_type", "step")),
+    )
+
+    return GeometryConfig(main=main, rung=rung, junction=junction)
+
+
+def _parse_operating(d: dict[str, Any]) -> OperatingConfig:
+    return OperatingConfig(
+        Po_in_mbar=float(d["Po_in_mbar"]),
+        Qw_in_mlhr=float(d["Qw_in_mlhr"]),
+        P_out_mbar=float(d.get("P_out_mbar", 0.0)),
+        mode=str(d.get("mode", "A")),
+    )
+
+
+def _parse_footprint(d: dict[str, Any]) -> FootprintConfig:
+    return FootprintConfig(
+        footprint_area_cm2=float(d.get("footprint_area_cm2", 10.0)),
+        footprint_aspect_ratio=float(d.get("footprint_aspect_ratio", 1.5)),
+        lane_spacing=float(d.get("lane_spacing", 500e-6)),
+        turn_radius=float(d.get("turn_radius", 500e-6)),
+        reserve_border=float(d.get("reserve_border", 2e-3)),
+    )
+
+
+def _parse_manufacturing(d: dict[str, Any]) -> ManufacturingConfig:
+    return ManufacturingConfig(
+        max_main_depth=float(d.get("max_main_depth", 200e-6)),
+        min_feature_width=float(d.get("min_feature_width", 0.5e-6)),
+        max_main_width=float(d.get("max_main_width", 1000e-6)),
+    )
+
+
+def _parse_droplet_model(d: dict[str, Any]) -> DropletModelConfig:
+    return DropletModelConfig(
+        k=float(d.get("k", 1.2)),
+        a=float(d.get("a", 0.5)),
+        b=float(d.get("b", 0.3)),
+        dP_cap_ow_mbar=float(d.get("dP_cap_ow_mbar", 50.0)),
+        dP_cap_wo_mbar=float(d.get("dP_cap_wo_mbar", 30.0)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def load_config(path: str | Path) -> DeviceConfig:
+    """Load a YAML config file and return a DeviceConfig."""
+    with open(path, "r") as fh:
+        raw: dict[str, Any] = yaml.safe_load(fh)
+
+    return DeviceConfig(
+        fluids=_parse_fluids(raw["fluids"]),
+        geometry=_parse_geometry(raw["geometry"]),
+        operating=_parse_operating(raw["operating"]),
+        footprint=_parse_footprint(raw.get("footprint", {})),
+        manufacturing=_parse_manufacturing(raw.get("manufacturing", {})),
+        droplet_model=_parse_droplet_model(raw.get("droplet_model", {})),
+    )

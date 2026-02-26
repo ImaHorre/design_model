@@ -1,0 +1,79 @@
+# example_operating_map.yaml
+# Configuration for an operating-map sweep.
+#
+# Usage (programmatic):
+#   from stepgen.config import load_config
+#   from stepgen.design.operating_map import compute_operating_map
+#   from stepgen.viz.plots import plot_operating_map
+#   import numpy as np
+#
+#   cfg = load_config("examples/example_operating_map.yaml")
+#
+#   Po_grid = np.linspace(50, 400, 40)    # mbar
+#   Qw_grid = np.linspace(1,  20,  10)   # mL/hr
+#
+#   result = compute_operating_map(
+#       cfg, Po_grid, Qw_grid,
+#       active_fraction_min=0.8,
+#       reverse_fraction_max=0.1,
+#       Q_uniformity_max_pct=10.0,
+#       dP_uniformity_max_pct=10.0,
+#   )
+#
+#   fig = plot_operating_map(result, metric="active_fraction")
+#   fig.savefig("operating_map.png", dpi=150)
+#
+#   for w in result.windows_strict:
+#       print(f"Qw={w.Qw_in_mlhr:.1f} mL/hr: "
+#             f"window [{w.P_min_ok:.0f}, {w.P_max_ok:.0f}] mbar  "
+#             f"(width={w.window_width:.0f} mbar)")
+
+fluids:
+  mu_continuous: 0.00089
+  mu_dispersed:  0.03452
+  emulsion_ratio: 0.3
+  gamma: 0.0
+  temperature_C: 25.0
+
+geometry:
+  main:
+    Mcd: 100.0e-6
+    Mcw: 500.0e-6
+    Mcl: 30.0e-3    # 30 mm → Nmc ≈ 10 000 at 3 µm pitch
+
+  rung:
+    mcd: 0.3e-6
+    mcw: 1.0e-6
+    mcl: 200.0e-6
+    pitch: 3.0e-6
+    constriction_ratio: 1.0
+
+  junction:
+    exit_width: 1.0e-6
+    exit_depth: 0.3e-6
+    junction_type: step
+
+operating:
+  mode: A
+  Po_in_mbar: 200.0   # nominal operating point (starting estimate)
+  Qw_in_mlhr: 5.0
+  P_out_mbar: 0.0
+
+footprint:
+  footprint_area_cm2: 10.0
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6
+
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0
+  dP_cap_wo_mbar: 30.0

@@ -1,0 +1,58 @@
+# device_template.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Fill in your device geometry and operating conditions below.
+# Then run:  .venv/Scripts/python compare_models.py examples/device_template.yaml
+#
+# All dimensions in SI (metres).  Use scientific notation (e.g. 100e-6 = 100 µm).
+# ─────────────────────────────────────────────────────────────────────────────
+
+fluids:
+  mu_continuous: 0.00089      # Pa·s  — water (continuous / carrier phase)
+  mu_dispersed:  0.03452      # Pa·s  — oil   (dispersed / droplet phase)
+  emulsion_ratio: 0.3
+  gamma: 0.0
+  temperature_C: 25.0
+
+geometry:
+  main:
+    Mcd: 100.0e-6    # main channel depth  [m]   e.g. 100 µm
+    Mcw: 500.0e-6    # main channel width  [m]   e.g. 500 µm
+    Mcl: 2040.0e-3   # main channel routed length [m]  e.g. 2040 mm
+
+  rung:
+    mcd: 0.3e-6      # rung depth          [m]   e.g. 0.3 µm
+    mcw: 1.0e-6      # rung width          [m]   e.g. 1 µm
+    mcl: 200.0e-6    # rung length         [m]   e.g. 200 µm
+    pitch: 3.0e-6    # centre-to-centre pitch [m]  e.g. 3 µm
+    constriction_ratio: 1.0   # fraction of rung length that is the constriction
+
+  junction:
+    exit_width: 1.0e-6    # junction exit width [m]  (used for droplet size model)
+    exit_depth: 0.3e-6    # junction exit depth [m]
+    junction_type: step
+
+# Operating conditions for the NEW model
+operating:
+  mode: A
+  Po_in_mbar: 200.0   # oil inlet pressure  [mbar]
+  Qw_in_mlhr: 5.0     # water inlet flow    [mL/hr]
+  P_out_mbar: 0.0     # outlet reference pressure
+
+footprint:
+  footprint_area_cm2: 10.0
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6
+
+droplet_model:
+  k: 3.3935   # D = k * exit_width^a * exit_depth^b  (SI, calibrated)
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0   # capillary threshold oil→water  [mbar]
+  dP_cap_wo_mbar: 30.0   # capillary threshold water→oil  [mbar]

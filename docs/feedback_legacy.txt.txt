@@ -1,0 +1,291 @@
+It changes one part of my answer (the “
+𝑄
+out
+=
+𝑄
+𝑂
++
+𝑄
+𝑊
+Q
+out
+	​
+
+=Q
+O
+	​
+
++Q
+W
+	​
+
+ is wrong” angle), but it does not remove the core bug I pointed out.
+
+What Claude corrected (and I agree with)
+
+Yes: physically, if all oil must cross the rungs into the water rail and there’s only one external outlet on the water side, then the external outlet flow should be 
+𝑄
+out
+=
+𝑄
+𝑂
++
+𝑄
+𝑊
+Q
+out
+	​
+
+=Q
+O
+	​
+
++Q
+W
+	​
+
+. That line by itself is fine.
+
+What does not change (the actual mathematical issue)
+
+The issue is still that the legacy code imposes boundary/source terms inconsistently:
+
+1) The legacy injects inlet flows twice
+
+This is independent of whether oil is dead-ended or not.
+
+You still have:
+
+B[:6] = [Q_O, Q_W, Q_O, Q_W, 0, -QOut]
+
+Given how rows 0–3 are written, indices 0/1 behave like inlet boundary nodes and 2/3 behave like the first interior nodes. Putting Q_O at both B[0] and B[2] (and Q_W at both B[1] and B[3]) means you are telling the solver there are two injections per fluid.
+
+Claude’s revised message didn’t address this — and it’s the main “legacy works but is subtly wrong” problem.
+
+A quick invariant check: sum those six entries:
+
+(
+𝑄
+𝑂
++
+𝑄
+𝑊
++
+𝑄
+𝑂
++
+𝑄
+𝑊
++
+0
+−
+(
+𝑄
+𝑂
++
+𝑄
+𝑊
+)
+)
+=
+𝑄
+𝑂
++
+𝑄
+𝑊
+(Q
+O
+	​
+
++Q
+W
+	​
+
++Q
+O
+	​
+
++Q
+W
+	​
+
++0−(Q
+O
+	​
+
++Q
+W
+	​
+
+))=Q
+O
+	​
+
++Q
+W
+	​
+
+
+So the global RHS does not sum to zero. In a closed network with only internal connections, you normally expect net source = net sink (or you add a pressure reference equation). Here you have a net positive injection even after “draining” 
+𝑄
+𝑂
++
+𝑄
+𝑊
+Q
+O
+	​
+
++Q
+W
+	​
+
+. That’s a strong sign your sources/sinks are not placed correctly.
+
+2) The “water outlet only” row is not a clean boundary condition
+
+Claude is treating:
+
+A[5, -1:] = [1/r1]
+B[5] = -QOut
+
+as “drain at far WATER node”.
+
+But algebraically, that equation is just:
+
+1
+𝑟
+1
+𝑃
+last
+=
+−
+𝑄
+out
+⇒
+𝑃
+last
+=
+−
+𝑟
+1
+𝑄
+out
+r
+1
+	​
+
+1
+	​
+
+P
+last
+	​
+
+=−Q
+out
+	​
+
+⇒P
+last
+	​
+
+=−r
+1
+	​
+
+Q
+out
+	​
+
+
+That’s not “KCL at outlet node”, it’s a pressure constraint derived from a flow and a resistance — and it only makes physical sense if:
+
+that last node is connected to ground through a resistor of value 
+𝑟
+1
+r
+1
+	​
+
+, and
+
+you intentionally want that constitutive relation as the boundary.
+
+Usually you either:
+
+set 
+𝑃
+out
+=
+0
+P
+out
+	​
+
+=0 (Dirichlet), or
+
+add an explicit outlet resistance 
+𝑅
+out
+R
+out
+	​
+
+ and keep KCL.
+
+So even if the oil is correctly dead-ended (row 4), the outlet BC is still “odd”, and coupled with the duplicated inlet injections it can produce plausible-looking but incorrect pressure/flow fields.
+
+Bottom line
+
+Claude’s correction does not invalidate my main critique.
+
+✅ 
+𝑄
+out
+=
+𝑄
+𝑂
++
+𝑄
+𝑊
+Q
+out
+	​
+
+=Q
+O
+	​
+
++Q
+W
+	​
+
+ is physically fine in your described manifold.
+
+❌ The legacy system still appears to double-apply inlet sources (B[0] & B[2], B[1] & B[3]).
+
+⚠️ The outlet condition implemented by row 5 is a nonstandard / likely mis-indexed boundary equation, unless you can justify “
+𝑃
+out
+=
+−
+𝑟
+1
+𝑄
+out
+P
+out
+	​
+
+=−r
+1
+	​
+
+Q
+out
+	​
+
+” as the intended lab boundary.
+
+If you want, paste just the intended node meaning for indices 0..5 (what physical location each corresponds to). With that mapping, I can tell you unambiguously whether B[2]/B[3] are indeed accidental duplicates or whether your indexing is doing something unconventional but consistent.

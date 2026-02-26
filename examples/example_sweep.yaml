@@ -1,0 +1,69 @@
+# example_sweep.yaml
+# Base configuration for a geometry sweep.
+#
+# Usage (programmatic):
+#   from stepgen.config import load_config
+#   from stepgen.design.sweep import sweep
+#   import dataclasses, numpy as np
+#
+#   base = load_config("examples/example_sweep.yaml")
+#
+#   # Build candidate list by varying rung depth
+#   candidates = []
+#   for mcd_um in [0.2, 0.3, 0.4, 0.5]:
+#       rung = dataclasses.replace(base.geometry.rung, mcd=mcd_um * 1e-6)
+#       geom = dataclasses.replace(base.geometry, rung=rung)
+#       candidates.append(dataclasses.replace(base, geometry=geom))
+#
+#   df = sweep(candidates)
+#   df.to_csv("sweep_results.csv", index=False)
+
+fluids:
+  mu_continuous: 0.00089
+  mu_dispersed:  0.03452
+  emulsion_ratio: 0.3
+  gamma: 0.0
+  temperature_C: 25.0
+
+geometry:
+  main:
+    Mcd: 100.0e-6
+    Mcw: 500.0e-6
+    Mcl: 30.0e-3     # 30 mm routed length → Nmc = 10 000 at 3 µm pitch
+
+  rung:
+    mcd: 0.3e-6
+    mcw: 1.0e-6
+    mcl: 200.0e-6
+    pitch: 3.0e-6
+    constriction_ratio: 1.0
+
+  junction:
+    exit_width: 1.0e-6
+    exit_depth: 0.3e-6
+    junction_type: step
+
+operating:
+  mode: A
+  Po_in_mbar: 200.0
+  Qw_in_mlhr: 5.0
+  P_out_mbar: 0.0
+
+footprint:
+  footprint_area_cm2: 10.0
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6
+
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0
+  dP_cap_wo_mbar: 30.0

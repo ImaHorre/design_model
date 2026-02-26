@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stepgen"
+version = "1.0.0"
+description = "StepGen Designer v1 — microfluidic step-emulsification design tool"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "pyyaml",
+]
+
+[tool.setuptools.packages.find]
+include = ["stepgen*"]
+
+[project.scripts]
+stepgen = "stepgen.cli:main"

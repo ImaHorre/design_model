@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(python -c:*)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(.venv/Scripts/pytest -q)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(.venv/Scripts/stepgen:*)",
+      "Bash(powershell -Command \"Measure-Command { .venv/Scripts/stepgen simulate test_device.yaml } | Select-Object TotalSeconds\")",
+      "Bash(cd C:\\\\Users\\\\conor\\\\Documents\\\\Code Projects\\\\PE\\\\design_model)"
+    ]
+  }
+}

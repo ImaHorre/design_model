@@ -1,0 +1,229 @@
+ Plan: Multi-BC Modes + Operating Window Robustness — PRD Amendment
+
+ Context
+
+ The user wants to understand whether the model should support multiple boundary-condition
+ (BC) configurations depending on the stage of design or experimentation, and whether the
+ existing operating map machinery can be surfaced as a first-class "robustness" output
+ alongside every design result. The goal is to formalize this as a future-feature addition
+ to docs/PRD_v1.md.
+
+ ---
+ Restating the User's Intent
+
+ Two separate but linked ideas:
+
+ Idea 1 — Multiple BC Modes
+
+ At different stages of device development the user knows different things:
+ - Design stage: "I want 10% emulsion at 5 mL/hr total. What geometry do I need?"
+ → natural inputs are Q_oil and Q_water (flow-flow).
+ - Operation stage: "I have this device. Oil controller is at 200 mbar, pump at 5 mL/hr.
+ What will it do?" → natural inputs are Po_in and Qw_in (pressure-flow, current Mode A).
+ - Future: "What if both channels are pressure-driven?" → Po_in and Pw_in (pressure-pressure).
+
+ Idea 2 — Operating Window Robustness Explorer
+
+ Once a design exists, automatically answer: "how robust is this design?"
+ - Show the Po and Qw ranges over which the device stays well-behaved (all rungs active,
+ uniformity acceptable, no blowout).
+ - Flag: is the design point in the middle of a wide window (robust) or on the edge of
+ a narrow one (fragile)?
+ - Implication: a wide window means the target emulsion concentration may be achievable at
+ much higher throughput — the initial design point may be far from the device's ceiling.
+
+ ---
+ Pros and Cons of Multiple BC Modes
+
+ Mode A: Po_in + Qw_in  (current — pressure-flow)
+
+ Pros:
+ - Matches the actual lab setup most commonly used (pressure controller on oil, syringe pump
+ on water).
+ - Po_in is a direct safety input — you can immediately check delamination risk.
+ - Gives a physically grounded operating point that reflects what happens on the bench.
+
+ Cons:
+ - Emulsion concentration (oil fraction) is an OUTPUT not an INPUT — harder to design to a
+ target ratio.
+ - Can't specify "I want 10% oil concentration" directly; have to iterate on Po to find the
+ point where Q_oil/Q_water ≈ 0.1.
+
+ Mode B: Qo_in + Qw_in  (design mode — flow-flow, seed equivalent)
+
+ Pros:
+ - Emulsion ratio is directly set: emulsion_ratio = Qo_in / (Qo_in + Qw_in).
+ - Total throughput is directly set: Q_total = Qo_in + Qw_in.
+ - Natural for "design from target" workflow: given target ratio and throughput, the solver
+ finds the pressures that would be needed.
+ - Gives the designer a required oil inlet pressure as an OUTPUT — can immediately flag if
+ it exceeds delamination limits.
+
+ Cons:
+ - Does NOT directly tell you what pressure controller to set in the lab.
+ - The required pressure is an output and may be impractical (too high/too low) for the
+ geometry chosen.
+ - Solver is slightly more complex: oil inlet row must change from Dirichlet (fixed pressure)
+ to Neumann (injected flow), and a separate pressure anchor must be chosen (water outlet = 0).
+ - The requested Qo_in / Qw_in combination may be physically unachievable for a given geometry
+ (system may have no stable solution at those flows).
+
+ Mode C: Po_in + Po_water_out  (both pressure-controlled)
+
+ Pros:
+ - Both inlets/outlets are pressure references — appropriate for gravity-driven or
+ pressurised reservoir setups.
+ Cons:
+ - Total flow is not directly set — it is determined entirely by geometry and pressure
+ difference. Makes throughput target-setting indirect.
+ - Less common in lab practice for step-emulsification.
+ - Lower priority.
+
+ Recommendation
+
+ Implement Mode A (done) and Mode B (design mode) as the two primary BC modes.
+ Mode C is lower priority and can be added later.
+
+ ---
+ Pros and Cons of the Operating Window Robustness Feature
+
+ What it would do
+
+ After evaluate_candidate() runs at the design point (Po*, Qw*), it automatically runs a
+ small operating map sweep around that point and reports:
+ - window_width_mbar at Qw*: the contiguous stable Po range at the design water flow.
+ - margin_lower_mbar: distance from Po* down to P_min_ok.
+ - margin_upper_mbar: distance from Po* up to P_max_ok.
+ - window_center_mbar: optimal Po for maximum margin at Qw*.
+ - max_Qw_stable_mlhr: the maximum water flow at which any stable Po window exists.
+ - max_throughput_Q_total: Q_oil + Q_water at the widest stable window point.
+
+ Pros:
+ - Directly answers "is this design robust?" without the user having to manually set up
+ a sweep.
+ - Enables Pareto: designs with equal throughput but different window widths can be ranked
+ — a key gap identified in the exploration (§6.3 tradeoff plots cannot currently be built
+ because window_width is not in the sweep table).
+ - Catches the case where the design point is far from the device ceiling: user can
+ immediately see "this device can run at 10x throughput and stay stable — you may be
+ under-utilising it".
+ - Flags fragile designs early: "your stable Po window is only 8 mbar wide".
+
+ Cons:
+ - Adds compute time to every evaluate_candidate() call (each sweep point is an iterative
+ solve). Mitigated by making it opt-in via a flag (compute_robustness=True).
+ - Requires choosing sensible grid bounds and resolution automatically (could use ±50%
+ around design point as a default heuristic).
+ - Adds fields to the sweep DataFrame that some users may not need.
+
+ ---
+ What Already Exists (Do Not Re-Implement)
+
+ From the exploration:
+ - compute_operating_map(config, Po_grid, Qw_grid) — already computes windows_strict
+ and windows_relaxed with window_width, window_center, P_min_ok, P_max_ok.
+ Located in stepgen/design/operating_map.py.
+ - OperatingWindow dataclass already has all required robustness fields.
+ - blowout_dP_Pa is already wired into strict window criteria.
+ - solve_linear(config, Q_oil, Q_water) in stepgen/models/hydraulics.py already
+ implements Q-Q BCs but is NOT wired into the iterative threshold solve path.
+
+ The robustness feature is primarily a matter of calling compute_operating_map from
+ within evaluate_candidate and surfacing the window fields — not new physics.
+
+ ---
+ Proposed PRD Additions
+
+ New Section 3.7 — Boundary Condition Modes
+
+ ## 3.7 Boundary Condition Modes
+
+ Mode A (default, operating mode):
+   - Oil inlet: pressure-controlled (Po_in [mbar])
+   - Water inlet: flow-controlled (Qw_in [mL/hr])
+   - Use when: device exists, lab instruments are known.
+   - Output: Q_oil_total, active_fraction, droplet metrics, operating window.
+
+ Mode B (design mode):
+   - Oil inlet: flow-controlled (Qo_in [mL/hr])
+   - Water inlet: flow-controlled (Qw_in [mL/hr])
+   - Emulsion ratio is directly set: = Qo_in / (Qo_in + Qw_in)
+   - Use when: designing from throughput/concentration targets.
+   - Output: required Po_in (from solver), delamination check, droplet metrics.
+
+ Both modes share the same rung threshold model, regime classification,
+ droplet size model, and operating window analysis.
+
+ New Section 6.4 — Operating Window Robustness
+
+ ## 6.4 Operating Window Robustness
+
+ For any design candidate, at the nominated operating point (Po*, Qw*):
+
+ 1. Run a local operating map sweep over Po ∈ [Po* × α_lo, Po* × α_hi]
+    and Qw ∈ [Qw* × β_lo, Qw* × β_hi].  Default multipliers: 0.2–3.0 for Po,
+    0.5–5.0 for Qw.
+
+ 2. Extract the strict window at Qw*:
+    - window_width_mbar
+    - margin_lower_mbar  = Po* - P_min_ok
+    - margin_upper_mbar  = P_max_ok - Po*
+    - window_center_mbar
+    - is_design_point_centered (bool: margin_lower within 20% of margin_upper)
+
+ 3. Find the maximum throughput stable operating point:
+    - max_stable_Qw_mlhr: highest Qw at which any strict window is open.
+    - max_stable_Q_total_mlhr: Q_oil + Q_water at the widest stable window.
+    - throughput_headroom_pct: (max_stable_Q_total / Q_total_design - 1) × 100
+
+ 4. Robustness classification:
+    - ROBUST: window_width > 100 mbar AND margin_lower > 20 mbar AND margin_upper > 20 mbar
+    - MODERATE: window open, margin < 20 mbar on either side
+    - TIGHT: window_width < 30 mbar
+    - CLOSED: no stable window at Qw*
+
+ These fields are appended to evaluate_candidate() output and the sweep DataFrame,
+ enabling Pareto plots of throughput vs window_width (completing PRD §6.3).
+
+ Updated Section 12 — New Acceptance Criteria
+
+ AC10 — Mode B (flow-flow) produces pressures consistent with Mode A when
+        Po_in is matched to the Mode B solver's output P_oil_inlet.
+ AC11 — window_width_mbar is present in sweep DataFrame rows.
+ AC12 — throughput_headroom_pct is positive and finite for all passing candidates.
+ AC13 — Robustness classification matches manual inspection of operating map for
+        at least 3 reference geometries.
+
+ ---
+ Files to Modify (when implementing)
+
+ ┌─────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │              File               │                                                 Change                                                 │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ docs/PRD_v1.md                  │ Add §3.7, §6.4, AC10–AC13                                                                              │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ stepgen/config.py               │ Add `Qo_in_mlhr: float                                                                                 │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ stepgen/models/hydraulics.py    │ Mode B path in _build_mixed_bc_matrix (row 0 → Neumann)                                                │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ stepgen/models/generator.py     │ Route bc_mode through iterative_solve                                                                  │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ stepgen/design/sweep.py         │ Add compute_robustness flag to evaluate_candidate; call compute_operating_map and append window fields │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ stepgen/design/operating_map.py │ Expose f_pred_mean and Q_oil_total surfaces in OperatingMapResult                                      │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ stepgen/cli.py                  │ Add --mode B, --Qo, --robustness flags to simulate and sweep commands                                  │
+ ├─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ examples/device_template.yaml   │ Add bc_mode, Qo_in_mlhr fields                                                                         │
+ └─────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ ---
+ Verification
+
+ 1. Run compare_models.py in Mode B with Qo_in=0.064, Qw_in=0.214 — verify that
+ the output Po_in matches seed P_oil[-1] (the seed's inlet pressure).
+ 2. Run evaluate_candidate with compute_robustness=True on example_single.yaml —
+ verify window_width_mbar is positive and finite.
+ 3. Run sweep across 3 geometries — verify sweep DataFrame contains window_width_mbar
+ and Pareto plot of throughput vs window_width renders correctly.
+ 4. Run existing test suite (248 tests) — verify no regressions.
