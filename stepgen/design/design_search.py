@@ -4,11 +4,15 @@ stepgen.design.design_search
 Design-from-targets sweep engine.
 
 Given a DesignSearchSpec (loaded from a design_search.yaml), this module:
-  1. Derives junction exit geometry from the target droplet diameter.
-  2. Iterates over all (Mcd, Mcw, pitch, mcd, mcw, mcl_rung) combinations.
-  3. For each candidate, computes the maximum Mcl that fits in the footprint
-     (Mcl is NEVER a sweep input — it is always derived), then builds a
-     DeviceConfig and evaluates it in Mode B.
+  1. For each (Mcd, Mcw, pitch, mcd, mcw, mcl_rung) combination, derives
+     junction exit geometry from the target droplet diameter with
+     exit_depth = mcd (depth is constant; the rung widens only laterally at
+     the junction exit).  exit_width is solved from D = k*w^a*h^b.
+  2. Enforces exit_width / exit_depth in [min_junction_aspect_ratio,
+     max_junction_aspect_ratio] as a hard constraint.
+  3. Computes the maximum Mcl that fits in the footprint (Mcl is NEVER a
+     sweep input — it is always derived), then builds a DeviceConfig and
+     evaluates it in Mode B.
   4. Checks hard and soft constraints, ranks passing candidates by the
      optimisation objective, and returns a DataFrame.
 
@@ -43,18 +47,41 @@ if TYPE_CHECKING:
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def _derive_junction_geometry(spec: "DesignSearchSpec") -> tuple[float, float]:
+def _derive_mcd_from_ar(spec: "DesignSearchSpec", ar: float) -> float:
     """
-    Solve D = k * w^a * h^b for (exit_width, exit_depth) assuming w = h
-    (square junction).
+    Derive rung depth mcd from target droplet diameter and junction aspect ratio.
+
+    With exit_width = ar * mcd and exit_depth = mcd:
+        D = k * (ar * mcd)^a * mcd^b = k * ar^a * mcd^(a+b)
+        mcd = (D / (k * ar^a))^(1/(a+b))
+
+    Returns mcd [m].
+    """
+    dm  = spec.droplet_model
+    D   = spec.design_targets.target_droplet_um * 1e-6
+    return (D / (dm.k * ar ** dm.a)) ** (1.0 / (dm.a + dm.b))
+
+
+def _derive_junction_geometry(
+    spec: "DesignSearchSpec", mcd_m: float
+) -> tuple[float, float]:
+    """
+    Derive junction exit geometry given rung depth mcd_m.
+
+    The junction exit depth equals the rung depth: depth is constant throughout
+    the rung and its widened exit section (single etch step — only width
+    expands at the junction).
+
+    Solves D = k * w^a * h^b with h = mcd_m for exit_width w:
+        w = (D / (k * h^b))^(1/a)
 
     Returns (exit_width_m, exit_depth_m).
     """
     dm = spec.droplet_model
     D  = spec.design_targets.target_droplet_um * 1e-6   # SI
-    # D = k * h^(a+b)  →  h = (D/k)^(1/(a+b))
-    h  = (D / dm.k) ** (1.0 / (dm.a + dm.b))
-    return h, h   # exit_width = exit_depth = h
+    h  = mcd_m
+    w  = (D / (dm.k * (h ** dm.b))) ** (1.0 / dm.a)
+    return w, h
 
 
 def _max_mcl_for_footprint(
@@ -197,7 +224,6 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
     """
     from stepgen.design.sweep import evaluate_candidate
 
-    exit_w_m, exit_d_m = _derive_junction_geometry(spec)
     hc   = spec.hard_constraints
     soft = spec.soft_constraints
     sr   = spec.sweep_ranges
@@ -206,19 +232,27 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
     rows: list[dict] = []
 
     combinations = list(itertools.product(
-        sr.Mcd_um, sr.Mcw_um, sr.pitch_um, sr.mcd_um, sr.mcw_um, sr.mcl_rung_um,
+        sr.Mcd_um, sr.Mcw_um, sr.junction_ar, sr.mcw_um, sr.mcl_rung_um,
     ))
 
-    for Mcd_um, Mcw_um, pitch_um, mcd_um, mcw_um, mcl_rung_um in tqdm(
+    for Mcd_um, Mcw_um, ar, mcw_um, mcl_rung_um in tqdm(
         combinations, desc="design search", unit="candidate"
     ):
         # ── SI conversions ──────────────────────────────────────────────────
         Mcd_m      = Mcd_um      * 1e-6
         Mcw_m      = Mcw_um      * 1e-6
-        pitch_m    = pitch_um    * 1e-6
-        mcd_m      = mcd_um      * 1e-6
         mcw_m      = mcw_um      * 1e-6
         mcl_rung_m = mcl_rung_um * 1e-6
+
+        # ── Derived: mcd, exit geometry, pitch ──────────────────────────────
+        # mcd is fully determined by target droplet + AR (exit_depth = mcd,
+        # exit_width = AR × mcd, pitch = 2 × exit_width)
+        mcd_m            = _derive_mcd_from_ar(spec, ar)
+        exit_w_m, exit_d_m = _derive_junction_geometry(spec, mcd_m)
+        pitch_m          = 2.0 * exit_w_m
+        mcd_um           = mcd_m   * 1e6
+        pitch_derived_um = pitch_m * 1e6
+        junction_ar      = ar      # already the AR value being swept
 
         # ── Pre-filter: geometry hard constraints ───────────────────────────
         collapse_index = Mcw_m / max(Mcd_m, 1e-12)
@@ -228,6 +262,7 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
             and mcd_m >= hc.min_feature_width_um * 1e-6
             and mcw_m >= hc.min_feature_width_um * 1e-6
             and collapse_index <= hc.max_collapse_index
+            and hc.min_junction_aspect_ratio <= ar <= hc.max_junction_aspect_ratio
         )
 
         # ── Compute Mcl_max from footprint ──────────────────────────────────
@@ -240,8 +275,9 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
                 row = {
                     "Mcd_um": Mcd_um, "Mcw_um": Mcw_um,
                     "Mcl_derived_mm": 0.0, "Nmc_derived": Nmc_derived,
-                    "pitch_um": pitch_um, "mcd_um": mcd_um, "mcw_um": mcw_um,
-                    "mcl_rung_um": mcl_rung_um,
+                    "junction_ar": ar,
+                    "mcd_derived_um": mcd_um, "pitch_derived_um": pitch_derived_um,
+                    "mcw_um": mcw_um, "mcl_rung_um": mcl_rung_um,
                     "exit_width_um": exit_w_m * 1e6,
                     "exit_depth_um": exit_d_m * 1e6,
                     "Q_total_mlhr": float("nan"),
@@ -284,8 +320,9 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
                 "Mcd_um": Mcd_um, "Mcw_um": Mcw_um,
                 "Mcl_derived_mm": Mcl_derived_m * 1e3,
                 "Nmc_derived": Nmc_derived,
-                "pitch_um": pitch_um, "mcd_um": mcd_um, "mcw_um": mcw_um,
-                "mcl_rung_um": mcl_rung_um,
+                "junction_ar": ar,
+                "mcd_derived_um": mcd_um, "pitch_derived_um": pitch_derived_um,
+                "mcw_um": mcw_um, "mcl_rung_um": mcl_rung_um,
                 "exit_width_um": exit_w_m * 1e6,
                 "exit_depth_um": exit_d_m * 1e6,
                 "Q_total_mlhr": nan, "Q_oil_mlhr": nan,
@@ -303,8 +340,21 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
         # ── Soft constraints ────────────────────────────────────────────────
         soft_flags = _check_soft_constraints(eval_row, soft)
 
-        # passes_hard from evaluate_candidate + collapse_index check
-        passes_hard = bool(eval_row.get("passes_hard_constraints", False)) and passes_hard_geom
+        # passes_hard from evaluate_candidate + collapse_index check + pressure/delam limits
+        Po_mbar = eval_row.get("Po_in_mbar", 0.0) or 0.0
+        passes_Po = hc.min_Po_in_mbar <= Po_mbar <= hc.max_Po_in_mbar
+
+        passes_delam = True
+        if hc.max_delam_line_load_N_per_m is not None:
+            delam = eval_row.get("delam_line_load", 0.0) or 0.0
+            passes_delam = delam <= hc.max_delam_line_load_N_per_m
+
+        passes_hard = (
+            bool(eval_row.get("passes_hard_constraints", False))
+            and passes_hard_geom
+            and passes_Po
+            and passes_delam
+        )
 
         Q_water = spec.design_targets.Qw_in_mlhr
         Q_oil   = eval_row.get("Q_oil_total", float("nan"))
@@ -315,16 +365,17 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
         Q_total_mlhr = Q_water + Q_oil_mlhr
 
         row = {
-            "Mcd_um":          Mcd_um,
-            "Mcw_um":          Mcw_um,
-            "Mcl_derived_mm":  Mcl_derived_m * 1e3,
-            "Nmc_derived":     Nmc_derived,
-            "pitch_um":        pitch_um,
-            "mcd_um":          mcd_um,
-            "mcw_um":          mcw_um,
-            "mcl_rung_um":     mcl_rung_um,
-            "exit_width_um":   exit_w_m * 1e6,
-            "exit_depth_um":   exit_d_m * 1e6,
+            "Mcd_um":           Mcd_um,
+            "Mcw_um":           Mcw_um,
+            "Mcl_derived_mm":   Mcl_derived_m * 1e3,
+            "Nmc_derived":      Nmc_derived,
+            "junction_ar":      ar,
+            "mcd_derived_um":   mcd_um,
+            "pitch_derived_um": pitch_derived_um,
+            "mcw_um":           mcw_um,
+            "mcl_rung_um":      mcl_rung_um,
+            "exit_width_um":    exit_w_m * 1e6,
+            "exit_depth_um":    exit_d_m * 1e6,
             "Q_total_mlhr":    Q_total_mlhr,
             "Q_oil_mlhr":      Q_oil_mlhr,
             "Q_water_mlhr":    Q_water,

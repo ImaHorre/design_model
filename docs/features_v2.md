@@ -1,0 +1,139 @@
+# StepGen Designer — Future Features & PRD v2
+
+Features identified but deferred. Add new items here whenever an idea comes up
+during a session rather than implementing immediately.
+
+---
+
+## Design Search — Automation & UX
+
+### DS-1: `stepgen junction-geometry` CLI helper
+Print derived geometry from droplet target so user doesn't have to calculate manually.
+```
+stepgen junction-geometry --target-droplet 15 --ar-min 2.5 --ar-max 3.0
+→ mcd_derived:  6.3 µm  (set mcw_um to ~6.3 for rung AR ≈ 1)
+→ exit_width:   16.8 µm (at AR midpoint 2.75)
+→ pitch:        33.5 µm (2 × exit_width)
+```
+
+### DS-2: Auto-derive `mcw` from `mcd`
+Remove `mcw_um` from `sweep_ranges`. Derive it from `mcd` using a configurable
+rung cross-section AR (default 1.0). User sets `rung_ar: 1.0` in design_targets
+or hard_constraints. This is the last manually-computed geometry the user has to
+provide themselves.
+
+### DS-3: Rung cross-section AR hard constraint
+Add `min_rung_ar` / `max_rung_ar` to `DesignHardConstraints` (e.g. defaults
+0.5 / 2.0). Checks `mcw / mcd` in the pre-filter. Catches rungs that are
+pathologically wide or narrow relative to their depth.
+
+### DS-4: `min_feature_width_um` auto-derived from `mcd`
+Once `mcd` is fully derived from the droplet target, `min_feature_width_um`
+becomes redundant as a separate user input — it should just equal `mcd`.
+Remove from hard_constraints YAML and set internally.
+
+### DS-5: Qw optimisation mode
+Instead of evaluating at a fixed `Qw_in_mlhr`, find the maximum Qw that keeps
+`Po_in_mbar` below `max_Po_in_mbar`. Makes `Qw_in_mlhr` a result not an input.
+Requires a 1D search (bisection) per candidate geometry.
+
+### DS-6: Smarter sampling — Latin hypercube / Bayesian optimisation
+Replace brute-force Cartesian grid with Latin hypercube sampling for the first
+pass, or Bayesian optimisation for iterative refinement. Reduces number of
+solves needed to find the Pareto front.
+
+### DS-7: Automated sensitivity / monotonicity detection
+After a sweep, analyse which parameters trend monotonically with the objective
+(e.g. Mcd always at max is always best). Flag these to the user so they can
+be fixed on the next pass, reducing the sweep dimension.
+
+### DS-8: Pareto front (deferred from roadmap Step 6)
+`plot_pareto()` already exists. Needs integration with robustness sweep so the
+front can be plotted over (throughput, window_width) axes. Waiting on DS-5 or
+`compute_robustness=True` sweep integration.
+
+---
+
+## Physics Model
+
+### PM-1: Blowout pressure model
+Upper oil pressure limit for monodisperse droplet formation. Currently no model.
+Physically: blowout occurs when ΔP_rung >> dP_cap_ow (capillary threshold).
+Likely `ΔP_rung_max = f × dP_cap_ow` where `f` is empirical (~3–10×, geometry
+dependent). Requires experimental calibration data. Hook into Stage H experiment
+ingestion once data exists.
+
+### PM-2: `max_freq_uniformity_pct` soft constraint not implemented
+The check in `_check_soft_constraints` is a placeholder (`pass`). Needs a
+dedicated `freq_uniformity_pct` metric computed per candidate and compared
+against the soft limit.
+
+### PM-3: Rung expansion section resistance
+The pre-junction rung widening (last ~10% of rung length expands from `mcw` to
+`exit_width`) is currently not modelled in hydraulic resistance. The full rung
+is treated as uniform width `mcw`. A small correction term could be added once
+the geometry is better characterised.
+
+### DS-9: Multi-criteria scoring system
+Add `score_candidates(df, weights=None) → pd.DataFrame` in a new `stepgen/design/scoring.py`.
+Combines Q_total (positive), Po_required (negative), Q_uniformity (negative),
+active_fraction (positive) into a single `score` column [0–100] after per-metric
+normalisation to [0,1]. Hard-failing candidates always score 0. Default weights:
+```python
+DEFAULT_WEIGHTS = {
+    "Q_total_mlhr":      1.0,
+    "Po_required_mbar": -0.5,
+    "Q_uniformity_pct": -0.3,
+    "active_fraction":   0.5,
+}
+```
+Call automatically at end of `run_design_search`; add `score` column to CSV output.
+Add `optimization_target: max_score` as alternative to `max_throughput`.
+
+### DS-10: 3D design-space plot
+Add `plot_design_space_3d(df, x_col='Mcw_um', y_col='mcl_rung_um', z_col='Q_total_mlhr',
+color_col='score') → Figure` to `stepgen/viz/plots.py`.
+Uses `mpl_toolkits.mplot3d` (no new dependency). Passing candidates coloured by
+score (viridis), failing candidates as small grey dots. Shows the user the shape
+of the feasible region and which direction to move the sweep.
+Interactive/rotatable in notebook/GUI; saved as static PNG by CLI at
+`design_results_3d.png` (elev=25, azim=45 default angle).
+Inspired by legacy sweep visualisation code.
+
+---
+
+## Workflow
+
+### WF-1: Iterative sweep automation
+Allow chaining of design searches: first-pass results automatically tighten the
+sweep ranges for a second pass. Could be a `stepgen design --refine` flag that
+takes a previous results CSV and generates a narrowed YAML.
+
+---
+
+## Operating Pressure — Advanced Approaches
+
+### DS-11: Mode A design search (fix Po, vary geometry)
+Instead of Mode B (fix Qw + Qo, derive Po), accept `Po_target_mbar` and `Qw_in_mlhr`
+as fixed design inputs and search for geometries that produce the target droplet size
+at that operating point. Makes Po a first-class design input rather than a derived
+result, eliminating the "optimizer rides to the pressure limit" problem. Requires a
+Mode A evaluator path in `run_design_search` (call `evaluate_candidate` with `Po=`
+rather than `Qo_in_mlhr=`). Bigger refactor but more physically principled for
+users who know their pressure supply capability.
+
+### DS-12: Droplet frequency target as hard constraint
+Add `max_droplet_freq_hz` (and optionally `min_droplet_freq_hz`) to
+`DesignHardConstraints`. A frequency ceiling bounds Q_oil per rung, which
+indirectly caps the derived Po for Mode B searches. Less direct than DS-11
+but simpler to implement and intuitive for users who think in terms of
+droplet production rate rather than pressure.
+
+### PM-4: Minimum Laplace / capillary pressure (low-Po stall)
+Compute the minimum Po required for droplet formation at a junction:
+`P_Laplace ≈ 4 × gamma_ow / exit_depth` (simplified spherical cap).
+Use as a dynamic lower bound on the operating window — if derived Po < P_Laplace
+the device cannot form droplets (oil stays in the rung). Extends PM-1 (blowout,
+high-Po limit) to also cover the low-pressure stall regime.
+Requires `gamma_ow` (oil-water interfacial tension, Pa·m) in `FluidConfig`
+(currently absent; typical value ~5–15 mN/m for PDMS-oil/water systems).

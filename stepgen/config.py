@@ -186,7 +186,12 @@ class DesignHardConstraints:
     max_main_depth_um: float = 200.0
     max_main_width_um: float = 1000.0
     min_feature_width_um: float = 0.5
-    max_collapse_index: float = 8.0      # Mcw / Mcd
+    max_collapse_index: float = 8.0           # Mcw / Mcd
+    min_junction_aspect_ratio: float = 2.5    # exit_width / exit_depth (lower bound)
+    max_junction_aspect_ratio: float = 3.0    # exit_width / exit_depth (upper bound)
+    min_Po_in_mbar: float = 0.0               # minimum derived Po [mbar]; 0 = disabled
+    max_Po_in_mbar: float = 1000.0            # absolute pressure ceiling [mbar]
+    max_delam_line_load_N_per_m: float | None = None  # P_peak × Mcw [N/m]; None = disabled
 
 
 @dataclass(frozen=True)
@@ -203,8 +208,7 @@ class SweepRanges:
     """Grid of geometry values to sweep in the design search."""
     Mcd_um: tuple[float, ...]
     Mcw_um: tuple[float, ...]
-    pitch_um: tuple[float, ...]
-    mcd_um: tuple[float, ...]
+    junction_ar: tuple[float, ...]   # exit_width / exit_depth; derives mcd and pitch
     mcw_um: tuple[float, ...]
     mcl_rung_um: tuple[float, ...]
 
@@ -358,11 +362,17 @@ def load_design_search(path: str | Path) -> "DesignSearchSpec":
     )
 
     hc = raw.get("hard_constraints", {})
+    _delam_raw = hc.get("max_delam_line_load_N_per_m", None)
     hard = DesignHardConstraints(
         max_main_depth_um=float(hc.get("max_main_depth_um", 200.0)),
         max_main_width_um=float(hc.get("max_main_width_um", 1000.0)),
         min_feature_width_um=float(hc.get("min_feature_width_um", 0.5)),
         max_collapse_index=float(hc.get("max_collapse_index", 8.0)),
+        min_junction_aspect_ratio=float(hc.get("min_junction_aspect_ratio", 2.5)),
+        max_junction_aspect_ratio=float(hc.get("max_junction_aspect_ratio", 3.0)),
+        min_Po_in_mbar=float(hc.get("min_Po_in_mbar", 0.0)),
+        max_Po_in_mbar=float(hc.get("max_Po_in_mbar", 1000.0)),
+        max_delam_line_load_N_per_m=float(_delam_raw) if _delam_raw is not None else None,
     )
 
     sc = raw.get("soft_constraints", {})
@@ -377,8 +387,7 @@ def load_design_search(path: str | Path) -> "DesignSearchSpec":
     ranges = SweepRanges(
         Mcd_um=tuple(float(v) for v in sr["Mcd_um"]),
         Mcw_um=tuple(float(v) for v in sr["Mcw_um"]),
-        pitch_um=tuple(float(v) for v in sr["pitch_um"]),
-        mcd_um=tuple(float(v) for v in sr["mcd_um"]),
+        junction_ar=tuple(float(v) for v in sr.get("junction_ar", [2.5, 3.0])),
         mcw_um=tuple(float(v) for v in sr["mcw_um"]),
         mcl_rung_um=tuple(float(v) for v in sr["mcl_rung_um"]),
     )

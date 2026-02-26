@@ -5,7 +5,7 @@
 fluids:
   mu_continuous: 0.00089      # Pa·s  water (continuous phase)
   mu_dispersed:  0.03452      # Pa·s  oil  (dispersed phase — forms droplets)
-  emulsion_ratio: 0.3
+  emulsion_ratio: 0.1
   gamma: 0.0
   temperature_C: 25.0
 

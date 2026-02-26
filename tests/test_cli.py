@@ -294,8 +294,7 @@ _SMALL_DESIGN_YAML = textwrap.dedent("""\
     sweep_ranges:
       Mcd_um: [100]
       Mcw_um: [500]
-      pitch_um: [40]
-      mcd_um: [5]
+      junction_ar: [2.75]
       mcw_um: [5]
       mcl_rung_um: [200]
 """)
