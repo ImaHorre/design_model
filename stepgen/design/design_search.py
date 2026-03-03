@@ -184,10 +184,10 @@ def _build_device_config(
 def _check_soft_constraints(row: dict, soft) -> list[str]:
     """Return a list of soft-constraint violation labels (empty if all pass)."""
     flags: list[str] = []
-    if row.get("Q_uniformity_pct", 0.0) > soft.max_Q_uniformity_pct:
-        flags.append("Q_uniformity")
+    if row.get("Q_spread_pct", 0.0) > soft.max_Q_spread_pct:
+        flags.append("Q_spread")
     if row.get("f_pred_mean", 0.0) > 0 and "f_pred_mean" in row:
-        # freq_uniformity: re-use dP_uniformity as proxy (no dedicated field yet)
+        # freq_spread: no dedicated metric yet (PM-2)
         pass
     if row.get("Po_in_mbar", 0.0) > soft.max_Po_in_mbar:
         flags.append("Po_too_high")
@@ -283,7 +283,7 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
                     "Q_total_mlhr": float("nan"),
                     "Q_oil_mlhr": float("nan"),
                     "Q_water_mlhr": spec.design_targets.Qw_in_mlhr,
-                    "Q_uniformity_pct": float("nan"),
+                    "Q_spread_pct": float("nan"),
                     "Po_required_mbar": float("nan"),
                     "active_fraction": float("nan"),
                     "D_pred_um": exit_d_m * 1e6,   # rough proxy
@@ -327,7 +327,7 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
                 "exit_depth_um": exit_d_m * 1e6,
                 "Q_total_mlhr": nan, "Q_oil_mlhr": nan,
                 "Q_water_mlhr": spec.design_targets.Qw_in_mlhr,
-                "Q_uniformity_pct": nan, "Po_required_mbar": nan,
+                "Q_spread_pct": nan, "Po_required_mbar": nan,
                 "active_fraction": nan, "D_pred_um": nan,
                 "f_pred_mean_Hz": nan, "collapse_index": collapse_index,
                 "passes_hard": False,
@@ -379,7 +379,7 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
             "Q_total_mlhr":    Q_total_mlhr,
             "Q_oil_mlhr":      Q_oil_mlhr,
             "Q_water_mlhr":    Q_water,
-            "Q_uniformity_pct": eval_row.get("Q_uniformity_pct", float("nan")),
+            "Q_spread_pct":    eval_row.get("Q_spread_pct", float("nan")),
             "Po_required_mbar": eval_row.get("Po_in_mbar", float("nan")),
             "active_fraction":  eval_row.get("active_fraction", float("nan")),
             "D_pred_um":        eval_row.get("D_pred", float("nan")) * 1e6

@@ -87,10 +87,11 @@ def plot_rung_dP(
     Plot ΔP_rung(i) = P_oil(i) − P_water(i) across rungs.
     """
     fig, ax = _new_fig()
+    x_mm    = result.x_positions * 1e3
     dP_mbar = (result.P_oil - result.P_water) * 1e-2
-    ax.plot(np.arange(len(dP_mbar)), dP_mbar, marker=".", color="tab:purple")
+    ax.plot(x_mm, dP_mbar, marker=".", color="tab:purple")
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("Rung index")
+    ax.set_xlabel("Position along channel [mm]")
     ax.set_ylabel("ΔP_rung [mbar]")
     ax.set_title("Rung pressure difference")
     fig.tight_layout()
@@ -105,14 +106,14 @@ def plot_rung_flows(
     Plot Q_rung(i) [nL/min] as a bar chart.
     """
     fig, ax = _new_fig()
-    Q_nL = result.Q_rungs * 60.0 * 1e12
-    idx  = np.arange(len(Q_nL))
+    x_mm   = result.x_positions * 1e3
+    Q_nL   = result.Q_rungs * 60.0 * 1e12
     colors = np.where(Q_nL >= 0, "tab:blue", "tab:red")
-    ax.bar(idx, Q_nL, color=colors)
+    ax.bar(x_mm, Q_nL, width=(x_mm[1] - x_mm[0]) * 0.9 if len(x_mm) > 1 else 1.0, color=colors)
     ax.axhline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Rung index")
+    ax.set_xlabel("Position along channel [mm]")
     ax.set_ylabel("Q_rung [nL/min]")
-    ax.set_title("Rung flow rates")
+    ax.set_title("Rung oil flow rates")
     fig.tight_layout()
     return fig
 
@@ -141,10 +142,124 @@ def plot_rung_frequencies(
         f_arr[active] = droplet_frequency(result.Q_rungs[active], D)
 
     fig, ax = _new_fig()
-    ax.bar(np.arange(len(f_arr)), f_arr, color="tab:green")
-    ax.set_xlabel("Rung index")
+    x_mm = result.x_positions * 1e3
+    ax.bar(x_mm, f_arr, width=(x_mm[1] - x_mm[0]) * 0.9 if len(x_mm) > 1 else 1.0, color="tab:green")
+    ax.set_xlabel("Position along channel [mm]")
     ax.set_ylabel("Frequency [Hz]")
     ax.set_title("Per-rung droplet frequency")
+    fig.tight_layout()
+    return fig
+
+
+def plot_combined_profiles(
+    result: "SimResult",
+    config: "DeviceConfig",
+) -> "matplotlib.figure.Figure":
+    """
+    Four-panel spatial profile plot with a shared position x-axis.
+
+    Panels (top to bottom):
+      1. P_oil and P_water [mbar] vs position
+      2. ΔP_rung [mbar] with active/reverse threshold lines
+      3. Per-rung oil flow [nL/hr]
+      4. Per-rung droplet frequency [Hz]
+
+    Regime regions (ACTIVE/REVERSE/OFF) are shown as background shading on
+    every panel.
+    """
+    from stepgen.models.droplets import droplet_diameter, droplet_frequency
+    from stepgen.models.generator import RungRegime, classify_rungs
+
+    N    = len(result.Q_rungs)
+    x_mm = result.x_positions * 1e3
+    dP   = result.P_oil - result.P_water
+
+    regimes = classify_rungs(
+        dP,
+        config.droplet_model.dP_cap_ow_Pa,
+        config.droplet_model.dP_cap_wo_Pa,
+    )
+
+    D     = droplet_diameter(config)
+    f_arr = np.zeros(N)
+    act   = regimes == RungRegime.ACTIVE
+    if np.any(act):
+        f_arr[act] = droplet_frequency(result.Q_rungs[act], D)
+
+    fig, axes = plt.subplots(
+        4, 1, figsize=(10, 12), sharex=True,
+        gridspec_kw={"hspace": 0.06},
+    )
+
+    # ── Regime background shading ──────────────────────────────────────────
+    regime_styles = {
+        RungRegime.ACTIVE:  ("tab:green", 0.08),
+        RungRegime.REVERSE: ("tab:red",   0.18),
+        RungRegime.OFF:     ("tab:gray",  0.18),
+    }
+
+    def _shade(ax):
+        for regime, (color, alpha) in regime_styles.items():
+            mask   = regimes == regime
+            if not np.any(mask):
+                continue
+            padded = np.concatenate([[False], mask, [False]])
+            edges  = np.diff(padded.astype(int))
+            starts = np.where(edges ==  1)[0]
+            ends   = np.where(edges == -1)[0]
+            for s, e in zip(starts, ends):
+                ax.axvspan(x_mm[s], x_mm[min(e, N - 1)],
+                           alpha=alpha, color=color, linewidth=0)
+
+    # ── Panel 1: Pressure profiles ─────────────────────────────────────────
+    ax1 = axes[0]
+    ax1.plot(x_mm, result.P_oil   * 1e-2, color="tab:orange", linewidth=1.2, label="P_oil")
+    ax1.plot(x_mm, result.P_water * 1e-2, color="tab:blue",   linewidth=1.2, label="P_water")
+    ax1.set_ylabel("Pressure [mbar]")
+    ax1.legend(fontsize=8, loc="upper right")
+    _shade(ax1)
+
+    # ── Panel 2: Rung ΔP ──────────────────────────────────────────────────
+    ax2 = axes[1]
+    ax2.plot(x_mm, dP * 1e-2, color="tab:purple", linewidth=1.0)
+    ax2.axhline(
+        config.droplet_model.dP_cap_ow_Pa * 1e-2,
+        color="tab:green", linestyle="--", linewidth=1.0,
+        label=f"dP_cap_ow = {config.droplet_model.dP_cap_ow_Pa*1e-2:.0f} mbar (active threshold)",
+    )
+    ax2.axhline(
+        -config.droplet_model.dP_cap_wo_Pa * 1e-2,
+        color="tab:red", linestyle="--", linewidth=1.0,
+        label=f"−dP_cap_wo = {-config.droplet_model.dP_cap_wo_Pa*1e-2:.0f} mbar (reverse threshold)",
+    )
+    ax2.axhline(0, color="black", linewidth=0.5, linestyle=":")
+    ax2.set_ylabel("ΔP rung [mbar]")
+    ax2.legend(fontsize=8, loc="upper right")
+    _shade(ax2)
+
+    # ── Panel 3: Per-rung oil flow ─────────────────────────────────────────
+    ax3 = axes[2]
+    Q_nL_hr = result.Q_rungs * 3.6e15   # m³/s → nL/hr
+    ax3.plot(x_mm, Q_nL_hr, color="tab:blue", linewidth=1.0)
+    ax3.axhline(0, color="black", linewidth=0.5, linestyle=":")
+    ax3.set_ylabel("Q rung [nL/hr]")
+    _shade(ax3)
+
+    # ── Panel 4: Droplet frequency ─────────────────────────────────────────
+    ax4 = axes[3]
+    ax4.plot(x_mm, f_arr, color="tab:green", linewidth=1.0)
+    ax4.set_ylabel("Frequency [Hz]")
+    ax4.set_xlabel("Position along channel [mm]")
+    _shade(ax4)
+
+    for ax in axes[:-1]:
+        ax.tick_params(labelbottom=False)
+
+    fig.suptitle(
+        f"Spatial profiles  |  Po = {result.Po_in_Pa*1e-2:.1f} mbar  "
+        f"Qw = {result.Qw_in_m3s*3.6e9:.2f} mL/hr",
+        fontsize=11,
+    )
     fig.tight_layout()
     return fig
 
@@ -177,9 +292,10 @@ def plot_regime_map(
     }
 
     fig, ax = _new_fig(figsize=(8, 2))
-    idx = np.arange(len(regimes))
+    x_mm       = result.x_positions * 1e3
+    bar_width  = (x_mm[1] - x_mm[0]) if len(x_mm) > 1 else 1.0
     bar_colors = [color_map[r] for r in regimes]
-    ax.bar(idx, np.ones(len(idx)), color=bar_colors, width=1.0)
+    ax.bar(x_mm, np.ones(len(x_mm)), color=bar_colors, width=bar_width)
 
     # Legend patches
     from matplotlib.patches import Patch
@@ -188,7 +304,7 @@ def plot_regime_map(
         for r in [RungRegime.ACTIVE, RungRegime.REVERSE, RungRegime.OFF]
     ]
     ax.legend(handles=handles, loc="upper right", fontsize=8)
-    ax.set_xlabel("Rung index")
+    ax.set_xlabel("Position along channel [mm]")
     ax.set_yticks([])
     ax.set_title("Rung regime classification")
     fig.tight_layout()
@@ -210,26 +326,30 @@ def plot_operating_map(
     ----------
     map_result : OperatingMapResult
     metric     : one of 'active_fraction', 'reverse_fraction',
-                 'Q_uniformity_pct', 'dP_uniformity_pct', 'P_peak_Pa'
+                 'Q_spread_pct', 'dP_spread_pct', 'P_peak_Pa',
+                 'f_mean', 'dP_avg_mbar', 'Q_rung_nL_hr'
     """
     valid = {
-        "active_fraction":   map_result.active_fraction,
-        "reverse_fraction":  map_result.reverse_fraction,
-        "Q_uniformity_pct":  map_result.Q_uniformity_pct,
-        "dP_uniformity_pct": map_result.dP_uniformity_pct,
-        "P_peak_Pa":         map_result.P_peak_Pa,
+        "active_fraction":  (map_result.active_fraction,              "Active fraction [0–1]"),
+        "reverse_fraction": (map_result.reverse_fraction,             "Reverse fraction [0–1]"),
+        "Q_spread_pct":     (map_result.Q_spread_pct,                 "Q spread (max−min)/mean [%]"),
+        "dP_spread_pct":    (map_result.dP_spread_pct,                "ΔP spread (max−min)/mean [%]"),
+        "P_peak_Pa":        (map_result.P_peak_Pa,                    "Peak oil pressure [Pa]"),
+        "f_mean":           (map_result.f_mean,                       "Mean drop frequency [Hz]"),
+        "dP_avg_mbar":      (map_result.dP_avg * 1e-2,                "Mean rung ΔP [mbar]"),
+        "Q_rung_nL_hr":     (map_result.Q_per_rung_avg * 3.6e15,      "Mean Q/rung [nL/hr]"),
     }
     if metric not in valid:
         raise ValueError(
             f"Unknown metric {metric!r}. Choose from: {list(valid)}"
         )
-    data = valid[metric]
+    data, cb_label = valid[metric]
 
     fig, ax = _new_fig(figsize=(7, 5))
     Po = map_result.Po_grid
     Qw = map_result.Qw_grid
     mesh = ax.pcolormesh(Po, Qw, data, shading="auto", cmap="viridis")
-    fig.colorbar(mesh, ax=ax, label=metric)
+    fig.colorbar(mesh, ax=ax, label=cb_label)
     ax.set_xlabel("P_oil_in [mbar]")
     ax.set_ylabel("Q_water_in [mL/hr]")
     ax.set_title(f"Operating map — {metric}")
@@ -381,22 +501,23 @@ def plot_layout_schematic(
     layout: "object | None" = None,
 ) -> "matplotlib.figure.Figure":
     """
-    Draw the serpentine chip layout to scale.
+    Draw the serpentine chip layout schematic.
 
-    Both main channels (oil and water) are shown side-by-side in each
-    straight serpentine lane, with semicircular turns at alternating ends.
-    A hatched region between the channels represents the rung/junction area.
+    Channel block heights are physically proportional:
+      - Oil / water main channels: height = Mcw
+      - Rung array between them:   height = mcl  (actual rung length)
+
+    Lanes that overflow the chip footprint are drawn faded with a dashed
+    outline, and an overflow warning is annotated above the chip boundary.
 
     Parameters
     ----------
     config : DeviceConfig
     layout : LayoutResult (optional — computed from config if not supplied)
-
-    Returns
-    -------
-    matplotlib.figure.Figure
     """
+    import math
     from stepgen.design.layout import compute_layout
+    from matplotlib.patches import Rectangle, Patch
 
     if layout is None:
         layout = compute_layout(config)
@@ -404,114 +525,116 @@ def plot_layout_schematic(
     fp   = config.footprint
     geom = config.geometry
 
-    # ── Derived quantities in mm ────────────────────────────────────────────
-    Mcw       = geom.main.Mcw    * 1e3   # channel width [mm]
-    ls        = fp.lane_spacing  * 1e3   # gap between channels [mm]
-    tr        = fp.turn_radius   * 1e3   # turn radius buffer [mm]
-    border    = fp.reserve_border * 1e3  # chip border [mm]
-    lane_L    = layout.lane_length     * 1e3
-    lane_pw   = layout.lane_pair_width * 1e3
-    lane_pit  = layout.lane_pitch      * 1e3
-    tot_h     = layout.total_height    * 1e3
-    num_lanes = layout.num_lanes
+    # ── Dimensions [mm] ────────────────────────────────────────────────────
+    Mcw    = geom.main.Mcw   * 1e3   # main channel width
+    mcl    = geom.rung.mcl   * 1e3   # rung length → gap between channels
+    tr     = fp.turn_radius  * 1e3   # turn-end buffer
+    bd     = fp.reserve_border * 1e3 # chip border
 
-    # Chip bounding box (mm)
-    chip_w = lane_L + 2.0 * border
-    chip_h = tot_h  + 2.0 * border
+    area_mm2 = fp.footprint_area_cm2 * 100.0
+    AR       = fp.footprint_aspect_ratio
+    chip_W   = math.sqrt(area_mm2 * AR)
+    chip_H   = math.sqrt(area_mm2 / AR)
+    L_useful = max(chip_W - 2.0 * bd, 1.0)
 
-    # Colours
+    # Serpentine geometry using mcl as the physical rung gap
+    pair_w  = 2.0 * Mcw + mcl           # cross-sectional height per lane
+    pitch   = pair_w + 2.0 * tr         # centre-to-centre lane spacing
+    n_lanes = math.ceil(geom.main.Mcl * 1e3 / L_useful)
+    tot_h   = (n_lanes - 1) * pitch + pair_w
+    fits    = tot_h <= (chip_H - 2.0 * bd)
+
     oil_col   = "tab:orange"
     water_col = "tab:blue"
     rung_col  = "tab:green"
 
-    # Figure size: keep aspect ratio; cap at 14 wide
-    aspect  = chip_w / max(chip_h, 1e-9)
-    fig_w   = min(max(7.0, aspect * 4.0), 14.0)
+    # ── Figure size: fixed width, height from content ───────────────────────
+    show_h  = max(tot_h + 2.0 * bd, chip_H) + bd
+    show_w  = chip_W + 2.0 * bd
+    aspect  = show_w / max(show_h, 1e-9)
+    fig_w   = min(max(8.0, aspect * 7.0), 14.0)
     fig_h   = fig_w / max(aspect, 0.3)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    for lane_i in range(num_lanes):
-        y_base = border + lane_i * lane_pit
-        x0     = border
+    # ── Draw lanes ──────────────────────────────────────────────────────────
+    for i in range(n_lanes):
+        y0     = bd + i * pitch
+        x0     = bd
+        inside = (y0 + pair_w) <= (chip_H - bd + 1e-9)
+        al     = 0.6 if inside else 0.2
+        ls_rect = "-" if inside else "--"
 
-        # Within the lane pair:
-        #   y_base                 → y_base + Mcw          : oil channel
-        #   y_base + Mcw           → y_base + Mcw + ls      : rung gap
-        #   y_base + Mcw + ls      → y_base + 2*Mcw + ls    : water channel
-        y_oil   = y_base
-        y_gap   = y_base + Mcw
-        y_water = y_base + Mcw + ls
+        ax.add_patch(Rectangle(
+            (x0, y0), L_useful, Mcw,
+            color=oil_col, alpha=al, zorder=2, linewidth=0 if inside else 0.5,
+            linestyle=ls_rect,
+        ))
+        ax.add_patch(Rectangle(
+            (x0, y0 + Mcw), L_useful, mcl,
+            color=rung_col, alpha=al * 0.5, zorder=2,
+            hatch="//" if inside else "", linewidth=0,
+        ))
+        ax.add_patch(Rectangle(
+            (x0, y0 + Mcw + mcl), L_useful, Mcw,
+            color=water_col, alpha=al, zorder=2, linewidth=0 if inside else 0.5,
+            linestyle=ls_rect,
+        ))
 
-        from matplotlib.patches import Rectangle
-        ax.add_patch(Rectangle((x0, y_oil),   lane_L, Mcw, color=oil_col,   alpha=0.55, zorder=2))
-        ax.add_patch(Rectangle((x0, y_gap),   lane_L, ls,  color=rung_col,  alpha=0.25, zorder=2,
-                                hatch="//", linewidth=0))
-        ax.add_patch(Rectangle((x0, y_water), lane_L, Mcw, color=water_col, alpha=0.55, zorder=2))
+        # Turn indicator at alternating ends
+        if i < n_lanes - 1:
+            tx = (x0 + L_useful) if (i % 2 == 0) else (x0 - 2.0 * tr)
+            ax.add_patch(Rectangle(
+                (tx, y0), 2.0 * tr, pitch,
+                color="dimgray", alpha=0.12, zorder=2, linewidth=0,
+            ))
 
-        # ── Serpentine turns to next lane ────────────────────────────────
-        if lane_i < num_lanes - 1:
-            # Even lane → right turn; odd lane → left turn
-            # Arc sweeps from π → 0 (right turn, CW in standard coords)
-            #             or 0 → π (left turn, CCW)
-            # Center of the turn (in y): midpoint between bottom of pair in
-            # lane_i and bottom of pair in lane_i+1, offset by one turn radius.
-            y_turn_cen = y_base + lane_pit / 2.0
-            r_oil_cen   = abs(y_turn_cen - (y_oil + Mcw / 2.0))
-            r_water_cen = abs(y_turn_cen - (y_water + Mcw / 2.0))
-
-            if lane_i % 2 == 0:
-                # Right turn: centre at x = border + lane_L
-                x_tc   = border + lane_L
-                t1, t2 = np.pi / 2.0, -np.pi / 2.0   # sweep south-to-north (CW)
-            else:
-                # Left turn: centre at x = border
-                x_tc   = border
-                t1, t2 = np.pi / 2.0, 3.0 * np.pi / 2.0  # sweep south-to-north (CCW)
-
-            for r_cen, col in (
-                (r_oil_cen,   oil_col),
-                (r_water_cen, water_col),
-            ):
-                ri = max(r_cen - Mcw / 2.0, 0.0)
-                ro = r_cen + Mcw / 2.0
-                xp, yp = _arc_polygon(x_tc, y_turn_cen, ri, ro, t1, t2)
-                ax.fill(xp, yp, color=col, alpha=0.55, zorder=2)
-
-    # ── Chip footprint border ───────────────────────────────────────────────
-    from matplotlib.patches import Rectangle as Rect
-    ax.add_patch(Rect(
-        (0, 0), chip_w, chip_h,
-        fill=False, edgecolor="black", linewidth=2, linestyle="--", zorder=3,
+    # ── Chip boundary ───────────────────────────────────────────────────────
+    ax.add_patch(Rectangle(
+        (0, 0), chip_W, chip_H,
+        fill=False, edgecolor="black", linewidth=2, linestyle="--", zorder=5,
     ))
+    # Usable-area guides
+    for y_guide in (bd, chip_H - bd):
+        ax.axhline(y_guide, color="gray", linewidth=0.5, linestyle=":", zorder=4)
 
-    # ── Dimension annotations ───────────────────────────────────────────────
-    ann_kw = dict(ha="center", va="center", fontsize=7, color="dimgray")
-    ax.annotate(f"{lane_L:.1f} mm", xy=(chip_w / 2, -0.4 * border), **ann_kw)
-    ax.annotate(f"{chip_h:.1f} mm", xy=(-0.4 * border, chip_h / 2),
-                rotation=90, **ann_kw)
-    ax.annotate(
-        f"{num_lanes} lane{'s' if num_lanes != 1 else ''}  |  "
-        f"Nmc={config.geometry.Nmc:,}  |  "
-        f"fits={layout.fits_footprint}",
-        xy=(chip_w / 2, chip_h + 0.3 * border),
-        **ann_kw,
-    )
+    # ── Dimension annotations (left side, first lane) ───────────────────────
+    ann_x = -bd * 0.3
+    y_cur = bd
+    for height, label in [(Mcw, f"Mcw\n{Mcw:.3f} mm"), (mcl, f"mcl\n{mcl:.3f} mm")]:
+        ax.annotate(
+            "", xy=(ann_x, y_cur), xytext=(ann_x, y_cur + height),
+            arrowprops=dict(arrowstyle="<->", color="dimgray", lw=0.8),
+        )
+        ax.text(ann_x - bd * 0.15, y_cur + height / 2, label,
+                ha="right", va="center", fontsize=7, color="dimgray")
+        y_cur += height
+
+    # ── Overflow warning ────────────────────────────────────────────────────
+    if not fits:
+        overflow_mm = tot_h - (chip_H - 2.0 * bd)
+        ax.text(
+            chip_W * 0.5, chip_H + bd * 0.4,
+            f"⚠  overflows chip by {overflow_mm:.1f} mm  ({n_lanes} lanes needed)",
+            ha="center", va="bottom", fontsize=8, color="tab:red", zorder=6,
+        )
 
     # ── Legend ──────────────────────────────────────────────────────────────
-    from matplotlib.patches import Patch
     handles = [
-        Patch(color=oil_col,   alpha=0.55, label="Oil main channel"),
-        Patch(color=water_col, alpha=0.55, label="Water main channel"),
-        Patch(color=rung_col,  alpha=0.4,  label="Rung / junction region"),
+        Patch(color=oil_col,   alpha=0.6,  label=f"Oil main channel  (Mcw = {Mcw:.3f} mm)"),
+        Patch(color=water_col, alpha=0.6,  label=f"Water main channel  (Mcw = {Mcw:.3f} mm)"),
+        Patch(color=rung_col,  alpha=0.35, label=f"Rung array  (mcl = {mcl:.3f} mm,  pitch = {geom.rung.pitch*1e6:.0f} µm)"),
     ]
-    ax.legend(handles=handles, loc="upper right", fontsize=8)
+    ax.legend(handles=handles, fontsize=7, loc="upper right")
 
-    ax.set_xlim(-border, chip_w + border)
-    ax.set_ylim(-border, chip_h + border)
+    ax.set_xlim(-bd * 2.0, chip_W + bd * 2.0)
+    ax.set_ylim(-bd, show_h)
+    ax.set_aspect("equal")
     ax.set_xlabel("x [mm]")
     ax.set_ylabel("y [mm]")
-    ax.set_title("Chip layout schematic (top view, to scale)")
-    ax.set_aspect("equal")
+    ax.set_title(
+        f"Layout schematic  |  {n_lanes} lanes  |  "
+        f"Nmc = {geom.Nmc:,}  |  fits = {fits}"
+    )
     fig.tight_layout()
     return fig
 

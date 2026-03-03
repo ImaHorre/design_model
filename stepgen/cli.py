@@ -53,15 +53,27 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         print(f"  Mode    : A (pressure-flow)")
         print(f"  Po      : {row['Po_in_mbar']:.1f} mbar")
     print(f"  Qw      : {row['Qw_in_mlhr']:.2f} mL/hr")
+    q_oil   = row['Q_oil_total']
+    q_water = row['Q_water_total']
+    emulsion_ratio = q_oil / (q_oil + q_water) if (q_oil + q_water) > 0 else 0.0
+    print(f"  Qo      : {q_oil*3.6e12:.1f} µL/hr")
+    print(f"  emulsion: {emulsion_ratio:.3f}  ({emulsion_ratio*100:.1f}% oil by volume)")
     print(f"  Nmc     : {row['Nmc']}")
     print(f"  active  : {row['active_fraction']*100:.1f} %")
     print(f"  reverse : {row['reverse_fraction']*100:.1f} %")
-    print(f"  Q_unif  : {row['Q_uniformity_pct']:.2f} %")
-    print(f"  dP_unif : {row['dP_uniformity_pct']:.2f} %")
+    print(f"  Q_spread: {row['Q_spread_pct']:.2f} %  (mean {row['Q_per_rung_avg']*1e9*3600:.1f} nL/hr per rung)")
+    print(f"  dP_spread: {row['dP_spread_pct']:.2f} %  (mean {row['dP_avg']*1e-2:.1f} mbar per rung)")
     print(f"  D_pred  : {row['D_pred']*1e6:.3f} µm")
-    print(f"  f_mean  : {row['f_pred_mean']:.2f} Hz")
+    print(f"  f_mean  : {row['f_pred_mean']:.2f} Hz  (min {row['f_pred_min']:.2f}  max {row['f_pred_max']:.2f})")
     print(f"  fits    : {row['fits_footprint']}")
-    print(f"  hard OK : {row['passes_hard_constraints']}")
+    if row['passes_hard_constraints']:
+        print(f"  hard OK : True")
+    else:
+        failures = row.get('hard_constraint_failures', '')
+        print(f"  hard OK : False")
+        for msg in failures.split('; '):
+            if msg:
+                print(f"    ✗ {msg}")
 
     if args.out:
         from stepgen.models.generator import iterative_solve
@@ -106,10 +118,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
     from stepgen.config import load_config
     from stepgen.design.layout import compute_layout
     from stepgen.models.generator import iterative_solve
-    from stepgen.viz.plots import (
-        plot_layout_schematic, plot_pressure_profiles, plot_rung_dP,
-        plot_rung_flows, plot_rung_frequencies, plot_regime_map,
-    )
+    from stepgen.viz.plots import plot_layout_schematic, plot_combined_profiles
 
     config  = load_config(args.config)
     Po      = args.Po if args.Po is not None else config.operating.Po_in_mbar
@@ -126,11 +135,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
     plot_fns = {
         "layout_schematic":  lambda: plot_layout_schematic(config, layout),
-        "pressure_profiles": lambda: plot_pressure_profiles(result, config),
-        "rung_dP":           lambda: plot_rung_dP(result, config),
-        "rung_flows":        lambda: plot_rung_flows(result, config),
-        "rung_frequencies":  lambda: plot_rung_frequencies(result, config),
-        "regime_map":        lambda: plot_regime_map(result, config),
+        "spatial_profiles":  lambda: plot_combined_profiles(result, config),
     }
 
     for name, fn in plot_fns.items():
@@ -153,8 +158,15 @@ def _cmd_map(args: argparse.Namespace) -> int:
     from stepgen.viz.plots import plot_operating_map
 
     config   = load_config(args.config)
-    Po_grid  = np.linspace(args.Po_min, args.Po_max, args.Po_n)
-    Qw_grid  = np.linspace(args.Qw_min, args.Qw_max, args.Qw_n)
+    om       = config.operating_map
+    Po_min   = args.Po_min if args.Po_min is not None else om.Po_min_mbar
+    Po_max   = args.Po_max if args.Po_max is not None else om.Po_max_mbar
+    Po_n     = args.Po_n   if args.Po_n   is not None else om.Po_n
+    Qw_min   = args.Qw_min if args.Qw_min is not None else om.Qw_min_mlhr
+    Qw_max   = args.Qw_max if args.Qw_max is not None else om.Qw_max_mlhr
+    Qw_n     = args.Qw_n   if args.Qw_n   is not None else om.Qw_n
+    Po_grid  = np.linspace(Po_min, Po_max, Po_n)
+    Qw_grid  = np.linspace(Qw_min, Qw_max, Qw_n)
 
     map_result = compute_operating_map(config, Po_grid, Qw_grid)
 
@@ -163,7 +175,8 @@ def _cmd_map(args: argparse.Namespace) -> int:
 
     metrics = [
         "active_fraction", "reverse_fraction",
-        "Q_uniformity_pct", "dP_uniformity_pct", "P_peak_Pa",
+        "Q_spread_pct", "dP_spread_pct", "P_peak_Pa",
+        "f_mean", "dP_avg_mbar", "Q_rung_nL_hr",
     ]
 
     print("=== map ===")
@@ -342,12 +355,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Compute operating map over a (Po, Qw) grid and save heatmaps.",
     )
     p_map.add_argument("config", help="Path to device YAML config.")
-    p_map.add_argument("--Po-min", type=float, default=50.0,  metavar="MBAR")
-    p_map.add_argument("--Po-max", type=float, default=500.0, metavar="MBAR")
-    p_map.add_argument("--Po-n",   type=int,   default=10,    metavar="N")
-    p_map.add_argument("--Qw-min", type=float, default=1.0,   metavar="MLHR")
-    p_map.add_argument("--Qw-max", type=float, default=20.0,  metavar="MLHR")
-    p_map.add_argument("--Qw-n",   type=int,   default=5,     metavar="N")
+    p_map.add_argument("--Po-min", type=float, default=None, metavar="MBAR",
+                       help="Min oil pressure [mbar] (overrides operating_map.Po_min_mbar in YAML).")
+    p_map.add_argument("--Po-max", type=float, default=None, metavar="MBAR",
+                       help="Max oil pressure [mbar] (overrides operating_map.Po_max_mbar in YAML).")
+    p_map.add_argument("--Po-n",   type=int,   default=None, metavar="N",
+                       help="Number of Po steps (overrides operating_map.Po_n in YAML).")
+    p_map.add_argument("--Qw-min", type=float, default=None, metavar="MLHR",
+                       help="Min water flow [mL/hr] (overrides operating_map.Qw_min_mlhr in YAML).")
+    p_map.add_argument("--Qw-max", type=float, default=None, metavar="MLHR",
+                       help="Max water flow [mL/hr] (overrides operating_map.Qw_max_mlhr in YAML).")
+    p_map.add_argument("--Qw-n",   type=int,   default=None, metavar="N",
+                       help="Number of Qw steps (overrides operating_map.Qw_n in YAML).")
     p_map.add_argument("--out-dir", type=str,  default=".",
                        metavar="DIR", help="Directory for output PNGs (default: .).")
 
