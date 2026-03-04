@@ -1,4 +1,4 @@
-import numpy as np
+maybe import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from scipy.sparse import lil_matrix

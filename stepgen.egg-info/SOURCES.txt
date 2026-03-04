@@ -10,6 +10,7 @@ stepgen.egg-info/entry_points.txt
 stepgen.egg-info/requires.txt
 stepgen.egg-info/top_level.txt
 stepgen/design/__init__.py
+stepgen/design/design_search.py
 stepgen/design/layout.py
 stepgen/design/operating_map.py
 stepgen/design/sweep.py
@@ -28,7 +29,9 @@ stepgen_seed/__init__.py
 stepgen_seed/example_run.py
 stepgen_seed/hydraulics.py
 stepgen_seed/resistance.py
+stepgen_seed/legacy/main.py
 tests/test_cli.py
+tests/test_design_search.py
 tests/test_experiments.py
 tests/test_generator.py
 tests/test_hydraulics_regression.py
