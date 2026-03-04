@@ -30,28 +30,37 @@ if TYPE_CHECKING:
 # Minimum set of keys every candidate row must contain (PRD §4.1).
 REQUIRED_KEYS: frozenset[str] = frozenset({
     "Nmc", "Q_oil_total", "Q_water_total", "Q_per_rung_avg",
-    "Q_uniformity_pct", "dP_uniformity_pct", "P_peak",
+    "Q_spread_pct", "dP_spread_pct", "P_peak",
     "active_fraction", "reverse_fraction", "off_fraction",
     "D_pred", "f_pred_mean", "delam_line_load", "collapse_index",
     "footprint_area_used", "fits_footprint",
 })
 
 
-def _passes_hard_constraints(config: "DeviceConfig", fits_footprint: bool) -> bool:
-    """Return True if config satisfies all hard manufacturing and footprint constraints."""
+def _check_hard_constraints(config: "DeviceConfig", fits_footprint: bool) -> list[str]:
+    """Return a list of violated hard constraint descriptions. Empty list means all pass."""
     mfg  = config.manufacturing
     geom = config.geometry
+    failures: list[str] = []
     if geom.main.Mcd > mfg.max_main_depth:
-        return False
+        failures.append(
+            f"Mcd ({geom.main.Mcd*1e6:.0f}µm) > max_main_depth ({mfg.max_main_depth*1e6:.0f}µm)"
+        )
     if geom.main.Mcw > mfg.max_main_width:
-        return False
+        failures.append(
+            f"Mcw ({geom.main.Mcw*1e6:.0f}µm) > max_main_width ({mfg.max_main_width*1e6:.0f}µm)"
+        )
     if geom.rung.mcd < mfg.min_feature_width:
-        return False
+        failures.append(
+            f"mcd ({geom.rung.mcd*1e6:.2f}µm) < min_feature_width ({mfg.min_feature_width*1e6:.2f}µm)"
+        )
     if geom.rung.mcw < mfg.min_feature_width:
-        return False
+        failures.append(
+            f"mcw ({geom.rung.mcw*1e6:.2f}µm) < min_feature_width ({mfg.min_feature_width*1e6:.2f}µm)"
+        )
     if not fits_footprint:
-        return False
-    return True
+        failures.append("footprint too large for chip")
+    return failures
 
 
 def _mode_b_derive_po(
@@ -245,9 +254,9 @@ def evaluate_candidate(
         row[f.name] = getattr(layout, f.name)
 
     # ── Hard constraints ───────────────────────────────────────────────────
-    row["passes_hard_constraints"] = _passes_hard_constraints(
-        config, layout.fits_footprint
-    )
+    failures = _check_hard_constraints(config, layout.fits_footprint)
+    row["passes_hard_constraints"]   = len(failures) == 0
+    row["hard_constraint_failures"]  = "; ".join(failures)
 
     # ── Robustness (optional) ───────────────────────────────────────────────
     if compute_robustness:

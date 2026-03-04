@@ -63,9 +63,9 @@ Likely `ΔP_rung_max = f × dP_cap_ow` where `f` is empirical (~3–10×, geomet
 dependent). Requires experimental calibration data. Hook into Stage H experiment
 ingestion once data exists.
 
-### PM-2: `max_freq_uniformity_pct` soft constraint not implemented
+### PM-2: `max_freq_spread_pct` soft constraint not implemented
 The check in `_check_soft_constraints` is a placeholder (`pass`). Needs a
-dedicated `freq_uniformity_pct` metric computed per candidate and compared
+dedicated `freq_spread_pct` metric computed per candidate and compared
 against the soft limit.
 
 ### PM-3: Rung expansion section resistance
@@ -76,14 +76,14 @@ the geometry is better characterised.
 
 ### DS-9: Multi-criteria scoring system
 Add `score_candidates(df, weights=None) → pd.DataFrame` in a new `stepgen/design/scoring.py`.
-Combines Q_total (positive), Po_required (negative), Q_uniformity (negative),
+Combines Q_total (positive), Po_required (negative), Q_spread (negative),
 active_fraction (positive) into a single `score` column [0–100] after per-metric
 normalisation to [0,1]. Hard-failing candidates always score 0. Default weights:
 ```python
 DEFAULT_WEIGHTS = {
     "Q_total_mlhr":      1.0,
     "Po_required_mbar": -0.5,
-    "Q_uniformity_pct": -0.3,
+    "Q_spread_pct":     -0.3,
     "active_fraction":   0.5,
 }
 ```
@@ -129,6 +129,38 @@ This directly answers "which swept variable drove throughput / pressure?"
 and whether the optimum is at the boundary of the swept range (signalling the
 range should be extended). Relates to DS-10: the 3D plot is the interactive/full
 version; this grid is the static printable complement saved as `design_results_plot.png`.
+
+### ~~UX-3: Rung plots use mm position on x-axis~~ ✓ IMPLEMENTED
+All four rung-level report plots (`rung_dP`, `rung_flows`, `rung_frequencies`,
+`regime_map`) now use position along channel [mm] on the x-axis instead of
+rung index, consistent with `pressure_profiles`. Bar widths derived from pitch.
+Also added `Qo` (total oil flow, mL/hr) to `simulate` output.
+
+### UX-4: Interactive y-axis switching in `report` plots
+Currently each metric (ΔP, Q_rung, frequency) is a separate saved PNG.
+A future `stepgen report --interactive` flag (or Jupyter widget) would let the
+user switch the y-variable on a single spatial plot without re-running.
+Deferred — low priority since the separate PNGs cover the use case.
+
+### ~~UX-2: Richer `simulate` output — absolute rung metrics~~ ✓ IMPLEMENTED
+Added `f_pred_min`, `f_pred_max`, `dP_avg` to `DeviceMetrics`. The `simulate`
+output now shows mean flow per rung (nL/hr), mean rung ΔP (mbar), and
+frequency min/max alongside mean so non-uniformity percentages can be
+interpreted in absolute terms.
+
+### ~~UX-1: Hard constraint failure detail in `simulate` output~~ ✓ IMPLEMENTED
+Replace the single `hard OK : False` line with a per-constraint breakdown showing
+exactly which constraint was violated and by how much. Example:
+```
+  hard OK : False
+    ✗ footprint too large for chip
+    ✗ Mcd (250µm) > max_main_depth (200µm)
+```
+Requires refactoring `_passes_hard_constraints` in `sweep.py` to return
+`list[str]` of failure messages instead of a bool, storing them in the row as
+`hard_constraint_failures`, and updating `_cmd_simulate` in `cli.py` to print
+each failure on its own indented line. `passes_hard_constraints` (bool) stays
+in the row for CSV/sweep compatibility, derived as `len(failures) == 0`.
 
 ---
 

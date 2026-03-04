@@ -15,11 +15,11 @@ a set of criteria is reported as the operating window.
 Strict window criteria (all must pass):
     active_fraction  ≥ active_fraction_min
     reverse_fraction ≤ reverse_fraction_max
-    Q_uniformity_pct ≤ Q_uniformity_max_pct
-    dP_uniformity_pct ≤ dP_uniformity_max_pct
+    Q_spread_pct     ≤ Q_spread_max_pct
+    dP_spread_pct    ≤ dP_spread_max_pct
     (optionally) P_peak ≤ blowout_dP_Pa
 
-Relaxed window criteria (subset — uniformity not required):
+Relaxed window criteria (subset — spread not required):
     active_fraction  ≥ active_fraction_min
     reverse_fraction ≤ reverse_fraction_max
 """
@@ -69,23 +69,29 @@ class OperatingMapResult:
 
     Attributes
     ----------
-    Po_grid           : oil pressures [mbar], shape (nPo,)
-    Qw_grid           : water flows [mL/hr], shape (nQw,)
-    active_fraction   : shape (nQw, nPo)
-    reverse_fraction  : shape (nQw, nPo)
-    Q_uniformity_pct  : shape (nQw, nPo)
-    dP_uniformity_pct : shape (nQw, nPo)
-    P_peak_Pa         : shape (nQw, nPo)
-    windows_strict    : list[OperatingWindow] — one per Qw (strict criteria)
-    windows_relaxed   : list[OperatingWindow] — one per Qw (relaxed criteria)
+    Po_grid          : oil pressures [mbar], shape (nPo,)
+    Qw_grid          : water flows [mL/hr], shape (nQw,)
+    active_fraction  : shape (nQw, nPo)
+    reverse_fraction : shape (nQw, nPo)
+    Q_spread_pct     : shape (nQw, nPo)
+    dP_spread_pct    : shape (nQw, nPo)
+    P_peak_Pa        : shape (nQw, nPo)
+    f_mean           : mean drop freq over active rungs [Hz], shape (nQw, nPo)
+    dP_avg           : mean rung ΔP over active rungs [Pa], shape (nQw, nPo)
+    Q_per_rung_avg   : mean Q/rung over active rungs [m³/s], shape (nQw, nPo)
+    windows_strict   : list[OperatingWindow] — one per Qw (strict criteria)
+    windows_relaxed  : list[OperatingWindow] — one per Qw (relaxed criteria)
     """
     Po_grid: np.ndarray
     Qw_grid: np.ndarray
     active_fraction: np.ndarray
     reverse_fraction: np.ndarray
-    Q_uniformity_pct: np.ndarray
-    dP_uniformity_pct: np.ndarray
+    Q_spread_pct: np.ndarray
+    dP_spread_pct: np.ndarray
     P_peak_Pa: np.ndarray
+    f_mean: np.ndarray
+    dP_avg: np.ndarray
+    Q_per_rung_avg: np.ndarray
     windows_strict: list = field(default_factory=list)
     windows_relaxed: list = field(default_factory=list)
 
@@ -146,8 +152,8 @@ def compute_operating_map(
     *,
     active_fraction_min: float = 0.8,
     reverse_fraction_max: float = 0.1,
-    Q_uniformity_max_pct: float = 10.0,
-    dP_uniformity_max_pct: float = 10.0,
+    Q_spread_max_pct: float = 10.0,
+    dP_spread_max_pct: float = 10.0,
     blowout_dP_Pa: float | None = None,
 ) -> OperatingMapResult:
     """
@@ -160,8 +166,8 @@ def compute_operating_map(
     Qw_grid_mlhr         : 1-D array of water flows to sweep [mL/hr]
     active_fraction_min  : minimum active_fraction for strict + relaxed criteria
     reverse_fraction_max : maximum reverse_fraction for strict + relaxed criteria
-    Q_uniformity_max_pct : maximum Q_uniformity_pct for strict window
-    dP_uniformity_max_pct: maximum dP_uniformity_pct for strict window
+    Q_spread_max_pct     : maximum Q_spread_pct for strict window
+    dP_spread_max_pct    : maximum dP_spread_pct for strict window
     blowout_dP_Pa        : if set, P_peak must not exceed this [Pa] (strict)
 
     Returns
@@ -174,11 +180,14 @@ def compute_operating_map(
     nQw = len(Qw_grid)
 
     # Allocate result arrays
-    active_frac   = np.zeros((nQw, nPo))
-    reverse_frac  = np.zeros((nQw, nPo))
-    Q_unif        = np.zeros((nQw, nPo))
-    dP_unif       = np.zeros((nQw, nPo))
-    P_peak        = np.zeros((nQw, nPo))
+    active_frac    = np.zeros((nQw, nPo))
+    reverse_frac   = np.zeros((nQw, nPo))
+    Q_spread       = np.zeros((nQw, nPo))
+    dP_spread      = np.zeros((nQw, nPo))
+    P_peak         = np.zeros((nQw, nPo))
+    f_mean_arr     = np.zeros((nQw, nPo))
+    dP_avg_arr     = np.zeros((nQw, nPo))
+    Q_rung_arr     = np.zeros((nQw, nPo))
 
     for i, Qw in enumerate(tqdm(Qw_grid, desc="operating map", unit="Qw")):
         for j, Po in enumerate(Po_grid):
@@ -186,9 +195,12 @@ def compute_operating_map(
             metrics = compute_metrics(config, result)
             active_frac[i, j]  = metrics.active_fraction
             reverse_frac[i, j] = metrics.reverse_fraction
-            Q_unif[i, j]       = metrics.Q_uniformity_pct
-            dP_unif[i, j]      = metrics.dP_uniformity_pct
+            Q_spread[i, j]     = metrics.Q_spread_pct
+            dP_spread[i, j]    = metrics.dP_spread_pct
             P_peak[i, j]       = metrics.P_peak
+            f_mean_arr[i, j]   = metrics.f_pred_mean
+            dP_avg_arr[i, j]   = metrics.dP_avg
+            Q_rung_arr[i, j]   = metrics.Q_per_rung_avg
 
     # ── Window extraction ──────────────────────────────────────────────────
     windows_strict:  list[OperatingWindow] = []
@@ -197,15 +209,15 @@ def compute_operating_map(
     for i, Qw in enumerate(Qw_grid):
         # Strict mask
         ok_strict = (
-            (active_frac[i]  >= active_fraction_min)  &
+            (active_frac[i]  >= active_fraction_min) &
             (reverse_frac[i] <= reverse_fraction_max) &
-            (Q_unif[i]       <= Q_uniformity_max_pct) &
-            (dP_unif[i]      <= dP_uniformity_max_pct)
+            (Q_spread[i]     <= Q_spread_max_pct)    &
+            (dP_spread[i]    <= dP_spread_max_pct)
         )
         if blowout_dP_Pa is not None:
             ok_strict &= (P_peak[i] <= blowout_dP_Pa)
 
-        # Relaxed mask (no uniformity criteria)
+        # Relaxed mask (no spread criteria)
         ok_relaxed = (
             (active_frac[i]  >= active_fraction_min) &
             (reverse_frac[i] <= reverse_fraction_max)
@@ -223,9 +235,12 @@ def compute_operating_map(
         Qw_grid=Qw_grid,
         active_fraction=active_frac,
         reverse_fraction=reverse_frac,
-        Q_uniformity_pct=Q_unif,
-        dP_uniformity_pct=dP_unif,
+        Q_spread_pct=Q_spread,
+        dP_spread_pct=dP_spread,
         P_peak_Pa=P_peak,
+        f_mean=f_mean_arr,
+        dP_avg=dP_avg_arr,
+        Q_per_rung_avg=Q_rung_arr,
         windows_strict=windows_strict,
         windows_relaxed=windows_relaxed,
     )

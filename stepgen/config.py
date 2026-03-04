@@ -102,6 +102,17 @@ class FootprintConfig:
 
 
 @dataclass(frozen=True)
+class OperatingMapConfig:
+    """Default grid for 'stepgen map'. CLI flags override these when provided."""
+    Po_min_mbar: float = 50.0
+    Po_max_mbar: float = 500.0
+    Po_n: int = 10
+    Qw_min_mlhr: float = 1.0
+    Qw_max_mlhr: float = 20.0
+    Qw_n: int = 5
+
+
+@dataclass(frozen=True)
 class ManufacturingConfig:
     max_main_depth: float = 200e-6     # [m]
     min_feature_width: float = 0.5e-6  # [m]
@@ -185,6 +196,7 @@ class DeviceConfig:
     footprint: FootprintConfig = field(default_factory=FootprintConfig)
     manufacturing: ManufacturingConfig = field(default_factory=ManufacturingConfig)
     droplet_model: DropletModelConfig = field(default_factory=DropletModelConfig)
+    operating_map: OperatingMapConfig = field(default_factory=OperatingMapConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +228,8 @@ class DesignHardConstraints:
 @dataclass(frozen=True)
 class DesignSoftConstraints:
     """Soft performance limits (failing keeps candidate in results but flags it)."""
-    max_Q_uniformity_pct: float = 20.0
-    max_freq_uniformity_pct: float = 20.0
+    max_Q_spread_pct: float = 20.0
+    max_freq_spread_pct: float = 20.0
     max_Po_in_mbar: float = 500.0
     min_active_fraction: float = 0.95
 
@@ -333,6 +345,17 @@ def _parse_manufacturing(d: dict[str, Any]) -> ManufacturingConfig:
     )
 
 
+def _parse_operating_map(d: dict[str, Any]) -> OperatingMapConfig:
+    return OperatingMapConfig(
+        Po_min_mbar=float(d.get("Po_min_mbar", 50.0)),
+        Po_max_mbar=float(d.get("Po_max_mbar", 500.0)),
+        Po_n=int(d.get("Po_n", 10)),
+        Qw_min_mlhr=float(d.get("Qw_min_mlhr", 1.0)),
+        Qw_max_mlhr=float(d.get("Qw_max_mlhr", 20.0)),
+        Qw_n=int(d.get("Qw_n", 5)),
+    )
+
+
 def _parse_droplet_model(d: dict[str, Any]) -> DropletModelConfig:
     return DropletModelConfig(
         k=float(d.get("k", 1.2)),
@@ -359,6 +382,7 @@ def load_config(path: str | Path) -> DeviceConfig:
         footprint=_parse_footprint(raw.get("footprint", {})),
         manufacturing=_parse_manufacturing(raw.get("manufacturing", {})),
         droplet_model=_parse_droplet_model(raw.get("droplet_model", {})),
+        operating_map=_parse_operating_map(raw.get("operating_map", {})),
     )
 
 
@@ -396,8 +420,8 @@ def load_design_search(path: str | Path) -> "DesignSearchSpec":
 
     sc = raw.get("soft_constraints", {})
     soft = DesignSoftConstraints(
-        max_Q_uniformity_pct=float(sc.get("max_Q_uniformity_pct", 20.0)),
-        max_freq_uniformity_pct=float(sc.get("max_freq_uniformity_pct", 20.0)),
+        max_Q_spread_pct=float(sc.get("max_Q_spread_pct", sc.get("max_Q_uniformity_pct", 20.0))),
+        max_freq_spread_pct=float(sc.get("max_freq_spread_pct", sc.get("max_freq_uniformity_pct", 20.0))),
         max_Po_in_mbar=float(sc.get("max_Po_in_mbar", 500.0)),
         min_active_fraction=float(sc.get("min_active_fraction", 0.95)),
     )

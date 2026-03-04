@@ -1,0 +1,118 @@
+COMPARE MODELS SESSION SUMMARY
+===============================
+Purpose: bring a new Claude chat up to speed on the model comparison work done so far.
+
+
+WHAT EXISTS
+-----------
+compare_models.py  — root of repo, run with:
+    .venv/Scripts/python compare_models.py
+    .venv/Scripts/python compare_models.py examples/device_template.yaml
+
+It runs THREE solvers side by side for the same device geometry:
+  1. stepgen_seed (legacy)  — linear, flow-flow BCs, no threshold model
+  2. stepgen NEW linear     — simulate(), pressure-flow BCs, no threshold
+  3. stepgen NEW iterative  — iterative_solve(), pressure-flow BCs, full capillary threshold
+
+BC MATCHING STRATEGY (important)
+---------------------------------
+The two models use different BC types, so a direct comparison is non-trivial.
+
+Current approach in compare_models.py:
+  - User specifies Q_oil_mlhr and Q_water_mlhr in the FLOWS dict at top of script.
+  - Seed runs with those flows natively (Q-Q mode).
+  - Seed's P_oil[0] is extracted — but SEE INDEXING ISSUE BELOW.
+  - New model runs with Po_in = seed P_oil[0] and Qw_in = Q_water.
+
+KNOWN INDEXING ISSUE (unresolved, needs fixing in next session)
+---------------------------------------------------------------
+The seed applies a [::-1] reversal to its pressure arrays:
+    P_oil   = -raw[2::2][::-1]
+    P_water = -raw[3::2][::-1]
+
+This means in the seed:
+    P_oil[0]  = FAR END of oil rail (dead end / lower pressure)
+    P_oil[-1] = INLET END of oil rail (higher pressure)
+
+The new model (mixed BC solver) uses:
+    P_oil[0]  = INLET (set by Po_in)
+    P_oil[-1] = FAR END (dead end)
+
+So the current compare_models.py is matching:
+    Po_in (new model INLET) = seed P_oil[0] (seed FAR END)  <-- WRONG
+
+It should be:
+    Po_in (new model INLET) = seed P_oil[-1] (seed INLET)
+
+This needs to be corrected before results can be properly interpreted.
+The compare_models.py line to fix is:
+    Po_matched_mbar = seed["P_oil_in_Pa"] / 100.0
+Should become:
+    Po_matched_mbar = seed["P_oil_end_Pa"] / 100.0   # P_oil[-1] = seed inlet end
+And the seed dict keys need to correctly label which is inlet vs dead-end.
+
+WHAT WAS CLARIFIED (physics)
+------------------------------
+1. The seed DOES correctly implement a dead-end oil manifold (no oil exits the
+   far end of the oil rail). Row 4 of the seed matrix has B[4]=0 — no drain.
+   My earlier claim that "oil flows out both ends" was WRONG.
+
+2. QOut = Q_O + Q_W at the water outlet IS correct physics.
+   All oil bleeds through the rungs into the water channel over the device length,
+   so water outlet flow = Q_water_in + Q_oil_in. This is simple mass conservation.
+
+3. The real difference between seed and new model is BC TYPE, not dead-end handling:
+   - Seed:      Q_oil_in fixed  +  Q_water_in fixed  (flow-flow, design mode)
+   - New model: Po_in fixed     +  Qw_in fixed        (pressure-flow, operating mode)
+
+4. The P_oil pressure profile shape differs between models as expected:
+   - Both show pressure decreasing from oil inlet toward the dead end.
+   - The reversed indexing in the seed made this look inverted in the comparison output.
+
+WHAT THE SEED DOES HAVE THAT IS DIFFERENT (genuine limitation, not a bug)
+--------------------------------------------------------------------------
+The seed is purely linear — no capillary threshold model, no regime classification.
+It treats all rungs as always open (resistors only). The new model adds:
+  - Capillary threshold: oil-to-water threshold (dP_cap_ow) and water-to-oil (dP_cap_wo)
+  - Regime classification: ACTIVE / REVERSE / OFF per rung
+  - Iterative convergence when regimes change
+
+WHAT STILL NEEDS EXPLORING
+---------------------------
+1. Fix the P_oil indexing mismatch in compare_models.py (see above).
+2. After fixing, re-run and check whether the seed and new model agree well
+   on pressures and flow uniformity when BCs are properly matched.
+3. Run on a REAL device geometry (not the seed example defaults) — user to provide spec.
+4. The seed example has Nmc = 680,000 (Mcl=2040mm, pitch=3um) which is very large.
+   Consider testing with a smaller / more realistic device first.
+
+HOW TO RUN
+----------
+From repo root:
+    .venv/Scripts/python compare_models.py
+        Uses DEFAULT_GEOM and FLOWS dict defined at top of compare_models.py.
+        FLOWS = dict(Q_oil_mlhr=0.064, Q_water_mlhr=0.214) currently set to seed defaults.
+
+    .venv/Scripts/python compare_models.py examples/device_template.yaml
+        Reads geometry from YAML. FLOWS dict still controls the operating flows.
+
+    .venv/Scripts/python -m stepgen simulate examples/example_single.yaml
+        Runs new model CLI directly (no comparison).
+
+KEY FILES
+---------
+compare_models.py                        -- comparison script (repo root)
+examples/device_template.yaml           -- blank YAML template to fill with real device
+stepgen_seed/legacy/main.py             -- original legacy script (read-only reference)
+stepgen_seed/hydraulics.py              -- seed solver (faithful port of legacy)
+stepgen/models/hydraulics.py            -- new model solver
+docs/PRD_v1.md                          -- full spec
+docs/seed_summary.md                    -- summary of seed behaviour and limitations
+
+NEXT STEPS AGREED
+-----------------
+1. Fix indexing issue in compare_models.py so Po_matched uses seed inlet pressure.
+2. Run corrected comparison on user's real device geometry.
+3. Explore results and validate new model outputs make physical sense.
+4. FUTURE (separate PRD item, not started): add Mode B (flow-flow) BC support and
+   operating window robustness feature — plan saved separately by user.

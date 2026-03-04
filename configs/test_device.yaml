@@ -1,0 +1,53 @@
+# example_single.yaml
+# Single-point simulation config.
+# Geometry matches stepgen_seed/example_run.py exactly.
+
+fluids:
+  mu_continuous: 0.00089      # Pa·s  water (continuous phase)
+  mu_dispersed:  0.03452      # Pa·s  oil  (dispersed phase — forms droplets)
+  emulsion_ratio: 0.1
+  gamma: 0.0
+  temperature_C: 25.0
+
+geometry:
+  main:
+    Mcd: 200.0e-6    # 100 µm depth
+    Mcw: 2000.0e-6    # 500 µm width
+    Mcl: 750.0e-3     # 750 mm routed length  →  Nmc = floor(750e-3 / 30e-6) = 25000
+
+  rung:
+    mcd: 10e-6      # 10 µm depth
+    mcw: 15e-6      # 15 µm width
+    mcl: 2000e-6    # 2000 µm length
+    pitch: 30e-6    # 30 µm pitch
+    constriction_ratio: 1.0
+
+  junction:
+    exit_width: 10e-6
+    exit_depth: 15e-6
+    junction_type: step
+
+operating:
+  mode: A
+  Po_in_mbar: 200.0
+  Qw_in_mlhr: 5.0
+  P_out_mbar: 0.0
+
+footprint:
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 2000.0e-6
+
+droplet_model:
+  k: 3.3935   # calibrated: D = k * exit_width^a * exit_depth^b  (SI)
+  a: 0.3390   # power on exit_width
+  b: 0.7198   # power on exit_depth  (depth dominates)
+  dP_cap_ow_mbar: 50.0
+  dP_cap_wo_mbar: 30.0

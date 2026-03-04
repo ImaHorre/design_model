@@ -200,7 +200,7 @@ class TestComputeMetricsTypes:
         m = compute_metrics(cfg, result)
         float_fields = [
             m.Q_oil_total, m.Q_water_total, m.Q_per_rung_avg,
-            m.Q_uniformity_pct, m.dP_uniformity_pct, m.P_peak,
+            m.Q_spread_pct, m.dP_spread_pct, m.P_peak,
             m.active_fraction, m.reverse_fraction, m.off_fraction,
             m.D_pred, m.f_pred_mean, m.delam_line_load, m.collapse_index,
         ]
@@ -268,17 +268,17 @@ class TestComputeMetricsIdentities:
         m = compute_metrics(cfg, result)
         assert m.Q_oil_total == pytest.approx(result.Q_oil_total, rel=1e-12)
 
-    def test_Q_uniformity_nonnegative(self):
+    def test_Q_spread_nonnegative(self):
         cfg = _make_config()
         result = simulate(cfg)
         m = compute_metrics(cfg, result)
-        assert m.Q_uniformity_pct >= 0.0
+        assert m.Q_spread_pct >= 0.0
 
-    def test_dP_uniformity_nonnegative(self):
+    def test_dP_spread_nonnegative(self):
         cfg = _make_config()
         result = simulate(cfg)
         m = compute_metrics(cfg, result)
-        assert m.dP_uniformity_pct >= 0.0
+        assert m.dP_spread_pct >= 0.0
 
 
 class TestComputeMetricsAllActive:
@@ -313,15 +313,15 @@ class TestComputeMetricsAllActive:
         m = compute_metrics(self._CFG, result)
         assert m.Q_per_rung_avg > 0.0
 
-    def test_uniformity_small_for_dominant_rung_resistance(self):
+    def test_spread_small_for_dominant_rung_resistance(self):
         """
         With rung R >> main-channel R, all rungs see ~equal dP and Q.
-        Uniformity should be very small (< 1 %).
+        Spread should be very small (< 1 %).
         """
         result = simulate(self._CFG)
         m = compute_metrics(self._CFG, result)
-        assert m.Q_uniformity_pct < 1.0
-        assert m.dP_uniformity_pct < 1.0
+        assert m.Q_spread_pct < 1.0
+        assert m.dP_spread_pct < 1.0
 
 
 class TestComputeMetricsAllOff:
@@ -348,11 +348,11 @@ class TestComputeMetricsAllOff:
         m = compute_metrics(self._CFG, result)
         assert m.Q_per_rung_avg == pytest.approx(0.0)
 
-    def test_uniformity_zero(self):
+    def test_spread_zero(self):
         result = simulate(self._CFG)
         m = compute_metrics(self._CFG, result)
-        assert m.Q_uniformity_pct == pytest.approx(0.0)
-        assert m.dP_uniformity_pct == pytest.approx(0.0)
+        assert m.Q_spread_pct == pytest.approx(0.0)
+        assert m.dP_spread_pct == pytest.approx(0.0)
 
     def test_f_pred_mean_zero(self):
         result = simulate(self._CFG)

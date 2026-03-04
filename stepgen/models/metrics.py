@@ -13,12 +13,12 @@ All quantities are in SI unless otherwise noted in the field docstring.
 
 Metrics computed here (excluding layout, which is Stage F):
 
-    Nmc               — number of rungs
-    Q_oil_total       — oil inlet flow [m³/s]
-    Q_water_total     — water inlet flow [m³/s]
-    Q_per_rung_avg    — mean Q over ACTIVE rungs (0 if none active) [m³/s]
-    Q_uniformity_pct  — (max−min)/mean × 100 over ACTIVE rungs [%]
-    dP_uniformity_pct — (max−min)/mean × 100 over ACTIVE rung ΔP [%]
+    Nmc            — number of rungs
+    Q_oil_total    — oil inlet flow [m³/s]
+    Q_water_total  — water inlet flow [m³/s]
+    Q_per_rung_avg — mean Q over ACTIVE rungs (0 if none active) [m³/s]
+    Q_spread_pct   — (max−min)/mean × 100 over ACTIVE rungs [%]
+    dP_spread_pct  — (max−min)/mean × 100 over ACTIVE rung ΔP [%]
     P_peak            — max(P_oil) [Pa]
     active_fraction   — fraction of rungs ACTIVE [0–1]
     reverse_fraction  — fraction of rungs REVERSE [0–1]
@@ -52,14 +52,17 @@ class DeviceMetrics:
     Q_oil_total: float       # m³/s
     Q_water_total: float     # m³/s
     Q_per_rung_avg: float    # m³/s — mean over ACTIVE rungs; 0 if none
-    Q_uniformity_pct: float  # %    — (max−min)/mean × 100 for ACTIVE rungs
-    dP_uniformity_pct: float # %    — (max−min)/mean × 100 for ACTIVE rung ΔP
+    Q_spread_pct: float      # %    — (max−min)/mean × 100 for ACTIVE rungs
+    dP_spread_pct: float     # %    — (max−min)/mean × 100 for ACTIVE rung ΔP
     P_peak: float            # Pa   — max oil pressure
     active_fraction: float   # 0–1
     reverse_fraction: float  # 0–1
     off_fraction: float      # 0–1
     D_pred: float            # m    — predicted droplet diameter
     f_pred_mean: float       # Hz   — mean droplet frequency over ACTIVE rungs; 0 if none
+    f_pred_min: float        # Hz   — min droplet frequency over ACTIVE rungs; 0 if none
+    f_pred_max: float        # Hz   — max droplet frequency over ACTIVE rungs; 0 if none
+    dP_avg: float            # Pa   — mean rung ΔP over ACTIVE rungs; 0 if none
     delam_line_load: float   # N/m  — P_peak × Mcw
     collapse_index: float    # —    — Mcw / Mcd (dimensionless aspect ratio)
 
@@ -97,30 +100,30 @@ def compute_metrics(
     reverse_fraction = float(np.sum(reverse_mask) / N)
     off_fraction     = float(np.sum(off_mask)     / N)
 
-    # ── Flow and ΔP uniformity (ACTIVE rungs only) ─────────────────────────
+    # ── Flow and ΔP spread (ACTIVE rungs only) ────────────────────────────
     if np.any(active_mask):
         Q_active = result.Q_rungs[active_mask]
         Q_per_rung_avg = float(np.mean(Q_active))
         Q_mean = float(np.mean(Q_active))
         if Q_mean > 0:
-            Q_uniformity_pct = float(
+            Q_spread_pct = float(
                 (np.max(Q_active) - np.min(Q_active)) / Q_mean * 100.0
             )
         else:
-            Q_uniformity_pct = 0.0
+            Q_spread_pct = 0.0
 
         dP_active = dP[active_mask]
         dP_mean = float(np.mean(dP_active))
         if dP_mean > 0:
-            dP_uniformity_pct = float(
+            dP_spread_pct = float(
                 (np.max(dP_active) - np.min(dP_active)) / dP_mean * 100.0
             )
         else:
-            dP_uniformity_pct = 0.0
+            dP_spread_pct = 0.0
     else:
-        Q_per_rung_avg    = 0.0
-        Q_uniformity_pct  = 0.0
-        dP_uniformity_pct = 0.0
+        Q_per_rung_avg = 0.0
+        Q_spread_pct   = 0.0
+        dP_spread_pct  = 0.0
 
     # ── Peak pressure ──────────────────────────────────────────────────────
     P_peak = float(np.max(result.P_oil))
@@ -130,8 +133,14 @@ def compute_metrics(
     if np.any(active_mask):
         f_arr = droplet_frequency(result.Q_rungs[active_mask], D_pred)
         f_pred_mean = float(np.mean(f_arr))
+        f_pred_min  = float(np.min(f_arr))
+        f_pred_max  = float(np.max(f_arr))
+        dP_avg      = float(np.mean(dP[active_mask]))
     else:
         f_pred_mean = 0.0
+        f_pred_min  = 0.0
+        f_pred_max  = 0.0
+        dP_avg      = 0.0
 
     # ── Mechanical risk ────────────────────────────────────────────────────
     Mcw = config.geometry.main.Mcw
@@ -144,14 +153,17 @@ def compute_metrics(
         Q_oil_total=result.Q_oil_total,
         Q_water_total=result.Q_water_total,
         Q_per_rung_avg=Q_per_rung_avg,
-        Q_uniformity_pct=Q_uniformity_pct,
-        dP_uniformity_pct=dP_uniformity_pct,
+        Q_spread_pct=Q_spread_pct,
+        dP_spread_pct=dP_spread_pct,
         P_peak=P_peak,
         active_fraction=active_fraction,
         reverse_fraction=reverse_fraction,
         off_fraction=off_fraction,
         D_pred=D_pred,
         f_pred_mean=f_pred_mean,
+        f_pred_min=f_pred_min,
+        f_pred_max=f_pred_max,
+        dP_avg=dP_avg,
         delam_line_load=delam_line_load,
         collapse_index=collapse_index,
     )

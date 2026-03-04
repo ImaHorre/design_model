@@ -1,0 +1,66 @@
+# design_search_template.yaml
+# Design-from-targets sweep for StepGen Designer v1.
+#
+# Usage:
+#   stepgen design design_search_template.yaml --out design_results.csv
+#
+# Mcl (main channel length) is NEVER specified here — it is computed
+# automatically as the maximum that fits in the footprint for each
+# (Mcd, Mcw, pitch) combination.
+
+design_targets:
+  target_droplet_um: 5.0          # target droplet diameter [µm]; derives junction geometry
+  target_emulsion_ratio: 0.10      # Q_oil / Q_water (Mode B evaluation)
+  Qw_in_mlhr: 10.0                 # water inlet flow for evaluation [mL/hr]
+
+fluids:
+  mu_continuous: 0.00089           # Pa·s  water (continuous phase)
+  mu_dispersed:  0.03452           # Pa·s  oil  (dispersed phase)
+  emulsion_ratio: 0.10             # Q_oil / Q_water (must match target_emulsion_ratio)
+  gamma: 0.0
+  temperature_C: 25.0
+
+footprint:
+  footprint_area_cm2: 10.0
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6           # m — lateral gap between oil and water channels
+  turn_radius: 500.0e-6            # m — serpentine turn buffer
+  reserve_border: 2.0e-3           # m — chip border
+
+hard_constraints:                  # failing candidates are excluded from results
+  max_main_depth_um: 200.0
+  max_main_width_um: 2000.0
+  min_feature_width_um: 2
+  max_collapse_index: 10          # Mcw / Mcd (collapse risk)
+  min_junction_aspect_ratio: 2.5   # exit_width / exit_depth (lower bound for droplet pinch-off)
+  max_junction_aspect_ratio: 3.0   # exit_width / exit_depth (upper bound)
+  min_Po_in_mbar: 100              # lower pressure bound [mbar]; 0 = disabled
+  max_Po_in_mbar: 1000.0           # absolute pressure ceiling [mbar]; typical PDMS device limit
+  # max_delam_line_load_N_per_m: 100.0  # optional: P_peak × Mcw [N/m]; uncomment to enable
+
+soft_constraints:                  # failing candidates are kept but flagged
+  max_Q_spread_pct: 20.0
+  max_freq_spread_pct: 20.0
+  max_Po_in_mbar: 500.0
+  min_active_fraction: 0.95
+
+optimization_target: max_throughput  # max_throughput | max_window_width (deferred)
+
+sweep_ranges:
+  Mcd_um:      [200]          # main channel depth [µm]
+  Mcw_um:      [500, 1000]          # main channel width [µm]
+  junction_ar: [2.5, 3.0]          # exit_width / exit_depth; derives mcd and pitch automatically
+  mcw_um:      [2, 2.5, 5]              # rung width [µm]
+  mcl_rung_um: [200, 400, 1000]          # rung length (pre-junction section) [µm]
+
+droplet_model:
+  k: 3.3935                        # calibrated D = k * exit_width^a * exit_depth^b (SI)
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0
+  dP_cap_wo_mbar: 30.0
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6

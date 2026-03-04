@@ -136,9 +136,12 @@ class TestComputeOperatingMapShapes:
         for arr in (
             self.result.active_fraction,
             self.result.reverse_fraction,
-            self.result.Q_uniformity_pct,
-            self.result.dP_uniformity_pct,
+            self.result.Q_spread_pct,
+            self.result.dP_spread_pct,
             self.result.P_peak_Pa,
+            self.result.f_mean,
+            self.result.dP_avg,
+            self.result.Q_per_rung_avg,
         ):
             assert arr.shape == (nQw, nPo), f"expected ({nQw},{nPo}), got {arr.shape}"
 
@@ -204,8 +207,8 @@ class TestWindowCriteria:
             cfg, Po_big, np.array([5.0]),
             active_fraction_min=0.5,
             reverse_fraction_max=0.5,
-            Q_uniformity_max_pct=100.0,
-            dP_uniformity_max_pct=100.0,
+            Q_spread_max_pct=100.0,
+            dP_spread_max_pct=100.0,
         )
         w = result.windows_strict[0]
         assert w.is_open is True
