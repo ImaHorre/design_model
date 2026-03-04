@@ -8,3 +8,4 @@ Requires-Dist: scipy
 Requires-Dist: pandas
 Requires-Dist: matplotlib
 Requires-Dist: pyyaml
+Requires-Dist: tqdm

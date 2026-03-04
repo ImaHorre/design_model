@@ -1,0 +1,67 @@
+# test_realistic.yaml
+# Realistic test configuration targeting 2-3 Hz experimental range
+# Based on conditions: 1.5 mL/hr water flow, 300 mbar Po
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+fluids:
+  mu_continuous: 0.00089      # Pa·s  water (continuous / carrier phase)
+  mu_dispersed:  0.03452      # Pa·s  oil   (dispersed / droplet phase)
+  emulsion_ratio: 0.3
+  gamma: 0.0
+  temperature_C: 25.0
+
+geometry:
+  # Moderate size device for realistic testing
+  Nmc_override: 1000
+
+  main:
+    Mcd: 100.0e-6    # 100 µm depth
+    Mcw: 500.0e-6    # 500 µm width
+    Mcl: 3000.0e-6   # 3 mm routed length
+
+  rung:
+    mcd: 0.3e-6      # 0.3 µm depth
+    mcw: 1.0e-6      # 1 µm width
+    mcl: 200.0e-6    # 200 µm length
+    pitch: 3.0e-6    # 3 µm pitch
+    constriction_ratio: 1.0
+
+  junction:
+    exit_width: 1.0e-6    # 1 µm
+    exit_depth: 0.3e-6    # 0.3 µm
+    junction_type: step
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+operating:
+  mode: A
+  Po_in_mbar: 300.0      # Target pressure from user
+  Qw_in_mlhr: 1.5        # Target flow rate from user
+  P_out_mbar: 0.0
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0
+  dP_cap_wo_mbar: 30.0
+
+  # Time-state model parameters (for testing)
+  tau_pinch_ms: 50.0
+  tau_reset_ms: 20.0
+  g_pinch_frac: 0.01
+  dt_ms: 2.0
+  simulation_time_ms: 2000.0 # 2 seconds for good statistics
+
+# ── OPTIONAL ──────────────────────────────────────────────────────────────────
+footprint:
+  footprint_area_cm2: 10.0
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6

@@ -1,0 +1,75 @@
+# test_config_small.yaml
+# Small test configuration for time-state model validation
+# Based on example_single.yaml but with much smaller device
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+fluids:
+  mu_continuous: 0.00089      # Pa·s  water (continuous / carrier phase)
+  mu_dispersed:  0.03452      # Pa·s  oil   (dispersed / droplet phase)
+  emulsion_ratio: 0.3         # Q_oil / Q_water (informational in Mode A)
+  gamma: 0.0
+  temperature_C: 25.0
+
+
+geometry:
+  # Override to get small number of rungs for testing
+  Nmc_override: 10
+
+  main:
+    Mcd: 100.0e-6    # 100 µm depth
+    Mcw: 500.0e-6    # 500 µm width
+    Mcl: 30.0e-6     # 30 µm routed length (very small for testing)
+
+  rung:
+    mcd: 0.3e-6      # 0.3 µm depth
+    mcw: 1.0e-6      # 1 µm width
+    mcl: 200.0e-6    # 200 µm length
+    pitch: 3.0e-6    # 3 µm pitch
+    constriction_ratio: 1.0
+
+  junction:
+    # Sets D_pred via D = k * exit_width^a * exit_depth^b
+    exit_width: 1.0e-6    # 1 µm
+    exit_depth: 0.3e-6    # 0.3 µm  → D_pred ≈ 0.3 µm
+    junction_type: step
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+operating:
+  mode: A
+  Po_in_mbar: 400.0      # oil inlet pressure  [mbar]
+  Qw_in_mlhr: 1.5        # water inlet flow    [mL/hr]
+  P_out_mbar: 0.0
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0   # capillary threshold oil→water [mbar]
+  dP_cap_wo_mbar: 30.0   # capillary threshold water→oil [mbar]
+
+  # Time-state model parameters
+  hydraulic_model: "time_state"
+  tau_pinch_ms: 50.0        # Pinch phase duration [ms]
+  tau_reset_ms: 20.0        # Reset phase duration [ms]
+  g_pinch_frac: 0.01        # Conductance during pinch (1% of open)
+  dt_ms: 2.0                # Time step [ms]
+  simulation_time_ms: 500.0 # Total simulation time [ms] - short for testing
+
+
+# ── OPTIONAL — needed for layout_schematic.png in 'stepgen report' ────────────
+footprint:
+  footprint_area_cm2: 10.0
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+
+# ── OPTIONAL — only affects 'hard OK' flag, not the simulation ────────────────
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6

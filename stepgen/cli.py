@@ -41,6 +41,7 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         Po_in_mbar=args.Po,
         Qw_in_mlhr=args.Qw,
         Qo_in_mlhr=Qo,
+        model_type=args.model,
     )
 
     print("=== simulate ===")
@@ -87,7 +88,7 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
 
     Qo = getattr(args, "Qo", None)
     configs = [load_config(p) for p in args.configs]
-    df      = sweep(configs, Po_in_mbar=args.Po, Qw_in_mlhr=args.Qw, Qo_in_mlhr=Qo)
+    df      = sweep(configs, Po_in_mbar=args.Po, Qw_in_mlhr=args.Qw, Qo_in_mlhr=Qo, model_type=args.model)
 
     out = args.out
     save_results(df, out)
@@ -309,6 +310,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        metavar="MLHR", help="Oil inlet flow [mL/hr] (Mode B: derives Po).")
     p_sim.add_argument("--out", type=str, default=None,
                        metavar="FILE", help="Save metrics JSON to FILE.")
+    p_sim.add_argument("--model", type=str, default=None,
+                       choices=["steady", "duty_factor", "time_state", "time_state_filling"],
+                       help="Hydraulic model variant (default: config or steady).")
 
     # ── sweep ─────────────────────────────────────────────────────────────
     p_sw = sub.add_parser(
@@ -324,6 +328,9 @@ def _build_parser() -> argparse.ArgumentParser:
                       metavar="MLHR", help="Oil inlet flow [mL/hr] (Mode B: derives Po).")
     p_sw.add_argument("--out", type=str, default="sweep.csv",
                       metavar="FILE", help="Output CSV/parquet path (default: sweep.csv).")
+    p_sw.add_argument("--model", type=str, default=None,
+                      choices=["steady", "duty_factor", "time_state", "time_state_filling"],
+                      help="Hydraulic model variant (default: config or steady).")
 
     # ── report ────────────────────────────────────────────────────────────
     p_rep = sub.add_parser(

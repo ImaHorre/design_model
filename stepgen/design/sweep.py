@@ -135,6 +135,7 @@ def evaluate_candidate(
     Po_in_mbar: float | None = None,
     Qw_in_mlhr: float | None = None,
     Qo_in_mlhr: float | None = None,
+    model_type: str | None = None,  # NEW parameter for model selection
     *,
     compute_robustness: bool = False,
 ) -> dict:
@@ -153,6 +154,8 @@ def evaluate_candidate(
     Qo_in_mlhr         : oil inlet flow [mL/hr] for Mode B (flow-flow BC).
                          When supplied, the linear solver derives Po_in_mbar and
                          the result includes ``derived_Po_in_mbar``.
+    model_type         : hydraulic model type; defaults to config.droplet_model.hydraulic_model
+                         or "steady" for backward compatibility
     compute_robustness : when True, run a local operating-map sweep and append
                          window_width_mbar, margin_lower_mbar, margin_upper_mbar,
                          robustness_class to the returned dict.
@@ -170,8 +173,47 @@ def evaluate_candidate(
         derived_Po = _mode_b_derive_po(config, float(Qo), Qw)
         Po = derived_Po
 
-    result  = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
-    metrics = compute_metrics(config, result)
+    # Determine hydraulic model type
+    if model_type is None:
+        model_type = getattr(config.droplet_model, 'hydraulic_model', 'steady')
+
+    # Route to appropriate hydraulic model
+    if model_type == 'steady':
+        # EXISTING path unchanged - preserves backward compatibility
+        result = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
+        metrics = compute_metrics(config, result)
+    else:
+        # NEW path - use enhanced hydraulic models
+        from stepgen.models.hydraulic_models import HydraulicModelRegistry
+        from stepgen.config import mbar_to_pa, mlhr_to_m3s
+
+        # Get enhanced model
+        model = HydraulicModelRegistry.get_model(model_type)
+
+        # Convert units for enhanced model interface
+        Po_Pa = mbar_to_pa(Po)
+        Qw_m3s = mlhr_to_m3s(Qw)
+        P_out_Pa = mbar_to_pa(0.0)  # Default outlet pressure
+
+        # Solve with enhanced model
+        hydraulic_result = model.solve(config, Po_Pa, Qw_m3s, P_out_Pa)
+
+        # Create compatibility layer for existing result structure
+        from stepgen.models.hydraulics import SimResult
+        result = SimResult(
+            P_oil=hydraulic_result.P_oil,
+            P_water=hydraulic_result.P_water,
+            Q_rungs=hydraulic_result.Q_rungs,
+            x_positions=hydraulic_result.x_positions,
+            Q_oil_total=float(np.sum(np.maximum(hydraulic_result.Q_rungs, 0))),  # Sum positive flows
+            Q_water_total=Qw_m3s,
+            Po_in_Pa=Po_Pa,
+            Qw_in_m3s=Qw_m3s,
+            P_out_Pa=P_out_Pa
+        )
+
+        # Use existing metrics computation for compatibility in Phase 1
+        metrics = compute_metrics(config, result)
     layout  = compute_layout(config)
 
     row: dict = {}
@@ -219,6 +261,7 @@ def sweep(
     Po_in_mbar: float | None = None,
     Qw_in_mlhr: float | None = None,
     Qo_in_mlhr: float | None = None,
+    model_type: str | None = None,
 ) -> pd.DataFrame:
     """
     Evaluate a sequence of DeviceConfig candidates and return a DataFrame.
@@ -235,6 +278,7 @@ def sweep(
     Qo_in_mlhr : Mode B — override oil flow [mL/hr]; when supplied,
                  Po_in_mbar is derived by the linear solver and the result
                  includes ``derived_Po_in_mbar`` and ``Qo_in_mlhr``.
+    model_type : hydraulic model variant for all candidates
 
     Returns
     -------
@@ -243,7 +287,7 @@ def sweep(
     rows: list[dict] = []
     for cfg in configs:
         try:
-            row = evaluate_candidate(cfg, Po_in_mbar, Qw_in_mlhr, Qo_in_mlhr)
+            row = evaluate_candidate(cfg, Po_in_mbar, Qw_in_mlhr, Qo_in_mlhr, model_type)
             row["error"] = None
         except Exception as exc:
             row = {"error": str(exc)}

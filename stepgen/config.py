@@ -143,11 +143,30 @@ class DropletModelConfig:
     Depth exponent b > width exponent a: depth dominates droplet size,
     consistent with Rayleigh-Plateau step-emulsification scaling.
     """
+    # Existing fields (preserved)
     k: float = 3.3935  # SI units (m^(1-a-b)); calibrated from empirical data
     a: float = 0.3390  # power on exit_width
     b: float = 0.7198  # power on exit_depth
     dP_cap_ow_mbar: float = 50.0   # oil→water capillary threshold [mbar]
     dP_cap_wo_mbar: float = 30.0   # water→oil reverse threshold [mbar]
+
+    # NEW: Model selection
+    hydraulic_model: str = "steady"  # "steady"|"duty_factor"|"time_state"|"time_state_filling"
+
+    # NEW: Duty factor parameters
+    duty_factor_phi: float = 0.18
+    duty_factor_mode: str = "global"  # "global"|"per_rung"
+
+    # NEW: Time-state parameters
+    tau_pinch_ms: float = 50.0        # Pinch phase duration [ms]
+    tau_reset_ms: float = 20.0        # Reset phase duration [ms]
+    g_pinch_frac: float = 0.01        # Conductance during pinch (1% of open)
+    dt_ms: float = 2.0                # Time step [ms]
+    simulation_time_ms: float = 5000.0 # Total simulation time [ms]
+
+    # NEW: Filling mechanics parameters
+    L_retreat_um: float = 10.0        # Meniscus retreat distance [µm]
+    L_breakup_um: float = 5.0         # Breakup plane distance [µm]
 
     @property
     def dP_cap_ow_Pa(self) -> float:
