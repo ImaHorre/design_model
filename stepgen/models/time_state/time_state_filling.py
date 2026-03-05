@@ -113,6 +113,12 @@ class TimeStateFillingModel(HydraulicModelInterface):
         t_ms = 0.0
         n_steps = int(t_end_ms / dt_ms)
 
+        # Initialize caching variables for performance optimization
+        previous_conductance_factors = None
+        cached_solve_result = None
+        cached_regimes = None
+        cached_rhs_oil = np.zeros(N_rungs)
+
         print(f"Time-state filling simulation: {n_steps} steps, dt={dt_ms:.1f}ms, t_end={t_end_ms:.0f}ms")
 
         # Import progress bar
@@ -132,21 +138,35 @@ class TimeStateFillingModel(HydraulicModelInterface):
             conductance_factors = state_machine.get_conductance_factors(g_pinch_frac)
             g_rungs = g_base * conductance_factors
 
+            # Track state changes for caching optimization
+            current_conductance_factors = tuple(conductance_factors)
+            conductances_changed = (step == 0 or
+                                  current_conductance_factors != previous_conductance_factors)
+
             # 2) Solve hydraulic network with dynamic conductances
             from stepgen.models.hydraulics import _simulate_pa
             from stepgen.models.generator import RungRegime, classify_rungs
 
-            # Calculate capillary pressure compensation (like steady-state model)
-            # First do a quick solve to get pressure differences for classification
-            temp_result = _simulate_pa(config, Po_Pa, Qw_m3s, P_out_Pa, g_rungs=g_rungs)
-            dP = temp_result.P_oil - temp_result.P_water
+            if conductances_changed or cached_solve_result is None:
+                # Calculate capillary pressure compensation (like steady-state model)
+                # First do a quick solve to get pressure differences for classification
+                temp_result = _simulate_pa(config, Po_Pa, Qw_m3s, P_out_Pa, g_rungs=g_rungs)
+                cached_solve_result = temp_result
+                previous_conductance_factors = current_conductance_factors
 
-            # Classify rungs based on pressure difference
-            regimes = classify_rungs(
-                dP,
-                config.droplet_model.dP_cap_ow_Pa,
-                config.droplet_model.dP_cap_wo_Pa,
-            )
+                dP = temp_result.P_oil - temp_result.P_water
+
+                # Classify rungs based on pressure difference
+                regimes = classify_rungs(
+                    dP,
+                    config.droplet_model.dP_cap_ow_Pa,
+                    config.droplet_model.dP_cap_wo_Pa,
+                )
+                cached_regimes = regimes
+            else:
+                # Reuse cached results
+                temp_result = cached_solve_result
+                regimes = cached_regimes
 
             # Calculate RHS offsets for capillary pressure subtraction
             from stepgen.models.hydraulics import rung_resistance
@@ -156,16 +176,22 @@ class TimeStateFillingModel(HydraulicModelInterface):
             rhs_oil[regimes == RungRegime.REVERSE] = +g0 * config.droplet_model.dP_cap_wo_Pa
             rhs_water = -rhs_oil  # equal and opposite at paired water nodes
 
-            # Final solve with capillary pressure compensation
-            result = _simulate_pa(
-                config,
-                Po_Pa,
-                Qw_m3s,
-                P_out_Pa,
-                g_rungs=g_rungs,
-                rhs_oil=rhs_oil,
-                rhs_water=rhs_water
-            )
+            # Check if we need the second solve
+            if conductances_changed or not np.array_equal(rhs_oil, cached_rhs_oil):
+                # Final solve with capillary pressure compensation
+                result = _simulate_pa(
+                    config,
+                    Po_Pa,
+                    Qw_m3s,
+                    P_out_Pa,
+                    g_rungs=g_rungs,
+                    rhs_oil=rhs_oil,
+                    rhs_water=rhs_water
+                )
+                cached_rhs_oil = rhs_oil.copy()
+            else:
+                # Use first solve result if capillary corrections didn't change
+                result = temp_result
 
             # 3) Update volume accumulation with filling mechanics
             for i in range(N_rungs):

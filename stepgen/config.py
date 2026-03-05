@@ -172,8 +172,8 @@ class DropletModelConfig:
     tau_pinch_ms: float = 50.0        # Pinch phase duration [ms]
     tau_reset_ms: float = 20.0        # Reset phase duration [ms]
     g_pinch_frac: float = 0.01        # Conductance during pinch (1% of open)
-    dt_ms: float = 2.0                # Time step [ms]
-    simulation_time_ms: float = 5000.0 # Total simulation time [ms]
+    dt_ms: float = 5.0                # Time step [ms] - optimized for performance
+    simulation_time_ms: float = 3000.0 # Total simulation time [ms] - focus on key behavior
 
     # NEW: Filling mechanics parameters
     L_retreat_um: float = 10.0        # Meniscus retreat distance [µm]

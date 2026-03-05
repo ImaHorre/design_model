@@ -16,7 +16,9 @@
       "Bash(ls:*)",
       "Bash(git mv:*)",
       "Bash(grep:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)"
     ]
   }
 }

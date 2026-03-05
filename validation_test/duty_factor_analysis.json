@@ -1,0 +1,36 @@
+{
+  "optimal_duty_factor": 0.29955239742840317,
+  "execution_time_s": 14.082089900970459,
+  "cross_condition_results": [
+    {
+      "Po_mbar": 300.0,
+      "Qw_mlhr": 1.5,
+      "frequency_rmse_hz": 0.3405791182757961,
+      "frequency_bias_hz": -1.7462873315536125e-06
+    },
+    {
+      "Po_mbar": 300.0,
+      "Qw_mlhr": 5.0,
+      "frequency_rmse_hz": 0.8898420117591184,
+      "frequency_bias_hz": 0.8023023748413658
+    },
+    {
+      "Po_mbar": 400.0,
+      "Qw_mlhr": 1.5,
+      "frequency_rmse_hz": 0.5629267595502888,
+      "frequency_bias_hz": -0.0667104473326449
+    },
+    {
+      "Po_mbar": 400.0,
+      "Qw_mlhr": 5.0,
+      "frequency_rmse_hz": 0.9738830472912631,
+      "frequency_bias_hz": 0.9601174833199453
+    },
+    {
+      "Po_mbar": 600.0,
+      "Qw_mlhr": 20.0,
+      "frequency_rmse_hz": 2.8621020969502187,
+      "frequency_bias_hz": 2.8621020969502187
+    }
+  ]
+}

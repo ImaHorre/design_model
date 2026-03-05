@@ -106,44 +106,71 @@ class TimeStateDFUModel(HydraulicModelInterface):
         R_base = rung_resistance(config)
         g_base = 1.0 / R_base  # Base conductance per rung
 
-        # Time integration loop
+        # Time integration loop with adaptive timestep
         t_ms = 0.0
         n_steps = int(t_end_ms / dt_ms)
 
-        print(f"Time-state simulation: {n_steps} steps, dt={dt_ms:.1f}ms, t_end={t_end_ms:.0f}ms")
+        # Initialize caching variables for performance optimization
+        previous_conductance_factors = None
+        cached_solve_result = None
+        cached_regimes = None
+        cached_rhs_oil = np.zeros(N_rungs)
 
-        # Import progress bar
+        # Initialize adaptive timestep variables
+        base_dt_ms = dt_ms
+        current_dt_ms = dt_ms
+        phase_changes_history = []
+        steady_state_threshold = 10  # Steps without phase changes to consider steady
+
+        print(f"Time-state simulation: ~{n_steps} steps, dt={dt_ms:.1f}ms, t_end={t_end_ms:.0f}ms")
+
+        # Import progress bar - use time-based progress
         try:
             from tqdm import tqdm
             progress_bar = tqdm(
-                range(n_steps),
+                total=t_end_ms,
                 desc="Time-state simulation",
-                unit="step",
-                disable=n_steps < 100  # Only show for longer simulations
+                unit="ms",
+                disable=False  # Always show progress
             )
         except ImportError:
-            progress_bar = range(n_steps)
+            progress_bar = None
 
-        for step in progress_bar:
+        step = 0
+        while t_ms < t_end_ms:
             # 1) Set conductances based on current phases
             conductance_factors = state_machine.get_conductance_factors(g_pinch_frac)
             g_rungs = g_base * conductance_factors
+
+            # Track state changes for caching optimization
+            current_conductance_factors = tuple(conductance_factors)
+            conductances_changed = (step == 0 or
+                                  current_conductance_factors != previous_conductance_factors)
 
             # 2) Solve hydraulic network with dynamic conductances
             from stepgen.models.hydraulics import _simulate_pa
             from stepgen.models.generator import RungRegime, classify_rungs
 
-            # Calculate capillary pressure compensation (like steady-state model)
-            # First do a quick solve to get pressure differences for classification
-            temp_result = _simulate_pa(config, Po_Pa, Qw_m3s, P_out_Pa, g_rungs=g_rungs)
-            dP = temp_result.P_oil - temp_result.P_water
+            if conductances_changed or cached_solve_result is None:
+                # Calculate capillary pressure compensation (like steady-state model)
+                # First do a quick solve to get pressure differences for classification
+                temp_result = _simulate_pa(config, Po_Pa, Qw_m3s, P_out_Pa, g_rungs=g_rungs)
+                cached_solve_result = temp_result
+                previous_conductance_factors = current_conductance_factors
 
-            # Classify rungs based on pressure difference
-            regimes = classify_rungs(
-                dP,
-                config.droplet_model.dP_cap_ow_Pa,
-                config.droplet_model.dP_cap_wo_Pa,
-            )
+                dP = temp_result.P_oil - temp_result.P_water
+
+                # Classify rungs based on pressure difference
+                regimes = classify_rungs(
+                    dP,
+                    config.droplet_model.dP_cap_ow_Pa,
+                    config.droplet_model.dP_cap_wo_Pa,
+                )
+                cached_regimes = regimes
+            else:
+                # Reuse cached results
+                temp_result = cached_solve_result
+                regimes = cached_regimes
 
             # Calculate RHS offsets for capillary pressure subtraction
             from stepgen.models.hydraulics import rung_resistance
@@ -153,16 +180,22 @@ class TimeStateDFUModel(HydraulicModelInterface):
             rhs_oil[regimes == RungRegime.REVERSE] = +g0 * config.droplet_model.dP_cap_wo_Pa
             rhs_water = -rhs_oil  # equal and opposite at paired water nodes
 
-            # Final solve with capillary pressure compensation
-            result = _simulate_pa(
-                config,
-                Po_Pa,
-                Qw_m3s,
-                P_out_Pa,
-                g_rungs=g_rungs,
-                rhs_oil=rhs_oil,
-                rhs_water=rhs_water
-            )
+            # Check if we need the second solve
+            if conductances_changed or not np.array_equal(rhs_oil, cached_rhs_oil):
+                # Final solve with capillary pressure compensation
+                result = _simulate_pa(
+                    config,
+                    Po_Pa,
+                    Qw_m3s,
+                    P_out_Pa,
+                    g_rungs=g_rungs,
+                    rhs_oil=rhs_oil,
+                    rhs_water=rhs_water
+                )
+                cached_rhs_oil = rhs_oil.copy()
+            else:
+                # Use first solve result if capillary corrections didn't change
+                result = temp_result
 
             # 3) Update droplet volume accumulation
             for i in range(N_rungs):
@@ -181,7 +214,28 @@ class TimeStateDFUModel(HydraulicModelInterface):
                         state_machine.trigger_droplet_formation(i)
 
             # 5) Update phase timers and transitions
-            state_machine.update_phase_timers(dt_ms)
+            previous_phases = state_machine.phases.copy()
+            state_machine.update_phase_timers(current_dt_ms)
+
+            # Track phase changes for adaptive timestep and early termination
+            phase_changes_this_step = not np.array_equal(previous_phases, state_machine.phases)
+            phase_changes_history.append(phase_changes_this_step)
+
+            # Keep only recent history for steady-state detection
+            if len(phase_changes_history) > steady_state_threshold:
+                phase_changes_history.pop(0)
+
+            # Adaptive timestep based on phase transitions
+            if phase_changes_this_step:
+                current_dt_ms = base_dt_ms  # Fine timestep during transitions
+            else:
+                current_dt_ms = base_dt_ms * 2  # Coarser timestep during steady state
+
+            # Early termination check - steady state detection
+            if (len(phase_changes_history) >= steady_state_threshold and
+                not any(phase_changes_history)):
+                print(f"Steady state reached at {t_ms:.1f}ms, terminating early")
+                break
 
             # Store time series data (downsample for memory efficiency)
             if step % 10 == 0:  # Store every 10th step
@@ -191,7 +245,20 @@ class TimeStateDFUModel(HydraulicModelInterface):
                 flow_rates_series.append(result.Q_rungs.copy())
                 phase_states_series.append(state_machine.phases.copy())
 
-            t_ms += dt_ms
+            # Update time and progress
+            t_ms += current_dt_ms
+            step += 1
+
+            if progress_bar is not None:
+                progress_bar.update(current_dt_ms)
+                progress_bar.set_postfix({
+                    'Phase transitions': sum(phase_changes_history),
+                    'Current dt': f"{current_dt_ms:.1f}ms"
+                })
+
+        # Close progress bar
+        if progress_bar is not None:
+            progress_bar.close()
 
         # Compute frequencies from droplet event timing
         frequencies = self._compute_frequencies_from_events(

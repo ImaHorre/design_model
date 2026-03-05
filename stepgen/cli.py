@@ -15,6 +15,13 @@ Commands
     stepgen compare  <config.yaml>  <experiments.csv>
                                     [--out compare.csv] [--calibrate]
 
+Experimental Testing Commands
+-----------------------------
+    stepgen test-experimental <config.yaml> <experiments.csv> [--output-dir test_results]
+    stepgen test-duty-factor  <config.yaml> <experiments.csv> [--output-dir DIR]
+    stepgen test-time-state   <config.yaml> <experiments.csv> [--output-dir DIR] [--params PARAM_LIST]
+    stepgen verify-pcap       <config.yaml> [--test-conditions experiments.csv] [--output-dir DIR]
+
 Entry point (pyproject.toml):
     stepgen = "stepgen.cli:main"
 """
@@ -337,6 +344,181 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_test_experimental(args: argparse.Namespace) -> int:
+    """Run comprehensive experimental testing framework."""
+    from stepgen.testing.experimental_test_suite import run_experimental_testing_cli
+
+    results = run_experimental_testing_cli(
+        config_file=args.config,
+        experiment_file=args.experiments,
+        output_dir=args.output_dir,
+        include_duty_factor=not args.skip_duty_factor,
+        include_time_state=not args.skip_time_state,
+        include_pcap=not args.skip_pcap,
+        include_performance=not args.skip_performance
+    )
+
+    print(f"\nTesting complete! Results saved to {args.output_dir}/")
+    return 0
+
+
+def _cmd_test_duty_factor(args: argparse.Namespace) -> int:
+    """Run duty factor analysis only."""
+    from stepgen.testing.duty_factor_analyzer import DutyFactorAnalyzer
+    from stepgen.config import load_config
+    from stepgen.io.experiments import load_experiments
+
+    config = load_config(args.config)
+    experiments_df = load_experiments(args.experiments)
+
+    analyzer = DutyFactorAnalyzer(config, experiments_df)
+    results = analyzer.run_cross_condition_analysis()
+
+    if args.output_dir:
+        import json
+        from pathlib import Path
+        output_path = Path(args.output_dir)
+        output_path.mkdir(exist_ok=True, parents=True)
+
+        # Save results as JSON
+        results_dict = {
+            "optimal_duty_factor": results.optimal_duty_factor,
+            "execution_time_s": results.execution_time_s,
+            "cross_condition_results": [
+                {
+                    "Po_mbar": r.Po_mbar,
+                    "Qw_mlhr": r.Qw_mlhr,
+                    "frequency_rmse_hz": r.frequency_rmse_hz,
+                    "frequency_bias_hz": r.frequency_bias_hz
+                } for r in results.cross_condition_results
+            ]
+        }
+
+        json_path = output_path / "duty_factor_analysis.json"
+        with open(json_path, 'w') as f:
+            json.dump(results_dict, f, indent=2)
+        print(f"Results saved to {json_path}")
+
+    return 0
+
+
+def _cmd_test_time_state(args: argparse.Namespace) -> int:
+    """Run time-state evaluation with parameter sweep."""
+    from stepgen.testing.time_state_evaluator import TimeStateEvaluator
+    from stepgen.config import load_config
+    from stepgen.io.experiments import load_experiments
+
+    config = load_config(args.config)
+    experiments_df = load_experiments(args.experiments)
+
+    # Apply parameter overrides if specified
+    if args.params:
+        param_overrides = {}
+        for param_spec in args.params.split(','):
+            param_spec = param_spec.strip()
+            if '=' in param_spec:
+                param_name, param_value = param_spec.split('=', 1)
+                try:
+                    param_overrides[param_name.strip()] = float(param_value.strip())
+                except ValueError:
+                    print(f"Warning: Could not parse parameter value {param_spec}")
+            else:
+                print(f"Parameter {param_spec} will be analyzed for sensitivity")
+
+        # Apply overrides to config
+        for param_name, value in param_overrides.items():
+            if not hasattr(config.droplet_model, param_name):
+                config.droplet_model.__dict__[param_name] = value
+            else:
+                setattr(config.droplet_model, param_name, value)
+            print(f"Applied override: {param_name} = {value}")
+
+    evaluator = TimeStateEvaluator(config, experiments_df)
+    results = evaluator.run_evaluation()
+
+    if args.output_dir:
+        import json
+        from pathlib import Path
+        output_path = Path(args.output_dir)
+        output_path.mkdir(exist_ok=True, parents=True)
+
+        # Save simplified results
+        results_dict = {
+            "execution_time_s": results.execution_time_s,
+            "baseline_comparisons": [
+                {
+                    "condition": comp.condition_description,
+                    "linear_rmse_hz": comp.linear_rmse_hz,
+                    "time_state_rmse_hz": comp.time_state_rmse_hz,
+                    "improvement_vs_linear": comp.improvement_vs_linear,
+                    "time_penalty_factor": comp.time_penalty_factor
+                } for comp in results.baseline_comparisons
+            ],
+            "parameter_sensitivity": {
+                param_name: {
+                    "optimal_value": sens.optimal_value,
+                    "optimal_rmse": sens.optimal_rmse,
+                    "improvement_factor": sens.improvement_factor
+                } for param_name, sens in results.parameter_sensitivity.items()
+            }
+        }
+
+        json_path = output_path / "time_state_evaluation.json"
+        with open(json_path, 'w') as f:
+            json.dump(results_dict, f, indent=2, default=str)
+        print(f"Results saved to {json_path}")
+
+    return 0
+
+
+def _cmd_verify_pcap(args: argparse.Namespace) -> int:
+    """Verify Pcap implementation consistency across models."""
+    from stepgen.testing.pcap_verifier import PcapVerifier
+    from stepgen.config import load_config
+    from stepgen.io.experiments import load_experiments
+
+    config = load_config(args.config)
+
+    # Load experimental data if provided, otherwise create dummy data
+    if args.test_conditions:
+        experiments_df = load_experiments(args.test_conditions)
+    else:
+        # Create minimal test data for verification
+        import pandas as pd
+        experiments_df = pd.DataFrame({
+            'device_id': ['test'] * 3,
+            'Po_in_mbar': [35.0, 50.0, 40.0],
+            'Qw_in_mlhr': [1.0, 5.0, 1.0],
+            'position': [0.5, 0.5, 0.5],
+            'droplet_diameter_um': [12.0, 12.0, 12.0],
+            'frequency_hz': [0.1, 0.1, 1.0]  # Expected frequencies for verification
+        })
+
+    verifier = PcapVerifier(config, experiments_df)
+    results = verifier.verify_implementation()
+
+    if args.output_dir:
+        import json
+        from pathlib import Path
+        output_path = Path(args.output_dir)
+        output_path.mkdir(exist_ok=True, parents=True)
+
+        # Save verification results
+        results_dict = {
+            "cross_model_consistency": results.cross_model_consistency,
+            "experimental_validation": results.experimental_validation,
+            "implementation_issues": results.implementation_issues,
+            "execution_time_s": results.execution_time_s
+        }
+
+        json_path = output_path / "pcap_verification.json"
+        with open(json_path, 'w') as f:
+            json.dump(results_dict, f, indent=2, default=str)
+        print(f"Verification results saved to {json_path}")
+
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -457,6 +639,58 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cmp.add_argument("--calibrate", action="store_true",
                        help="Scale droplet model k to minimise diameter error before comparing.")
 
+    # ── test-experimental ─────────────────────────────────────────────────
+    p_exp = sub.add_parser(
+        "test-experimental",
+        help="Run comprehensive experimental testing framework.",
+    )
+    p_exp.add_argument("config", help="Path to device YAML config.")
+    p_exp.add_argument("experiments", help="Path to experiment CSV file.")
+    p_exp.add_argument("--output-dir", type=str, default="test_results",
+                       metavar="DIR", help="Directory for results output (default: test_results).")
+    p_exp.add_argument("--skip-duty-factor", action="store_true",
+                       help="Skip duty factor analysis.")
+    p_exp.add_argument("--skip-time-state", action="store_true",
+                       help="Skip time-state model evaluation.")
+    p_exp.add_argument("--skip-pcap", action="store_true",
+                       help="Skip Pcap verification.")
+    p_exp.add_argument("--skip-performance", action="store_true",
+                       help="Skip performance analysis.")
+
+    # ── test-duty-factor ──────────────────────────────────────────────────
+    p_duty = sub.add_parser(
+        "test-duty-factor",
+        help="Run duty factor analysis across operating conditions.",
+    )
+    p_duty.add_argument("config", help="Path to device YAML config.")
+    p_duty.add_argument("experiments", help="Path to experiment CSV file.")
+    p_duty.add_argument("--output-dir", type=str, default=None,
+                        metavar="DIR", help="Directory for results output.")
+
+    # ── test-time-state ───────────────────────────────────────────────────
+    p_time = sub.add_parser(
+        "test-time-state",
+        help="Run time-state model evaluation with parameter sensitivity.",
+    )
+    p_time.add_argument("config", help="Path to device YAML config.")
+    p_time.add_argument("experiments", help="Path to experiment CSV file.")
+    p_time.add_argument("--output-dir", type=str, default=None,
+                        metavar="DIR", help="Directory for results output.")
+    p_time.add_argument("--params", type=str, default=None,
+                        metavar="PARAM_LIST",
+                        help="Comma-separated list of parameters to analyze (e.g., 'tau_pinch_ms=50,dt_ms').")
+
+    # ── verify-pcap ───────────────────────────────────────────────────────
+    p_pcap = sub.add_parser(
+        "verify-pcap",
+        help="Verify Pcap implementation consistency across model types.",
+    )
+    p_pcap.add_argument("config", help="Path to device YAML config.")
+    p_pcap.add_argument("--test-conditions", type=str, default=None,
+                        metavar="CSV", help="Path to experiment CSV for validation (optional).")
+    p_pcap.add_argument("--output-dir", type=str, default=None,
+                        metavar="DIR", help="Directory for results output.")
+
     return parser
 
 
@@ -483,6 +717,10 @@ def main(argv: list[str] | None = None) -> int:
         "map":      _cmd_map,
         "design":   _cmd_design,
         "compare":  _cmd_compare,
+        "test-experimental": _cmd_test_experimental,
+        "test-duty-factor": _cmd_test_duty_factor,
+        "test-time-state": _cmd_test_time_state,
+        "verify-pcap": _cmd_verify_pcap,
     }
     return dispatch[args.command](args)
 
