@@ -12,7 +12,8 @@
       "Bash(cd C:\\\\Users\\\\conor\\\\Documents\\\\Code Projects\\\\PE\\\\design_model)",
       "Bash(python:*)",
       "Bash(stepgen simulate:*)",
-      "Bash(git merge:*)"
+      "Bash(git merge:*)",
+      "Bash(ls:*)"
     ]
   }
 }
