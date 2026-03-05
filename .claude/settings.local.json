@@ -11,7 +11,8 @@
       "Bash(powershell -Command \"Measure-Command { .venv/Scripts/stepgen simulate test_device.yaml } | Select-Object TotalSeconds\")",
       "Bash(cd C:\\\\Users\\\\conor\\\\Documents\\\\Code Projects\\\\PE\\\\design_model)",
       "Bash(python:*)",
-      "Bash(stepgen simulate:*)"
+      "Bash(stepgen simulate:*)",
+      "Bash(git merge:*)"
     ]
   }
 }
