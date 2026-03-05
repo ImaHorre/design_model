@@ -4,7 +4,7 @@
 
 fluids:
   mu_continuous: 0.00089      # Pa·s  water (continuous phase)
-  mu_dispersed:  0.03452      # Pa·s  oil  (dispersed phase — forms droplets)
+  mu_dispersed:  0.06      # Pa·s  oil  (dispersed phase — forms droplets)
   emulsion_ratio: 0.1
   gamma: 0.0
   temperature_C: 20.0
@@ -43,7 +43,7 @@ footprint:
 manufacturing:
   max_main_depth: 200.0e-6
   min_feature_width: 0.5e-6
-  max_main_width: 1000.0e-6
+  max_main_width: 2000.0e-6
 
 operating_map:
   Po_min_mbar: 50.0
@@ -57,5 +57,5 @@ droplet_model:
   k: 3.3935   # calibrated: D = k * exit_width^a * exit_depth^b  (SI)
   a: 0.3390   # power on exit_width
   b: 0.7198   # power on exit_depth  (depth dominates)
-  dP_cap_ow_mbar: 50.0
+  dP_cap_ow_mbar: 35.0
   dP_cap_wo_mbar: 30.0

@@ -13,7 +13,10 @@
       "Bash(python:*)",
       "Bash(stepgen simulate:*)",
       "Bash(git merge:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git mv:*)",
+      "Bash(grep:*)",
+      "Bash(git reset:*)"
     ]
   }
 }
