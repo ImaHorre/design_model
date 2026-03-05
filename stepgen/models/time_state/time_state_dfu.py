@@ -112,20 +112,56 @@ class TimeStateDFUModel(HydraulicModelInterface):
 
         print(f"Time-state simulation: {n_steps} steps, dt={dt_ms:.1f}ms, t_end={t_end_ms:.0f}ms")
 
-        for step in range(n_steps):
+        # Import progress bar
+        try:
+            from tqdm import tqdm
+            progress_bar = tqdm(
+                range(n_steps),
+                desc="Time-state simulation",
+                unit="step",
+                disable=n_steps < 100  # Only show for longer simulations
+            )
+        except ImportError:
+            progress_bar = range(n_steps)
+
+        for step in progress_bar:
             # 1) Set conductances based on current phases
             conductance_factors = state_machine.get_conductance_factors(g_pinch_frac)
             g_rungs = g_base * conductance_factors
 
             # 2) Solve hydraulic network with dynamic conductances
             from stepgen.models.hydraulics import _simulate_pa
+            from stepgen.models.generator import RungRegime, classify_rungs
 
+            # Calculate capillary pressure compensation (like steady-state model)
+            # First do a quick solve to get pressure differences for classification
+            temp_result = _simulate_pa(config, Po_Pa, Qw_m3s, P_out_Pa, g_rungs=g_rungs)
+            dP = temp_result.P_oil - temp_result.P_water
+
+            # Classify rungs based on pressure difference
+            regimes = classify_rungs(
+                dP,
+                config.droplet_model.dP_cap_ow_Pa,
+                config.droplet_model.dP_cap_wo_Pa,
+            )
+
+            # Calculate RHS offsets for capillary pressure subtraction
+            from stepgen.models.hydraulics import rung_resistance
+            g0 = 1.0 / rung_resistance(config)
+            rhs_oil = np.zeros(N_rungs, dtype=float)
+            rhs_oil[regimes == RungRegime.ACTIVE] = -g0 * config.droplet_model.dP_cap_ow_Pa
+            rhs_oil[regimes == RungRegime.REVERSE] = +g0 * config.droplet_model.dP_cap_wo_Pa
+            rhs_water = -rhs_oil  # equal and opposite at paired water nodes
+
+            # Final solve with capillary pressure compensation
             result = _simulate_pa(
                 config,
                 Po_Pa,
                 Qw_m3s,
                 P_out_Pa,
-                g_rungs=g_rungs
+                g_rungs=g_rungs,
+                rhs_oil=rhs_oil,
+                rhs_water=rhs_water
             )
 
             # 3) Update droplet volume accumulation

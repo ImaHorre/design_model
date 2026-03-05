@@ -35,6 +35,28 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     from stepgen.design.sweep import evaluate_candidate
 
     config = load_config(args.config)
+
+    # Apply CLI parameter overrides for time-state models
+    if hasattr(args, 'dt') and args.dt is not None:
+        config.droplet_model.__dict__['dt_ms'] = args.dt
+        print(f"  Override: dt = {args.dt} ms")
+
+    if hasattr(args, 't_end') and getattr(args, 't_end', None) is not None:
+        config.droplet_model.__dict__['simulation_time_ms'] = args.t_end
+        print(f"  Override: t_end = {args.t_end} ms")
+
+    if hasattr(args, 'tau_pinch') and getattr(args, 'tau_pinch', None) is not None:
+        config.droplet_model.__dict__['tau_pinch_ms'] = args.tau_pinch
+        print(f"  Override: tau_pinch = {args.tau_pinch} ms")
+
+    if hasattr(args, 'tau_reset') and getattr(args, 'tau_reset', None) is not None:
+        config.droplet_model.__dict__['tau_reset_ms'] = args.tau_reset
+        print(f"  Override: tau_reset = {args.tau_reset} ms")
+
+    if hasattr(args, 'g_pinch_frac') and getattr(args, 'g_pinch_frac', None) is not None:
+        config.droplet_model.__dict__['g_pinch_frac'] = args.g_pinch_frac
+        print(f"  Override: g_pinch_frac = {args.g_pinch_frac}")
+
     Qo = getattr(args, "Qo", None)
     row = evaluate_candidate(
         config,
@@ -100,6 +122,23 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
 
     Qo = getattr(args, "Qo", None)
     configs = [load_config(p) for p in args.configs]
+
+    # Apply CLI parameter overrides for time-state models
+    for config in configs:
+        if hasattr(args, 'dt') and args.dt is not None:
+            config.droplet_model.__dict__['dt_ms'] = args.dt
+
+        if hasattr(args, 't_end') and getattr(args, 't_end', None) is not None:
+            config.droplet_model.__dict__['simulation_time_ms'] = args.t_end
+
+        if hasattr(args, 'tau_pinch') and getattr(args, 'tau_pinch', None) is not None:
+            config.droplet_model.__dict__['tau_pinch_ms'] = args.tau_pinch
+
+        if hasattr(args, 'tau_reset') and getattr(args, 'tau_reset', None) is not None:
+            config.droplet_model.__dict__['tau_reset_ms'] = args.tau_reset
+
+        if hasattr(args, 'g_pinch_frac') and getattr(args, 'g_pinch_frac', None) is not None:
+            config.droplet_model.__dict__['g_pinch_frac'] = args.g_pinch_frac
     df      = sweep(configs, Po_in_mbar=args.Po, Qw_in_mlhr=args.Qw, Qo_in_mlhr=Qo, model_type=args.model)
 
     out = args.out
@@ -326,6 +365,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sim.add_argument("--model", type=str, default=None,
                        choices=["steady", "duty_factor", "time_state", "time_state_filling"],
                        help="Hydraulic model variant (default: config or steady).")
+    p_sim.add_argument("--dt", type=float, default=None,
+                       metavar="MS", help="Time step for time-state models [ms] (overrides config).")
+    p_sim.add_argument("--t-end", type=float, default=None,
+                       metavar="MS", help="Simulation time for time-state models [ms] (overrides config).")
+    p_sim.add_argument("--tau-pinch", type=float, default=None,
+                       metavar="MS", help="Pinch phase duration [ms] (overrides config).")
+    p_sim.add_argument("--tau-reset", type=float, default=None,
+                       metavar="MS", help="Reset phase duration [ms] (overrides config).")
+    p_sim.add_argument("--g-pinch-frac", type=float, default=None,
+                       metavar="FRAC", help="Pinch conductance fraction (overrides config).")
 
     # ── sweep ─────────────────────────────────────────────────────────────
     p_sw = sub.add_parser(
@@ -344,6 +393,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sw.add_argument("--model", type=str, default=None,
                       choices=["steady", "duty_factor", "time_state", "time_state_filling"],
                       help="Hydraulic model variant (default: config or steady).")
+    p_sw.add_argument("--dt", type=float, default=None,
+                      metavar="MS", help="Time step for time-state models [ms] (overrides config).")
+    p_sw.add_argument("--t-end", type=float, default=None,
+                      metavar="MS", help="Simulation time for time-state models [ms] (overrides config).")
+    p_sw.add_argument("--tau-pinch", type=float, default=None,
+                      metavar="MS", help="Pinch phase duration [ms] (overrides config).")
+    p_sw.add_argument("--tau-reset", type=float, default=None,
+                      metavar="MS", help="Reset phase duration [ms] (overrides config).")
+    p_sw.add_argument("--g-pinch-frac", type=float, default=None,
+                      metavar="FRAC", help="Pinch conductance fraction (overrides config).")
 
     # ── report ────────────────────────────────────────────────────────────
     p_rep = sub.add_parser(

@@ -158,7 +158,7 @@ class DropletModelConfig:
     k: float = 3.3935  # SI units (m^(1-a-b)); calibrated from empirical data
     a: float = 0.3390  # power on exit_width
     b: float = 0.7198  # power on exit_depth
-    dP_cap_ow_mbar: float = 50.0   # oil→water capillary threshold [mbar]
+    dP_cap_ow_mbar: float = 30.0   # oil→water capillary threshold [mbar] (experimental: W11_1 @ 1mL/hr)
     dP_cap_wo_mbar: float = 30.0   # water→oil reverse threshold [mbar]
 
     # NEW: Model selection
