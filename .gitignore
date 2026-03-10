@@ -1,6 +1,5 @@
 # Output files
 *.csv
-*.png
 
 # Python
 __pycache__/
