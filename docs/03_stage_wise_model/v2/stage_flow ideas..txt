@@ -1,0 +1,97 @@
+## Working Hypothesis for System Behavior
+
+Based on experimental observations and hydraulic reasoning, we propose the following conceptual model for droplet generation in this step-emulsification device.
+
+The droplet formation cycle appears to consist of two dominant stages:
+
+### Stage 1 — Confined Displacement (Hydraulic Stage)
+
+Oil flows through a long, narrow microchannel before reaching the step junction.  
+This microchannel has very high hydraulic resistance compared to the junction region.
+
+Because the microchannel resistance is large, most of the pressure drop occurs along the microchannel itself.
+
+Thus:
+
+P_inlet → large channel resistance → junction → droplet
+
+As inlet pressure \(P_o\) increases, the flow rate through the microchannel increases approximately proportionally:
+
+\[
+Q \approx \frac{P_o - P_j}{R_{channel}}
+\]
+
+However the pressure at the junction \(P_j\) changes very little when \(P_o\) changes, because nearly the entire pressure drop occurs across the long narrow channel.
+
+Therefore:
+
+- Increasing \(P_o\) mainly increases the **flow rate through the channel**
+- The **junction pressure remains roughly constant**
+
+This stage corresponds to the oil meniscus advancing through the confined channel and pushing water out of the junction region.
+
+Experimentally this stage occupies the majority of the droplet cycle (often ~80%).
+
+Its duration decreases strongly when inlet pressure increases.
+
+---
+
+### Stage 2 — Droplet Growth and Necking (Capillary Stage)
+
+Once the oil meniscus reaches the step junction, oil protrudes into the larger reservoir and forms a growing droplet.
+
+The pressure inside the droplet is governed primarily by Laplace pressure:
+
+\[
+P_{drop} = P_w + \frac{2\gamma}{R}
+\]
+
+where
+
+- \( \gamma \) is the interfacial tension
+- \( R \) is the droplet radius
+
+As the droplet grows:
+
+- \(R\) increases
+- Laplace pressure decreases
+- the pressure difference driving oil into the droplet increases
+
+This leads to accelerating droplet growth until the neck becomes unstable and breaks.
+
+Because droplet pressure is controlled by curvature rather than inlet pressure, this stage appears to be **weakly dependent on \(P_o\)**.
+
+Experimentally, the droplet growth stage occupies a relatively small portion of the cycle (roughly 10–15%) and changes only slightly when inlet pressure is varied.
+
+---
+
+### Stage 3 — Pinch-Off
+
+The oil neck becomes unstable and breaks, releasing the droplet.
+
+This occurs extremely quickly and contributes negligibly to the overall cycle time.
+
+---
+
+### Resulting Cycle Time
+
+The total droplet cycle can therefore be approximated as:
+
+\[
+T_{cycle} \approx T_{displacement} + T_{growth}
+\]
+
+where:
+
+- \(T_{displacement}\) is primarily controlled by hydraulic resistance and inlet pressure
+- \(T_{growth}\) is primarily controlled by capillary and viscous effects
+
+---
+
+### Possible Implication: Maximum Droplet Generation Rate
+
+If droplet growth is dominated by capillary and viscous physics, it suggests that for a given fluid system (viscosity and interfacial tension) and geometry, there may exist an approximate **upper limit to droplet generation frequency**.
+
+Increasing inlet pressure beyond a certain point may only shorten the displacement stage, while the droplet growth stage remains roughly constant.
+
+In that regime the droplet generator would behave as a **capillary-limited system**, where droplet frequency cannot increase indefinitely with pressure.

@@ -1,0 +1,788 @@
+= Claude-ready brief: stage-wise droplet formation model update
+
+== Purpose
+
+This brief defines what must be changed in the droplet-formation model, what is no longer allowed, what counts as success, how the updated code must be tested, and what kinds of feedback/refinement are expected after comparison with experimental data.
+
+The core instruction is simple:
+
+*Do not continue using the old single-flow-rate logic, and do not reuse the old steady single-phase geometric resistance as the governing Stage 1 law.*
+
+The model must be restructured around *two distinct physical stages* with different governing behaviour.
+
+== Executive summary
+
+The current modeling logic is no longer acceptable as the main physical interpretation.
+
+The old approach effectively assumes that one oil flow rate governs the whole cycle, so that total cycle time can be estimated from something like
+
+$ T approx (V_("drop") + V_("extra")) / Q _("oil") $
+
+That approach fails because the experiment shows that the cycle is split into regimes with very different behaviour:
+
+- *Stage 1:* slow confined displacement of prewetted water by oil inside the rung/terrace region.
+- *Stage 2:* faster bulb growth and necking after oil reaches the step.
+- *Stage 3:* very rapid snap-off/reset, below current frame resolution.
+
+The most important experimental contradiction to the old model is this:
+
+- the displaced water volume in Stage 1 is smaller than the final droplet volume,
+- yet Stage 1 takes longer than Stage 2.
+
+That means the transport law in Stage 1 is not the same as the one governing Stage 2. It also means that simply dividing a total processed volume by a single oil flow rate is not physically appropriate.
+
+== Non-negotiable instructions
+
+#box(stroke: red, inset: 8pt)[
+  *The following are non-negotiable.*
+
+  - Do not use the old steady single-phase geometric rung resistance as the governing law for Stage 1.
+  - Do not model one droplet cycle as one constant-flow process.
+  - Do not use a single experiment's absolute times as model parameters.
+  - Do not hide missing physics behind arbitrary tuning multipliers unless they are explicitly isolated as temporary empirical placeholders.
+  - Do not present empirical correction factors as if they are mechanistic truths.
+]
+
+== What has been learned experimentally
+
+=== Stage structure
+
+The experiment indicates that one droplet cycle is best understood as three stages.
+
+==== Stage 1: confined displacement
+
+- Oil starts from a reset meniscus upstream of the step.
+- Oil advances through a confined region.
+- Oil displaces prewetted water ahead of it.
+- This stage dominates the cycle time.
+- This is not droplet growth in the usual sense; it is primarily a confined two-phase displacement process.
+- This stage is slow even though the associated displaced volume is relatively small.
+
+==== Stage 2: bulb growth and necking
+
+- This stage begins when oil reaches the step edge.
+- At the end of Stage 1, bulb volume outside the step is effectively zero.
+- After crossing the step, oil forms a bulb.
+- Water enters along the sides and defines the neck.
+- The bulb grows as oil is delivered into it.
+- Oil delivery appears to accelerate as necking proceeds.
+- This stage is shorter than Stage 1 even though the final droplet volume is larger than the Stage 1 displaced water volume.
+
+==== Stage 3: snap-off and reset
+
+- This stage is extremely fast.
+- In current imaging it happens in less than one frame.
+- It can be treated as instantaneous or near-instantaneous in the first updated model.
+
+=== What this means physically
+
+The experiment does *not* support the idea that all stages are governed by the same oil throughput law.
+
+Instead, it supports the following interpretation:
+
+- *Stage 1* is controlled mainly by slow confined two-phase displacement with high effective resistance.
+- *Stage 2* is controlled by bulb growth and necking, with faster oil delivery and likely capillary assistance.
+- *Stage 3* is too fast to model in detail at first pass and should remain simple.
+
+== What the old model assumed, and why it fails
+
+=== Old assumption
+
+The old logic can be summarized as:
+
+- compute a hydraulic resistance from geometry,
+- compute a flow rate from local pressure drop,
+- assign some volume to be cleared or filled,
+- estimate time from $t = V / Q$,
+- use one effective oil rate to determine droplet frequency.
+
+This may be written conceptually as:
+
+$ T approx (V_("drop") + V_("extra")) / Q $
+
+or, stagewise but still incorrectly,
+
+$ Q = Delta P / R_("geom,steady") $
+and then
+$ t = V / Q $
+
+=== Why it fails
+
+This logic fails because the Stage 1 flow predicted from the steady geometric resistance is much faster than the actual observed displacement.
+
+So the problem is not merely that the wrong volume was assigned. The deeper problem is that the assumed transport law is wrong.
+
+The old steady resistance omits or mishandles the following:
+
+- moving meniscus effects,
+- prewetting film effects,
+- corner flow and residual wall water,
+- contact-line motion,
+- interfacial mobility limitations,
+- surfactant-mediated retardation,
+- entrance/exit effects,
+- unsteady interface geometry,
+- the major change in geometry and capillarity when oil reaches the step.
+
+Therefore, simply repeating the old calculation in a two-stage wrapper is *not* an acceptable update.
+
+== Required new physical structure
+
+The new model must be built around separate stage durations:
+
+$ T_("cycle") = T_1 + T_2 + T_3 $
+
+with $T_3$ negligible or empirical, so initially
+
+$ T_("cycle") approx T_1 + T_2 $
+
+and droplet frequency
+
+$ f = 1 / T_("cycle") $
+
+The crucial requirement is that $T_1$ and $T_2$ are produced by *different governing laws*.
+
+== Required Stage 1 model
+
+=== Interpretation
+
+Stage 1 must be modeled as a *confined two-phase displacement stage*.
+
+This is not steady single-phase flow through a fixed resistor.
+
+=== Minimal reduced form
+
+It is acceptable to write
+
+$ T_1 = V_("disp") / Q_1 $
+
+but the Stage 1 flow law must be
+
+$ Q_1 = Delta P_("local,1") / R_("eff,disp") $
+
+where $R_("eff,disp")$ is *not* the old geometric steady-flow resistance.
+
+It is a new effective object representing confined two-phase displacement resistance.
+
+=== What $R_("eff,disp")$ must conceptually include
+
+The Stage 1 effective resistance must be understood as capturing the combined effects of:
+
+- moving interface dynamics,
+- prewetted aqueous film persistence,
+- wall/corner water transport,
+- dynamic contact-line behaviour,
+- surfactant-related interfacial effects,
+- non-steady geometry during interface advance,
+- entry and exit losses not represented in the old resistor,
+- any extra hydrodynamic penalty that makes displacement much slower than steady single-phase theory.
+
+=== Stage 1 control volume
+
+Stage 1 must be defined geometrically as the interval from:
+
+- reset meniscus position,
+to
+- step edge.
+
+The Stage 1 displaced volume must come from that control region.
+
+Do not reinterpret the full droplet volume as Stage 1 volume.
+
+=== Prohibition
+
+Do not compute Stage 1 using
+
+$ Q_1 = Delta P / R_("geom,steady") $
+
+and then pretend the problem is solved by using a better value of $V$.
+
+That is explicitly forbidden.
+
+== Required Stage 2 model
+
+=== Interpretation
+
+Stage 2 begins when oil first reaches and crosses the step.
+
+At that moment:
+
+- bulb volume is effectively zero,
+- oil begins to protrude beyond the step,
+- water enters from the sides,
+- necking begins.
+
+Stage 2 is definitely an oil-delivery stage, but it is not governed by the same slow displacement law as Stage 1.
+
+=== Minimal reduced form
+
+A suitable reduced starting point is:
+
+$ T_2 = integral (dif V_b) / Q_2(V_b, r_n) $
+
+where
+
+- $V_b$ is bulb volume,
+- $r_n$ is neck radius.
+
+The exact function does not need to be perfect initially, but the Stage 2 law must support the following experimentally motivated qualitative behaviour:
+
+- oil delivery increases during Stage 2,
+- necking and bulb growth are coupled,
+- changing interface curvature and geometry matter,
+- Stage 2 is faster than Stage 1.
+
+=== Allowed reduced physical interpretation
+
+It is acceptable to treat Stage 2 as capillary-assisted or geometry-assisted acceleration, provided this is stated honestly as a reduced model rather than a full mechanistic closure.
+
+For example, a reduced concept like
+
+$ Q_2 sim (Delta P_("local,2") + Delta P_("cap")) / R_("eff,neck")(r_n) $
+
+is acceptable as a conceptual scaffold.
+
+However:
+
+- do not claim a fully derived Young-Laplace free-boundary model unless one actually exists,
+- do not reuse the Stage 1 resistance object for Stage 2,
+- do not hide Stage 2 behaviour inside a fixed timer unless the timer is clearly marked as a temporary empirical fallback.
+
+=== What must be preserved
+
+The Stage 2 model must preserve the idea that a bulb forms from effectively zero volume at the step, then grows while water ingress defines the neck, and the delivery rate accelerates during this period.
+
+== Required Stage 3 treatment
+
+Stage 3 may remain simple in the first update.
+
+Acceptable initial treatments include:
+
+- instantaneous snap-off,
+- fixed very small duration,
+- empirical reset rule.
+
+Do not spend major effort refining Stage 3 until the Stage 1 and Stage 2 structure is behaving sensibly.
+
+== What must not be hardcoded
+
+Do not hardcode any of the following as general constitutive parameters:
+
+- one-case absolute times such as 1.84 s,
+- one-case stage fractions such as 80/20,
+- one-case geometric reset distances unless clearly device-specific,
+- arbitrary "resistance multipliers" presented as physics,
+- arbitrary "speed-up factors" presented as physics.
+
+These may be used only as:
+
+- validation references,
+- temporary empirical placeholders,
+- dataset-specific fitting values in clearly labeled test branches.
+
+== What is allowed as hypothesis
+
+The following may be treated as working hypotheses to test against data:
+
+- Stage 1 is often much longer than Stage 2.
+- Stage 2 may occupy roughly one-fifth of the pre-snap cycle in some regimes.
+- The stage split may remain approximately similar across related devices and conditions.
+- The two-regime interpretation may generalize across operating points better than the single-rate model.
+
+But these must remain *outputs to test*, not universal built-in truths.
+
+== Deliverables required before major coding
+
+Before large implementation work, provide the following.
+
+=== Deliverable A: physics note
+
+A short written note explaining:
+
+- what the old model assumed,
+- why it fails,
+- what the new stage-wise interpretation is,
+- what Stage 1 and Stage 2 each physically represent,
+- why the old steady resistance cannot be reused for Stage 1.
+
+=== Deliverable B: equation-level reduced model
+
+Write the proposed reduced equations for:
+
+- $T_1$,
+- $T_2$,
+- $T_("cycle")$,
+- $f$,
+
+with clear definitions of every symbol.
+
+=== Deliverable C: code mapping
+
+Show:
+
+- which current modules can still be used,
+- which modules must be replaced,
+- where stage logic belongs,
+- where effective Stage 1 and Stage 2 laws should live,
+- what data structures are needed to expose stage durations and diagnostics.
+
+=== Deliverable D: implementation plan
+
+Only after A-C should the coding plan be written.
+
+No major code update should begin before the stage equations and model logic are explicitly written down.
+
+== Implementation order that must be followed
+
+=== Step 1: remove the old single-rate interpretation
+
+Strip out any path where cycle time or frequency is fundamentally computed from one oil rate acting over a total processed volume.
+
+=== Step 2: define explicit stage boundaries
+
+Implement explicit stage definitions:
+
+- Stage 1: reset meniscus to first step crossing,
+- Stage 2: first step crossing to snap-off,
+- Stage 3: snap/reset.
+
+These boundaries must be accessible in diagnostics and outputs.
+
+=== Step 3: implement separate Stage 1 and Stage 2 laws
+
+Implement:
+
+- Stage 1 as confined two-phase displacement with its own effective resistance law,
+- Stage 2 as bulb-growth/necking with an accelerating or capillary-assisted reduced law.
+
+=== Step 4: keep the first version minimal
+
+Do not create a giant state machine with many sub-states immediately.
+
+Start with the lightest structure that respects the actual physics.
+
+=== Step 5: expose diagnostics
+
+The updated code must expose at minimum:
+
+- total cycle time,
+- predicted frequency,
+- Stage 1 duration,
+- Stage 2 duration,
+- Stage 3 duration or rule,
+- Stage fractions,
+- droplet volume,
+- intermediate variables used in the Stage 1 and Stage 2 laws.
+
+=== Step 6: validate against experiments
+
+Compare the updated model to experiment before adding more complexity.
+
+=== Step 7: refine only where the comparison demands it
+
+Do not add complexity preemptively. Let the test results show what is missing.
+
+== What counts as success
+
+A successful code update is *not* one that merely fits one dataset.
+
+A successful update is one that does the following:
+
+=== Minimum success criteria
+
+- Replaces the old single-rate logic with an explicit stage-wise model.
+- Does not reuse the old steady single-phase resistance as the Stage 1 governing law.
+- Produces separate Stage 1 and Stage 2 durations.
+- Produces total cycle time and droplet frequency from those stage durations.
+- Preserves physical interpretability of each stage.
+
+=== Scientific success criteria
+
+- Explains how a relatively small Stage 1 displaced volume can still dominate the cycle time.
+- Explains how a larger final droplet volume can be formed in a shorter Stage 2.
+- Captures the fact that Stage 1 and Stage 2 are governed by different effective transport laws.
+- Improves agreement with experimental timing and frequency trends without collapsing into pure parameter fitting.
+
+=== Quantitative success criteria
+
+The first useful version should aim for:
+
+- substantial reduction of frequency overprediction relative to the old model,
+- plausible Stage 1 and Stage 2 fractions across tested cases,
+- reasonable droplet volume prediction,
+- correct trend response to changes in pressure, water flow, and geometry.
+
+Exact thresholds may vary, but a sensible target is:
+
+- frequency prediction within roughly 20-30% across the first calibration/validation set,
+- stage-fraction prediction that captures the correct hierarchy: Stage 1 dominant, Stage 2 secondary, Stage 3 negligible,
+- correct directional sensitivity with operating conditions.
+
+If the model matches one case perfectly but fails trend behaviour, that is *not* success.
+
+== How the updated code should be tested
+
+The updated model must be tested at several levels.
+
+=== Level 1: structural tests
+
+These are logic tests, not fit tests.
+
+Check that:
+
+- Stage 1 and Stage 2 are actually distinct in the code path.
+- Stage 1 does not call the old steady resistance object as its governing closure.
+- Stage durations are emitted separately.
+- Total cycle time is built from stage durations rather than one processed-volume division.
+
+These tests should fail loudly if any old logic is accidentally reused.
+
+=== Level 2: sanity tests
+
+Check the following qualitative behaviours:
+
+- If Stage 1 displacement distance increases, $T_1$ increases.
+- If Stage 2 capillary/acceleration term is strengthened, $T_2$ decreases.
+- Stage 1 remains the slower stage in regimes where experiment shows it should.
+- Stage 3 remains negligible unless deliberately changed.
+
+These tests confirm that the structure behaves physically, even before calibration.
+
+=== Level 3: single-case comparison tests
+
+For a specific experimental case, compare:
+
+- total cycle time,
+- frequency,
+- Stage 1 fraction,
+- Stage 2 fraction,
+- droplet size.
+
+But do not use these case-specific values as built-in parameters.
+
+These tests are for comparison only.
+
+=== Level 4: small-range operating-condition tests
+
+For one device, vary pressure and/or water flow over a small range and check whether the model predicts the correct trend in:
+
+- cycle time,
+- frequency,
+- stage split,
+- droplet volume.
+
+This is important because a model that fits one point but gets slopes wrong is not ready.
+
+=== Level 5: cross-geometry tests
+
+Repeat the same style of comparison on at least one other device geometry.
+
+This is essential to test whether the stage-wise interpretation travels better than the old single-rate model.
+
+=== Level 6: residual analysis
+
+After each comparison, inspect not just overall error but *where* the error sits:
+
+- Is Stage 1 too fast?
+- Is Stage 2 too slow?
+- Is droplet volume wrong but timing right?
+- Are trends right but absolute values shifted?
+- Does the model fail only for certain fluids or surfactant conditions?
+
+This residual-based analysis should determine the next refinement step.
+
+== Specific outputs that should be logged
+
+The model update should log or expose the following variables for every run:
+
+- predicted total cycle time,
+- predicted droplet frequency,
+- predicted droplet volume,
+- Stage 1 duration,
+- Stage 2 duration,
+- Stage 3 duration or assumed rule,
+- Stage 1 fraction,
+- Stage 2 fraction,
+- Stage 3 fraction,
+- Stage 1 displacement volume,
+- any local pressures used in Stage 1 and Stage 2,
+- effective Stage 1 resistance used,
+- any Stage 2 capillary/acceleration terms used,
+- any empirical closures used.
+
+Without these diagnostics, it will be too hard to understand why the model succeeds or fails.
+
+== How to compare against experiments
+
+For each tested case, create a comparison table with:
+
+- device ID,
+- geometry summary,
+- fluid system,
+- surfactant condition,
+- pressure setting,
+- water flow setting,
+- measured frequency,
+- predicted frequency,
+- measured Stage 1 fraction if available,
+- predicted Stage 1 fraction,
+- measured Stage 2 fraction if available,
+- predicted Stage 2 fraction,
+- measured drop size,
+- predicted drop size,
+- notes on observed failure mode.
+
+Do not reduce the assessment to one scalar error.
+
+The model can be "wrong" in several distinct ways, and those different error patterns imply different missing physics.
+
+== What failure modes to expect, and how to interpret them
+
+=== Failure mode 1: Stage 1 still much too fast
+
+Interpretation:
+
+- the effective Stage 1 law is still too close to steady hydraulic flow,
+- local oil pressure may be overestimated,
+- prewetting or moving-interface resistance is still underrepresented.
+
+Likely next work:
+
+- strengthen the Stage 1 effective displacement closure,
+- improve local pressure accounting,
+- examine whether multiple-rung/network effects are reducing available local driving pressure.
+
+=== Failure mode 2: Stage 2 too slow and droplet growth too uniform
+
+Interpretation:
+
+- the model is missing sufficient acceleration during necking,
+- capillary or geometry-assisted speeding-up is too weak,
+- Stage 2 still behaves too much like a constant-flow stage.
+
+Likely next work:
+
+- improve the Stage 2 accelerating law,
+- introduce better coupling between bulb size, neck radius, and delivery rate,
+- test whether a simple capillary-pressure contribution fixes the error shape.
+
+=== Failure mode 3: frequency looks good but stage split is wrong
+
+Interpretation:
+
+- the right answer was reached for the wrong reason,
+- compensating errors are present.
+
+Likely next work:
+
+- do not celebrate this as success,
+- examine Stage 1 and Stage 2 durations separately,
+- refine whichever stage carries the hidden compensation.
+
+=== Failure mode 4: stage split looks plausible but droplet volume is wrong
+
+Interpretation:
+
+- timing logic may be reasonable,
+- but the Stage 2 volume accumulation or pinch criterion is wrong.
+
+Likely next work:
+
+- improve bulb growth volume bookkeeping,
+- improve pinch criterion,
+- examine whether neck volume is being assigned incorrectly at breakup.
+
+=== Failure mode 5: one device fits, others fail badly
+
+Interpretation:
+
+- overfitting to one geometry or fluid system,
+- a supposedly universal closure is actually geometry-specific or fluid-specific.
+
+Likely next work:
+
+- separate geometry dependence from fluid dependence,
+- identify which closure is not portable,
+- avoid baking one-case behaviour into the reduced law.
+
+=== Failure mode 6: trends with pressure or water flow are wrong
+
+Interpretation:
+
+- even if one operating point is matched, the governing sensitivities are wrong.
+
+Likely next work:
+
+- revisit how local driving pressure enters Stage 1,
+- revisit how Stage 2 acceleration depends on operating conditions,
+- check for missing coupling between hydraulic loading and stage transition.
+
+=== Failure mode 7: strong dependence on surfactant/fluid system is not captured
+
+Interpretation:
+
+- interfacial mobility or wetting-film physics is not represented strongly enough.
+
+Likely next work:
+
+- introduce fluid-system-dependent closures,
+- allow Stage 1 effective resistance to depend on fluid/surfactant condition,
+- test whether Stage 2 capillary acceleration also changes with fluid system.
+
+== Areas that will likely need work after the first test round
+
+Even a good first update is likely to need refinement in these areas:
+
+=== 1. Stage 1 effective resistance closure
+
+This is the most likely place where the first model will remain too idealized.
+
+Expect to refine:
+
+- pressure dependence,
+- geometry dependence,
+- fluid dependence,
+- surfactant dependence,
+- network-loading dependence.
+
+=== 2. Local pressure accounting
+
+The actual driving pressure at the active rung may differ from the nominal upstream pressure more than previously assumed.
+
+Expect to refine:
+
+- pressure loss upstream of the active event,
+- interaction with network/rung loading,
+- whether local pressure changes across the cycle.
+
+=== 3. Stage 2 acceleration law
+
+The first reduced law will probably be too crude.
+
+Expect to refine:
+
+- relation between bulb volume and neck radius,
+- capillary contribution during necking,
+- onset condition for acceleration,
+- pinch criterion.
+
+=== 4. Volume bookkeeping near snap-off
+
+The final fraction of droplet volume may be sensitive to how neck volume is assigned at rupture.
+
+Expect to refine:
+
+- whether the bulb is truly at full final volume just before snap,
+- whether neck volume is pulled into the detached drop,
+- whether the visible final pre-snap frame underestimates true bulb size.
+
+=== 5. Universality of stage fractions
+
+Do not assume the apparent 4:1 split is universal.
+
+Expect to test and possibly revise:
+
+- whether the ratio changes with pressure,
+- whether it changes with water flow,
+- whether it changes across geometries,
+- whether it changes across fluids/surfactants.
+
+=== 6. Reset rule
+
+The reset position may appear simple in one device but may vary in others.
+
+Expect to refine:
+
+- reset distance,
+- dependence on geometry,
+- dependence on operating conditions.
+
+== Feedback loop after each test round
+
+Use the following loop after every model-data comparison.
+
+=== Step A: classify the error
+
+Ask:
+
+- Is the main error in Stage 1 timing?
+- Is it in Stage 2 timing?
+- Is it in droplet volume?
+- Is it in trends, not absolutes?
+- Is it geometry-specific or fluid-specific?
+
+=== Step B: change one closure at a time
+
+Do not modify multiple physics blocks simultaneously.
+
+Change only one of:
+
+- Stage 1 effective resistance,
+- local pressure accounting,
+- Stage 2 acceleration law,
+- breakup/pinch criterion,
+- reset rule.
+
+Then retest.
+
+=== Step C: preserve interpretability
+
+Every refinement must be explainable physically.
+
+If a change improves fit but destroys interpretability, isolate it as an empirical patch rather than merging it into the main physical model.
+
+=== Step D: maintain benchmark comparison to the old model
+
+Always compare the new model against the old baseline.
+
+The update is only worthwhile if it improves either:
+
+- predictive accuracy,
+- physical interpretability,
+- or both.
+
+=== Step E: document what each refinement fixed
+
+For each refinement, write down:
+
+- what was changed,
+- what discrepancy motivated it,
+- which observables improved,
+- which observables did not improve.
+
+This prevents drift into uncontrolled parameter tuning.
+
+== What the final updated model should ideally achieve
+
+The final goal is a reduced-order model that can do the following:
+
+- predict droplet cycle time from stage durations,
+- predict droplet frequency without relying on one uniform oil throughput,
+- preserve the distinction between confined displacement and bulb-growth physics,
+- reduce the large overprediction associated with the old steady-flow logic,
+- remain interpretable enough to support future geometry or fluid-system design decisions.
+
+It does not need to be a full CFD solution.
+
+It does need to stop forcing two physically different stages into one throughput law.
+
+== Final instruction
+
+If you find yourself solving Stage 1 with the old steady geometric resistance, you are going down the wrong path.
+
+If you find yourself matching one dataset by inserting fixed stage multipliers without clear physical meaning, you are also going down the wrong path.
+
+The first objective is not to "make the number match." The first objective is to replace the known-wrong physical architecture with a better one.
+
+== Optional immediate next action
+
+Before coding, produce a one-page note containing:
+
+- the old architecture in one paragraph,
+- the new architecture in one paragraph,
+- the Stage 1 equation,
+- the Stage 2 equation,
+- the planned validation table,
+- the list of diagnostics to log.
+
+That note should be approved before implementation begins.
