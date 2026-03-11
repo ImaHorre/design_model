@@ -1,0 +1,89 @@
+# example_single.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Single-point simulation config.
+# Geometry matches the stepgen_seed reference implementation.
+#
+# Usage:
+#   stepgen simulate examples/example_single.yaml
+#   stepgen simulate examples/example_single.yaml --Po 300 --Qw 10
+#   stepgen simulate examples/example_single.yaml --Qo 1.7 --Qw 15  # Mode B
+#   stepgen report   examples/example_single.yaml --out-dir plots/
+#
+# WHAT YOU GET:
+#   simulate  → printed summary: Nmc, active/reverse %, Q_spread/dP_spread, D_pred, frequency
+#   report    → 6 PNGs in --out-dir: layout schematic + 5 simulation plots
+#   map       → heatmaps over a (Po, Qw) grid
+#   compare   → predicted vs measured scatter + spatial profiles
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+fluids:
+  mu_continuous: 0.00089      # Pa·s  water (continuous / carrier phase)
+  mu_dispersed:  0.06      # Pa·s  oil   (dispersed / droplet phase)
+  emulsion_ratio: 0.3         # Q_oil / Q_water (informational in Mode A)
+  gamma: 0.0
+  temperature_C: 25.0
+
+
+geometry:
+  # ── Nmc override ─────────────────────────────────────────────────────────
+  # This device has a very long channel (Mcl=2040 mm, pitch=3 µm) giving
+  # Nmc = 680 000 rungs — the derived value is correct here so no override needed.
+  #
+  # If your device has a known rung count that doesn't match Mcl/pitch exactly,
+  # uncomment and set:
+  # Nmc_override: 500
+  #
+  # Mcl and pitch remain required even with Nmc_override — they set resistances.
+
+  main:
+    Mcd: 200.0e-6    # 100 µm depth
+    Mcw: 1000.0e-6    # 500 µm width
+    Mcl: 693e-3   # 2040 mm routed length → Nmc = floor(2.04 / 3e-6) = 680 000
+
+  rung:
+    mcd: 10e-6      # 0.3 µm depth
+    mcw: 8e-6      # 1 µm width
+    mcl: 4000.0e-6    # 200 µm length
+    pitch: 60e-6    # 3 µm pitch
+    constriction_ratio: 0.9
+
+  junction:
+    # Sets D_pred via D = k * exit_width^a * exit_depth^b
+    exit_width: 30e-6    # 1 µm
+    exit_depth: 10e-6    # 0.3 µm  → D_pred ≈ 0.3 µm
+    junction_type: step
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+operating:
+  mode: A
+  Po_in_mbar: 200.0      # oil inlet pressure  [mbar]  — override with --Po on CLI
+  Qw_in_mlhr: 5.0        # water inlet flow    [mL/hr] — override with --Qw on CLI
+  P_out_mbar: 0.0
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0   # capillary threshold oil→water [mbar]
+  dP_cap_wo_mbar: 30.0   # capillary threshold water→oil [mbar]
+
+
+# ── OPTIONAL — needed for layout_schematic.png in 'stepgen report' ────────────
+footprint:
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+
+# ── OPTIONAL — only affects 'hard OK' flag, not the simulation ────────────────
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6

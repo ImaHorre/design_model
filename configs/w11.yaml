@@ -59,3 +59,7 @@ droplet_model:
   b: 0.7198   # power on exit_depth  (depth dominates)
   dP_cap_ow_mbar: 35.0
   dP_cap_wo_mbar: 30.0
+
+  # Refill volume settings
+  enable_refill_volume: false      # Toggle on/off for refill volume correction
+  refill_length_factor: 2.0        # L = factor × exit_height (default: 2.0)

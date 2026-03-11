@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from stepgen.models.droplets import droplet_diameter, droplet_frequency
+from stepgen.models.droplets import droplet_diameter, droplet_frequency, refill_volume
 from stepgen.models.generator import RungRegime, classify_rungs
 
 if TYPE_CHECKING:
@@ -49,7 +49,8 @@ class DeviceMetrics:
     """Per-operating-point device performance metrics (SI units)."""
 
     Nmc: int
-    Q_oil_total: float       # m³/s
+    Q_oil_total: float       # m³/s — total hydraulic oil flow
+    Q_oil_droplets: float    # m³/s — effective oil rate that becomes droplets
     Q_water_total: float     # m³/s
     Q_per_rung_avg: float    # m³/s — mean over ACTIVE rungs; 0 if none
     Q_spread_pct: float      # %    — (max−min)/mean × 100 for ACTIVE rungs
@@ -130,17 +131,25 @@ def compute_metrics(
 
     # ── Droplet model ──────────────────────────────────────────────────────
     D_pred = droplet_diameter(config)
+    V_refill = refill_volume(config)  # NEW: Get refill volume
     if np.any(active_mask):
-        f_arr = droplet_frequency(result.Q_rungs[active_mask], D_pred)
+        f_arr = droplet_frequency(result.Q_rungs[active_mask], D_pred, V_refill)
         f_pred_mean = float(np.mean(f_arr))
         f_pred_min  = float(np.min(f_arr))
         f_pred_max  = float(np.max(f_arr))
         dP_avg      = float(np.mean(dP[active_mask]))
+
+        # Calculate effective oil droplet production rate
+        from stepgen.models.droplets import droplet_volume
+        V_drop = droplet_volume(D_pred)
+        n_active = int(np.sum(active_mask))
+        Q_oil_droplets = f_pred_mean * V_drop * n_active
     else:
         f_pred_mean = 0.0
         f_pred_min  = 0.0
         f_pred_max  = 0.0
         dP_avg      = 0.0
+        Q_oil_droplets = 0.0
 
     # ── Mechanical risk ────────────────────────────────────────────────────
     Mcw = config.geometry.main.Mcw
@@ -151,6 +160,7 @@ def compute_metrics(
     return DeviceMetrics(
         Nmc=N,
         Q_oil_total=result.Q_oil_total,
+        Q_oil_droplets=Q_oil_droplets,
         Q_water_total=result.Q_water_total,
         Q_per_rung_avg=Q_per_rung_avg,
         Q_spread_pct=Q_spread_pct,

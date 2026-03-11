@@ -1,0 +1,84 @@
+# W11 config modified to explicitly use stage-wise model
+# Based on w11.yaml with stage-wise hydraulic model enabled
+
+fluids:
+  mu_continuous: 0.00089      # Pa·s  water (continuous phase)
+  mu_dispersed:  0.06      # Pa·s  oil  (dispersed phase — forms droplets)
+  emulsion_ratio: 0.1
+  gamma: 0.015  # Set surface tension to 15 mN/m
+  temperature_C: 20.0
+
+geometry:
+  main:
+    Mcd: 200.0e-6
+    Mcw: 2000.0e-6
+    Mcl: 0.75
+
+  rung:
+    mcd: 5e-6
+    mcw: 8e-6
+    mcl: 4000.0e-6
+    pitch: 30e-6
+    constriction_ratio: 0.9
+
+  junction:
+    exit_width: 15e-6
+    exit_depth: 5e-6
+    junction_type: step
+
+operating:
+  mode: A
+  Po_in_mbar: 300.0
+  Qw_in_mlhr: 1.5
+  P_out_mbar: 0.0
+
+footprint:
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 2000.0e-6
+
+operating_map:
+  Po_min_mbar: 50.0
+  Po_max_mbar: 500.0
+  Po_n: 10
+  Qw_min_mlhr: 2.0
+  Qw_max_mlhr: 15.0
+  Qw_n: 6
+
+droplet_model:
+  k: 3.3935   # calibrated: D = k * exit_width^a * exit_depth^b  (SI)
+  a: 0.3390   # power on exit_width
+  b: 0.7198   # power on exit_depth  (depth dominates)
+  dP_cap_ow_mbar: 35.0
+  dP_cap_wo_mbar: 30.0
+
+  # STAGE-WISE MODEL CONFIGURATION
+  hydraulic_model: "stage_wise"  # Use stage-wise physics
+
+  # Time integration parameters
+  dt_ms: 5.0                    # Time step [ms]
+  simulation_time_ms: 2000.0    # Total simulation time [ms]
+
+  # Stage-wise physics parameters
+  displacement_volume_fraction: 0.15    # V_stage1 / V_final
+  contact_line_resistance_factor: 2.5   # Moving interface enhancement
+  prewetting_film_multiplier: 1.8       # Film resistance effect
+  bulb_growth_volume_fraction: 0.85     # When Laplace effects dominate
+  laplace_acceleration_factor: 0.6      # Resistance reduction during necking
+  surface_tension_mN_m: 15.0            # Interfacial tension [mN/m]
+
+  # Stage timing validation targets (from experiments)
+  expected_stage1_fraction: 0.825       # 82.5% of cycle
+  expected_stage2_fraction: 0.135       # 13.5% of cycle
+  expected_stage3_fraction: 0.04        # 4% of cycle
+
+  # Refill volume settings
+  enable_refill_volume: false      # Toggle on/off for refill volume correction
+  refill_length_factor: 2.0        # L = factor × exit_height (default: 2.0)

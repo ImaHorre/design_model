@@ -55,14 +55,42 @@ def droplet_volume(D: float) -> float:
     return (math.pi / 6.0) * D ** 3
 
 
+def refill_volume(config: "DeviceConfig") -> float:
+    """
+    Calculate refill volume for linear model when enabled.
+
+    V_refill = exit_width × exit_height × L
+    where L = refill_length_factor × exit_height
+
+    Returns 0.0 if refill volume is disabled.
+
+    Parameters
+    ----------
+    config : DeviceConfig
+        Device configuration containing geometry and droplet model settings.
+
+    Returns
+    -------
+    float
+        Refill volume in m³.
+    """
+    if not config.droplet_model.enable_refill_volume:
+        return 0.0
+
+    jc = config.geometry.junction
+    L = config.droplet_model.refill_length_factor * jc.exit_depth
+    return jc.exit_width * jc.exit_depth * L
+
+
 def droplet_frequency(
     Q_rung: "Union[float, np.ndarray]",
     D: float,
+    V_refill: float = 0.0,
 ) -> "Union[float, np.ndarray]":
     """
-    Droplet production frequency.
+    Droplet production frequency with optional refill volume.
 
-    f = Q_rung / V_d  [Hz]
+    f = Q_rung / (V_d + V_refill)  [Hz]
 
     Parameters
     ----------
@@ -71,10 +99,13 @@ def droplet_frequency(
         oil-into-water (ACTIVE) flow.
     D : float
         Droplet diameter [m].
+    V_refill : float, optional
+        Additional refill volume per droplet [m³]. Default: 0.0
 
     Returns
     -------
     Frequency in Hz; same type and shape as Q_rung.
     """
-    V = droplet_volume(D)
-    return Q_rung / V
+    V_drop = droplet_volume(D)
+    V_total = V_drop + V_refill
+    return Q_rung / V_total

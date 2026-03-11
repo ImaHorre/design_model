@@ -129,11 +129,12 @@ def compare_to_predictions(
     -------
     pd.DataFrame — copy of exp_df with prediction columns appended
     """
-    from stepgen.models.droplets import droplet_diameter, droplet_frequency
+    from stepgen.models.droplets import droplet_diameter, droplet_frequency, refill_volume
     from stepgen.models.generator import RungRegime, classify_rungs, iterative_solve
 
     D_pred_m  = droplet_diameter(config)
     D_pred_um = D_pred_m * 1e6
+    V_refill  = refill_volume(config)  # Get refill volume
 
     # Cache solver results per unique (Po, Qw)
     cache: dict[tuple[float, float], object] = {}
@@ -168,7 +169,7 @@ def compare_to_predictions(
         regime = regimes[pos_clamped]
 
         if regime == RungRegime.ACTIVE and sim.Q_rungs[pos_clamped] > 0:
-            f_pred = float(droplet_frequency(sim.Q_rungs[pos_clamped], D_pred_m))
+            f_pred = float(droplet_frequency(sim.Q_rungs[pos_clamped], D_pred_m, V_refill))
         else:
             f_pred = 0.0
 

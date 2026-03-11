@@ -64,6 +64,19 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         config.droplet_model.__dict__['g_pinch_frac'] = args.g_pinch_frac
         print(f"  Override: g_pinch_frac = {args.g_pinch_frac}")
 
+    # Apply CLI parameter overrides for refill volume
+    if hasattr(args, 'enable_refill') and args.enable_refill:
+        config.droplet_model.__dict__['enable_refill_volume'] = True
+        print("  Override: enable_refill_volume = True")
+
+    if hasattr(args, 'disable_refill') and args.disable_refill:
+        config.droplet_model.__dict__['enable_refill_volume'] = False
+        print("  Override: enable_refill_volume = False")
+
+    if hasattr(args, 'refill_factor') and args.refill_factor is not None:
+        config.droplet_model.__dict__['refill_length_factor'] = args.refill_factor
+        print(f"  Override: refill_length_factor = {args.refill_factor}")
+
     Qo = getattr(args, "Qo", None)
     row = evaluate_candidate(
         config,
@@ -83,10 +96,12 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         print(f"  Mode    : A (pressure-flow)")
         print(f"  Po      : {row['Po_in_mbar']:.1f} mbar")
     print(f"  Qw      : {row['Qw_in_mlhr']:.2f} mL/hr")
-    q_oil   = row['Q_oil_total']
+    q_oil_total    = row['Q_oil_total']
+    q_oil_droplets = row['Q_oil_droplets']
     q_water = row['Q_water_total']
-    emulsion_ratio = q_oil / (q_oil + q_water) if (q_oil + q_water) > 0 else 0.0
-    print(f"  Qo      : {q_oil*3.6e12:.1f} µL/hr")
+    emulsion_ratio = q_oil_droplets / (q_oil_droplets + q_water) if (q_oil_droplets + q_water) > 0 else 0.0
+    print(f"  Qo_total: {q_oil_total*3.6e12:.1f} µL/hr (hydraulic oil flow)")
+    print(f"  Qo_drops: {q_oil_droplets*3.6e12:.1f} µL/hr (effective droplet production)")
     print(f"  emulsion: {emulsion_ratio:.3f}  ({emulsion_ratio*100:.1f}% oil by volume)")
     print(f"  Nmc     : {row['Nmc']}")
     print(f"  active  : {row['active_fraction']*100:.1f} %")
@@ -146,6 +161,16 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
 
         if hasattr(args, 'g_pinch_frac') and getattr(args, 'g_pinch_frac', None) is not None:
             config.droplet_model.__dict__['g_pinch_frac'] = args.g_pinch_frac
+
+        # Apply CLI parameter overrides for refill volume
+        if hasattr(args, 'enable_refill') and args.enable_refill:
+            config.droplet_model.__dict__['enable_refill_volume'] = True
+
+        if hasattr(args, 'disable_refill') and args.disable_refill:
+            config.droplet_model.__dict__['enable_refill_volume'] = False
+
+        if hasattr(args, 'refill_factor') and args.refill_factor is not None:
+            config.droplet_model.__dict__['refill_length_factor'] = args.refill_factor
     df      = sweep(configs, Po_in_mbar=args.Po, Qw_in_mlhr=args.Qw, Qo_in_mlhr=Qo, model_type=args.model)
 
     out = args.out
@@ -287,6 +312,60 @@ def _cmd_design(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_per_condition_breakdown(comp_df: "pandas.DataFrame") -> None:
+    """Print detailed breakdown by operating condition."""
+    import pandas as pd
+
+    print("\n=== Per-Condition Breakdown ===")
+
+    # Group by operating conditions
+    if "Po_in_mbar" not in comp_df.columns or "Qw_in_mlhr" not in comp_df.columns:
+        print("  (Operating conditions not available)")
+        return
+
+    conditions = comp_df.groupby(["Po_in_mbar", "Qw_in_mlhr"])
+
+    # Global percentage tracking
+    global_diam_pct_errors = []
+    global_freq_pct_errors = []
+
+    for (Po, Qw), group in conditions:
+        n_points = len(group)
+
+        # Calculate means
+        diam_exp = group["droplet_diameter_um"].mean()
+        diam_pred = group["D_pred_um"].mean()
+        freq_exp = group["frequency_hz"].mean()
+        freq_pred = group["f_pred_hz"].mean()
+
+        # Calculate differences
+        diam_diff = diam_pred - diam_exp
+        freq_diff = freq_pred - freq_exp
+
+        # Calculate percentage differences (avoid division by zero)
+        diam_pct = (diam_diff / diam_exp * 100) if diam_exp != 0 else float('nan')
+        freq_pct = (freq_diff / freq_exp * 100) if freq_exp != 0 else float('nan')
+
+        # Track global percentages
+        if not pd.isna(diam_pct):
+            global_diam_pct_errors.append(abs(diam_pct))
+        if not pd.isna(freq_pct):
+            global_freq_pct_errors.append(abs(freq_pct))
+
+        print(f"\n  Po={Po:.0f}mbar, Qw={Qw:.1f}mL/hr ({n_points} points):")
+        print(f"    Diameter:  {diam_exp:.2f}um (exp) vs {diam_pred:.2f}um (pred) | diff: {diam_diff:+.3f}um ({diam_pct:+.1f}%)")
+        print(f"    Frequency: {freq_exp:.2f}Hz (exp) vs {freq_pred:.2f}Hz (pred) | diff: {freq_diff:+.2f}Hz ({freq_pct:+.1f}%)")
+
+    # Global averages
+    if global_diam_pct_errors and global_freq_pct_errors:
+        avg_diam_pct_error = sum(global_diam_pct_errors) / len(global_diam_pct_errors)
+        avg_freq_pct_error = sum(global_freq_pct_errors) / len(global_freq_pct_errors)
+
+        print(f"\n=== Global Averages ===")
+        print(f"  Average diameter error: {avg_diam_pct_error:.1f}%")
+        print(f"  Average frequency error: {avg_freq_pct_error:.1f}%")
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     import matplotlib
     matplotlib.use("Agg")
@@ -301,6 +380,19 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
     config = load_config(args.config)
     exp_df = load_experiments(args.experiments)
+
+    # Apply CLI parameter overrides for refill volume
+    if hasattr(args, 'enable_refill') and args.enable_refill:
+        config.droplet_model.__dict__['enable_refill_volume'] = True
+        print("  Override: enable_refill_volume = True")
+
+    if hasattr(args, 'disable_refill') and args.disable_refill:
+        config.droplet_model.__dict__['enable_refill_volume'] = False
+        print("  Override: enable_refill_volume = False")
+
+    if hasattr(args, 'refill_factor') and args.refill_factor is not None:
+        config.droplet_model.__dict__['refill_length_factor'] = args.refill_factor
+        print(f"  Override: refill_length_factor = {args.refill_factor}")
 
     if args.calibrate:
         config = calibrate_droplet_model(config, exp_df)
@@ -317,6 +409,9 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     print(f"  Freq MAE       : {report.freq_mae_hz:.3f} Hz")
     print(f"  Freq RMSE      : {report.freq_rmse_hz:.3f} Hz")
     print(f"  Freq bias      : {report.freq_bias_hz:+.3f} Hz")
+
+    # Per-condition breakdown
+    _print_per_condition_breakdown(comp_df)
 
     if args.out:
         comp_df.to_csv(args.out, index=False)
@@ -557,6 +652,12 @@ def _build_parser() -> argparse.ArgumentParser:
                        metavar="MS", help="Reset phase duration [ms] (overrides config).")
     p_sim.add_argument("--g-pinch-frac", type=float, default=None,
                        metavar="FRAC", help="Pinch conductance fraction (overrides config).")
+    p_sim.add_argument("--enable-refill", action="store_true",
+                       help="Enable refill volume calculation (overrides config).")
+    p_sim.add_argument("--disable-refill", action="store_true",
+                       help="Disable refill volume calculation (overrides config).")
+    p_sim.add_argument("--refill-factor", type=float, default=None,
+                       metavar="FACTOR", help="Refill length factor: L = factor × exit_height (overrides config).")
 
     # ── sweep ─────────────────────────────────────────────────────────────
     p_sw = sub.add_parser(
@@ -585,6 +686,12 @@ def _build_parser() -> argparse.ArgumentParser:
                       metavar="MS", help="Reset phase duration [ms] (overrides config).")
     p_sw.add_argument("--g-pinch-frac", type=float, default=None,
                       metavar="FRAC", help="Pinch conductance fraction (overrides config).")
+    p_sw.add_argument("--enable-refill", action="store_true",
+                      help="Enable refill volume calculation (overrides config).")
+    p_sw.add_argument("--disable-refill", action="store_true",
+                      help="Disable refill volume calculation (overrides config).")
+    p_sw.add_argument("--refill-factor", type=float, default=None,
+                      metavar="FACTOR", help="Refill length factor: L = factor × exit_height (overrides config).")
 
     # ── report ────────────────────────────────────────────────────────────
     p_rep = sub.add_parser(
@@ -638,6 +745,12 @@ def _build_parser() -> argparse.ArgumentParser:
                        metavar="FILE", help="Save comparison DataFrame to FILE (CSV).")
     p_cmp.add_argument("--calibrate", action="store_true",
                        help="Scale droplet model k to minimise diameter error before comparing.")
+    p_cmp.add_argument("--enable-refill", action="store_true",
+                       help="Enable refill volume calculation (overrides config).")
+    p_cmp.add_argument("--disable-refill", action="store_true",
+                       help="Disable refill volume calculation (overrides config).")
+    p_cmp.add_argument("--refill-factor", type=float, default=None,
+                       metavar="FACTOR", help="Refill length factor: L = factor × exit_height (overrides config).")
 
     # ── test-experimental ─────────────────────────────────────────────────
     p_exp = sub.add_parser(

@@ -665,7 +665,7 @@ def plot_spatial_comparison(
     result  : SimResult  (from iterative_solve at the operating point)
     exp_df  : DataFrame from load_experiments (or compare_to_predictions)
     """
-    from stepgen.models.droplets import droplet_diameter, droplet_frequency
+    from stepgen.models.droplets import droplet_diameter, droplet_frequency, refill_volume
     from stepgen.models.generator import RungRegime, classify_rungs
 
     N    = len(result.Q_rungs)
@@ -678,10 +678,11 @@ def plot_spatial_comparison(
         config.droplet_model.dP_cap_wo_Pa,
     )
     D_m   = droplet_diameter(config)
+    V_refill = refill_volume(config)  # Get refill volume
     f_arr = np.zeros(N)
     active = regimes == RungRegime.ACTIVE
     if np.any(active):
-        f_arr[active] = droplet_frequency(result.Q_rungs[active], D_m)
+        f_arr[active] = droplet_frequency(result.Q_rungs[active], D_m, V_refill)
 
     # ── Map experiment positions to fractional ──────────────────────────────
     def _to_frac(pos_series):
@@ -715,16 +716,66 @@ def plot_spatial_comparison(
     ax2.set_title("Droplet diameter")
     ax2.legend(fontsize=8)
 
-    # Panel 3: Frequency
+    # Panel 3: Frequency (multiple operating conditions)
     ax3 = axes[2]
-    ax3.plot(x_fr, f_arr, color="tab:green", label="f_pred")
-    if "frequency_hz" in exp_df.columns:
-        ax3.scatter(exp_x, exp_df["frequency_hz"],
-                    color="black", s=40, zorder=5, label="Measured")
+
+    # Get unique operating conditions from experimental data
+    if "frequency_hz" in exp_df.columns and "Po_in_mbar" in exp_df.columns and "Qw_in_mlhr" in exp_df.columns:
+        from stepgen.models.generator import iterative_solve
+        import matplotlib.colors as mcolors
+
+        # Find unique operating conditions
+        conditions = exp_df[["Po_in_mbar", "Qw_in_mlhr"]].drop_duplicates().sort_values(["Po_in_mbar", "Qw_in_mlhr"])
+
+        # Use a colormap for different conditions
+        colors = plt.cm.tab10(np.linspace(0, 1, len(conditions)))
+
+        for i, (_, row) in enumerate(conditions.iterrows()):
+            Po = float(row["Po_in_mbar"])
+            Qw = float(row["Qw_in_mlhr"])
+            color = colors[i]
+
+            # Run simulation for this operating condition
+            try:
+                sim_result = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
+
+                # Calculate frequency array for this condition
+                N_sim = len(sim_result.Q_rungs)
+                x_fr_sim = np.arange(N_sim) / max(N_sim - 1, 1)
+                dP_sim = sim_result.P_oil - sim_result.P_water
+                regimes_sim = classify_rungs(dP_sim, config.droplet_model.dP_cap_ow_Pa, config.droplet_model.dP_cap_wo_Pa)
+                f_arr_sim = np.zeros(N_sim)
+                active_sim = regimes_sim == RungRegime.ACTIVE
+                if np.any(active_sim):
+                    f_arr_sim[active_sim] = droplet_frequency(sim_result.Q_rungs[active_sim], D_m, V_refill)
+
+                # Plot model prediction line
+                ax3.plot(x_fr_sim, f_arr_sim, color=color, linewidth=2,
+                        label=f"Model Po={Po:.0f}mbar, Qw={Qw:.1f}mL/hr")
+
+                # Plot experimental data for this condition
+                cond_data = exp_df[(exp_df["Po_in_mbar"] == Po) & (exp_df["Qw_in_mlhr"] == Qw)]
+                if len(cond_data) > 0:
+                    exp_x_cond = _to_frac(cond_data["position"])
+                    ax3.scatter(exp_x_cond, cond_data["frequency_hz"], color=color, s=60,
+                              edgecolors='black', linewidth=1, zorder=5,
+                              label=f"Measured Po={Po:.0f}mbar, Qw={Qw:.1f}mL/hr")
+
+            except Exception as e:
+                print(f"Warning: Could not simulate Po={Po}, Qw={Qw}: {e}")
+                continue
+
+    else:
+        # Fallback to original single-condition plot
+        ax3.plot(x_fr, f_arr, color="tab:green", label="f_pred")
+        if "frequency_hz" in exp_df.columns:
+            ax3.scatter(exp_x, exp_df["frequency_hz"],
+                        color="black", s=40, zorder=5, label="Measured")
+
     ax3.set_ylabel("Frequency [Hz]")
-    ax3.set_title("Droplet frequency")
+    ax3.set_title("Droplet frequency - All operating conditions")
     ax3.set_xlabel("Fractional position along device")
-    ax3.legend(fontsize=8)
+    ax3.legend(fontsize=7, bbox_to_anchor=(1.05, 1), loc='upper left')
 
     fig.suptitle(
         f"Spatial comparison  |  Po={result.Po_in_Pa*1e-2:.1f} mbar  "

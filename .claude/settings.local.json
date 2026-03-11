@@ -18,7 +18,15 @@
       "Bash(grep:*)",
       "Bash(git reset:*)",
       "Bash(git commit:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(git rm:*)",
+      "Bash(rm:*)",
+      "Bash(stepgen compare:*)",
+      "Bash(find docs:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(mv stage_wise:*)"
     ]
   }
 }

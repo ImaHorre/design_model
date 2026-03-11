@@ -179,6 +179,23 @@ class DropletModelConfig:
     L_retreat_um: float = 10.0        # Meniscus retreat distance [µm]
     L_breakup_um: float = 5.0         # Breakup plane distance [µm]
 
+    # NEW: Refill volume toggle for linear model
+    enable_refill_volume: bool = False          # Toggle on/off for refill volume
+    refill_length_factor: float = 2.0          # L = factor × exit_height (default: 2.0)
+
+    # NEW: Stage-wise model parameters (fine-tuned for target timing)
+    displacement_volume_fraction: float = 0.10    # Even smaller Stage 1 volume (69.8% → target 82.5%)
+    contact_line_resistance_factor: float = 2.8   # Modest increase from original 2.5
+    prewetting_film_multiplier: float = 1.9       # Modest increase from original 1.8
+    bulb_growth_volume_fraction: float = 0.90     # Higher Stage 2 threshold (reduce 28.5% → target 13.5%)
+    laplace_acceleration_factor: float = 0.7      # Less Stage 2 acceleration (from 0.6)
+    surface_tension_mN_m: float = 15.0            # Interfacial tension [mN/m]
+
+    # Stage timing validation targets (from experiments)
+    expected_stage1_fraction: float = 0.825       # 82.5% of cycle
+    expected_stage2_fraction: float = 0.135       # 13.5% of cycle
+    expected_stage3_fraction: float = 0.04        # 4% of cycle
+
     @property
     def dP_cap_ow_Pa(self) -> float:
         return mbar_to_pa(self.dP_cap_ow_mbar)
@@ -358,11 +375,24 @@ def _parse_operating_map(d: dict[str, Any]) -> OperatingMapConfig:
 
 def _parse_droplet_model(d: dict[str, Any]) -> DropletModelConfig:
     return DropletModelConfig(
-        k=float(d.get("k", 1.2)),
-        a=float(d.get("a", 0.5)),
-        b=float(d.get("b", 0.3)),
-        dP_cap_ow_mbar=float(d.get("dP_cap_ow_mbar", 50.0)),
+        k=float(d.get("k", 3.3935)),
+        a=float(d.get("a", 0.3390)),
+        b=float(d.get("b", 0.7198)),
+        dP_cap_ow_mbar=float(d.get("dP_cap_ow_mbar", 30.0)),
         dP_cap_wo_mbar=float(d.get("dP_cap_wo_mbar", 30.0)),
+        hydraulic_model=str(d.get("hydraulic_model", "steady")),
+        duty_factor_phi=float(d.get("duty_factor_phi", 0.18)),
+        duty_factor_mode=str(d.get("duty_factor_mode", "global")),
+        tau_pinch_ms=float(d.get("tau_pinch_ms", 50.0)),
+        tau_reset_ms=float(d.get("tau_reset_ms", 20.0)),
+        g_pinch_frac=float(d.get("g_pinch_frac", 0.01)),
+        dt_ms=float(d.get("dt_ms", 5.0)),
+        simulation_time_ms=float(d.get("simulation_time_ms", 3000.0)),
+        L_retreat_um=float(d.get("L_retreat_um", 10.0)),
+        L_breakup_um=float(d.get("L_breakup_um", 5.0)),
+        # NEW: Refill volume fields
+        enable_refill_volume=bool(d.get("enable_refill_volume", False)),
+        refill_length_factor=float(d.get("refill_length_factor", 2.0)),
     )
 
 
