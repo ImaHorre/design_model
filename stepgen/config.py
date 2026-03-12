@@ -206,6 +206,33 @@ class DropletModelConfig:
 
 
 @dataclass(frozen=True)
+class StageWiseConfig:
+    """Configuration for the new stage-wise droplet formation model."""
+
+    # Model selection
+    enabled: bool = True
+
+    # Adaptive grouping
+    pressure_uniformity_threshold: float = 0.05  # 5% P_j variation triggers grouping
+    max_groups: int = 10
+
+    # Stage 1 corrections (modular toggles)
+    moving_interface: bool = True              # Contact line resistance
+    adsorption_kinetics: bool = False          # Surfactant effects (off by default)
+    backflow: bool = True                      # Water backflow effects
+
+    # Stage 2 physics
+    use_detailed_growth: bool = False          # Start with simplified model
+    necking_time_model: str = "viscocapillary"  # or "empirical"
+
+    # Regime detection thresholds
+    ca_dripping_limit: float = 0.3             # Geometry-dependent, will be calibrated
+    flow_ratio_limit: float = 1.5              # Flow vs Stage 2 capacity
+    Pj_normal_min_mbar: float = 50.0           # Device-specific normal operating range
+    Pj_normal_max_mbar: float = 300.0
+
+
+@dataclass(frozen=True)
 class DeviceConfig:
     fluids: FluidConfig
     geometry: GeometryConfig
@@ -214,6 +241,7 @@ class DeviceConfig:
     manufacturing: ManufacturingConfig = field(default_factory=ManufacturingConfig)
     droplet_model: DropletModelConfig = field(default_factory=DropletModelConfig)
     operating_map: OperatingMapConfig = field(default_factory=OperatingMapConfig)
+    stage_wise: StageWiseConfig = field(default_factory=StageWiseConfig)
 
 
 # ---------------------------------------------------------------------------

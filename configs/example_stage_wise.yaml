@@ -1,0 +1,83 @@
+# Example config for the new stage-wise droplet formation model
+# Based on w11_stage_wise.yaml but using the new architecture
+
+fluids:
+  mu_continuous: 0.00089      # Pa·s  water (continuous phase)
+  mu_dispersed:  0.06         # Pa·s  oil  (dispersed phase — forms droplets)
+  emulsion_ratio: 0.1
+  gamma: 0.015                # Set surface tension to 15 mN/m
+  temperature_C: 20.0
+
+geometry:
+  main:
+    Mcd: 200.0e-6
+    Mcw: 2000.0e-6
+    Mcl: 0.75
+
+  rung:
+    mcd: 5e-6
+    mcw: 8e-6
+    mcl: 4000.0e-6
+    pitch: 30e-6
+    constriction_ratio: 0.9
+
+  junction:
+    exit_width: 15e-6
+    exit_depth: 5e-6
+    junction_type: step
+
+operating:
+  mode: A
+  Po_in_mbar: 300.0
+  Qw_in_mlhr: 1.5
+  P_out_mbar: 0.0
+
+footprint:
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 2000.0e-6
+
+operating_map:
+  Po_min_mbar: 50.0
+  Po_max_mbar: 500.0
+  Po_n: 10
+  Qw_min_mlhr: 2.0
+  Qw_max_mlhr: 15.0
+  Qw_n: 6
+
+droplet_model:
+  k: 3.3935   # calibrated: D = k * exit_width^a * exit_depth^b  (SI)
+  a: 0.3390   # power on exit_width
+  b: 0.7198   # power on exit_depth  (depth dominates)
+  dP_cap_ow_mbar: 35.0
+  dP_cap_wo_mbar: 30.0
+
+# NEW STAGE-WISE MODEL CONFIGURATION
+stage_wise:
+  enabled: true                         # Use the new stage-wise physics model
+
+  # Adaptive grouping settings
+  pressure_uniformity_threshold: 0.05   # 5% P_j variation triggers grouping
+  max_groups: 10                        # Maximum number of rung groups
+
+  # Stage 1 correction mechanisms (modular toggles)
+  moving_interface: true                # Contact line resistance effects
+  adsorption_kinetics: false            # Surfactant adsorption (disable initially)
+  backflow: true                        # Water backflow during displacement
+
+  # Stage 2 physics settings
+  use_detailed_growth: false            # Start with simplified bulb growth model
+  necking_time_model: "viscocapillary"  # Necking time model type
+
+  # Regime detection thresholds
+  ca_dripping_limit: 0.3                # Capillary number threshold for dripping
+  flow_ratio_limit: 1.5                 # Flow rate vs Stage 2 capacity ratio
+  Pj_normal_min_mbar: 50.0              # Normal operating range minimum
+  Pj_normal_max_mbar: 300.0             # Normal operating range maximum
