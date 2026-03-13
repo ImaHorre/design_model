@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -242,6 +242,7 @@ class DeviceConfig:
     droplet_model: DropletModelConfig = field(default_factory=DropletModelConfig)
     operating_map: OperatingMapConfig = field(default_factory=OperatingMapConfig)
     stage_wise: StageWiseConfig = field(default_factory=StageWiseConfig)
+    stage_wise_v3: Optional["StageWiseV3Config"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +425,68 @@ def _parse_droplet_model(d: dict[str, Any]) -> DropletModelConfig:
     )
 
 
+def _parse_stage_wise(d: dict[str, Any]) -> StageWiseConfig:
+    """Parse stage_wise configuration section."""
+    return StageWiseConfig(
+        enabled=bool(d.get("enabled", True)),
+        pressure_uniformity_threshold=float(d.get("pressure_uniformity_threshold", 0.05)),
+        max_groups=int(d.get("max_groups", 10)),
+        moving_interface=bool(d.get("moving_interface", True)),
+        adsorption_kinetics=bool(d.get("adsorption_kinetics", False)),
+        backflow=bool(d.get("backflow", True)),
+        use_detailed_growth=bool(d.get("use_detailed_growth", False)),
+        necking_time_model=str(d.get("necking_time_model", "viscocapillary")),
+        ca_dripping_limit=float(d.get("ca_dripping_limit", 0.3)),
+        flow_ratio_limit=float(d.get("flow_ratio_limit", 1.5)),
+        Pj_normal_min_mbar=float(d.get("Pj_normal_min_mbar", 50.0)),
+        Pj_normal_max_mbar=float(d.get("Pj_normal_max_mbar", 300.0)),
+    )
+
+
+def _parse_stage_wise_v3(d: dict[str, Any]) -> Optional["StageWiseV3Config"]:
+    """Parse stage_wise_v3 configuration section."""
+    if not d:
+        return None
+
+    # Import v3 config here to avoid circular imports
+    try:
+        from stepgen.models.stage_wise_v3 import StageWiseV3Config
+    except ImportError:
+        # v3 module not available, return None
+        return None
+
+    # Parse mechanism thresholds if present
+    threshold_dict = d.get("_mechanism_thresholds", {})
+    if not threshold_dict:
+        # Use defaults
+        threshold_dict = {
+            "ca_interface_threshold": 0.1,
+            "pe_adsorption_threshold": 1.0,
+            "pressure_backflow_threshold": 2.0,
+            "ca_neck_critical": 0.3,
+        }
+
+    return StageWiseV3Config(
+        enabled=bool(d.get("enabled", True)),
+        stage1_mechanism=str(d.get("stage1_mechanism", "auto")),
+        enable_two_fluid_washburn=bool(d.get("enable_two_fluid_washburn", True)),
+        enable_outer_phase_necking=bool(d.get("enable_outer_phase_necking", True)),
+        enable_multi_factor_regime=bool(d.get("enable_multi_factor_regime", True)),
+        enable_design_feedback=bool(d.get("enable_design_feedback", False)),
+        gamma_effective=float(d.get("gamma_effective", 15e-3)),
+        theta_effective=float(d.get("theta_effective", 30.0)),
+        R_critical_ratio=float(d.get("R_critical_ratio", 0.7)),
+        enable_dynamic_hydraulics=bool(d.get("enable_dynamic_hydraulics", True)),
+        hydraulic_convergence_tolerance=float(d.get("hydraulic_convergence_tolerance", 0.01)),
+        max_hydraulic_iterations=int(d.get("max_hydraulic_iterations", 10)),
+        pressure_uniformity_threshold=float(d.get("pressure_uniformity_threshold", 0.05)),
+        max_groups=int(d.get("max_groups", 10)),
+        _mechanism_thresholds=threshold_dict,
+        enable_physics_validation=bool(d.get("enable_physics_validation", True)),
+        enable_transition_warnings=bool(d.get("enable_transition_warnings", True)),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -441,6 +504,8 @@ def load_config(path: str | Path) -> DeviceConfig:
         manufacturing=_parse_manufacturing(raw.get("manufacturing", {})),
         droplet_model=_parse_droplet_model(raw.get("droplet_model", {})),
         operating_map=_parse_operating_map(raw.get("operating_map", {})),
+        stage_wise=_parse_stage_wise(raw.get("stage_wise", {})),
+        stage_wise_v3=_parse_stage_wise_v3(raw.get("stage_wise_v3", {})),
     )
 
 

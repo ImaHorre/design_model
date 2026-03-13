@@ -180,8 +180,11 @@ class HydraulicModelRegistry:
             elif model_type == "stage_wise":
                 from stepgen.models.time_state.stage_wise_model import StageWiseModel
                 cls.register(model_type, StageWiseModel)
+            elif model_type == "stage_wise_v3":
+                from stepgen.models.stage_wise_v3.hydraulic_interface import StageWiseV3Model
+                cls.register(model_type, StageWiseV3Model)
             else:
-                available = list(cls._models.keys()) + ["duty_factor", "time_state", "time_state_filling", "stage_wise"]
+                available = list(cls._models.keys()) + ["duty_factor", "time_state", "time_state_filling", "stage_wise", "stage_wise_v3"]
                 raise ValueError(f"Unknown hydraulic model '{model_type}'. Available: {available}")
 
         return cls._models[model_type]()
@@ -191,7 +194,7 @@ class HydraulicModelRegistry:
         """List all registered model types."""
         # Include lazily-loaded models in the list
         available = list(cls._models.keys())
-        for model_type in ["duty_factor", "time_state", "time_state_filling", "stage_wise"]:
+        for model_type in ["duty_factor", "time_state", "time_state_filling", "stage_wise", "stage_wise_v3"]:
             if model_type not in available:
                 available.append(model_type)
         return available
