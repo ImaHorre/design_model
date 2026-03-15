@@ -30,7 +30,7 @@ import numpy as np
 # Re-export core result types for external use
 from .core import stage_wise_v3_solve, StageWiseV3Result
 from .hydraulics import DynamicHydraulicResult, JunctionPressures
-from .stage1_physics import Stage1Result, WashburnResult, Stage1Mechanism
+from .stage1_physics import Stage1Result
 from .stage2_physics import Stage2Result, NeckEvolution, TransitionWarning
 from .regime_classification import RegimeClassification, RegimeResult
 
@@ -43,8 +43,6 @@ __all__ = [
     'DynamicHydraulicResult',
     'JunctionPressures',
     'Stage1Result',
-    'WashburnResult',
-    'Stage1Mechanism',
     'Stage2Result',
     'NeckEvolution',
     'TransitionWarning',
@@ -68,10 +66,14 @@ class StageWiseV3Config:
 
     # Model selection
     enabled: bool = True
-    stage1_mechanism: Literal["auto", "hydraulic", "interface", "adsorption", "backflow"] = "auto"
 
-    # Physics switches (aligned with resolved physics issues)
-    enable_two_fluid_washburn: bool = True          # Issue 3A: Two-fluid Washburn baseline
+    # Stage 1 calibration — viscosity correction multiplier
+    # t_stage1 = stage1_viscosity_correction × V_reset / (P_j / R_rung)
+    # Default 1.0; expected ~3–5× from experiment once calibrated.
+    # Calibrate by fitting t_stage1 vs Po at fixed SDS concentration.
+    stage1_viscosity_correction: float = 1.0
+
+    # Physics switches
     enable_outer_phase_necking: bool = True         # Strategic: Literature-corrected necking
     enable_multi_factor_regime: bool = True         # Strategic: Multi-factor classification
     enable_design_feedback: bool = False            # Strategic: Design optimization (deferred)

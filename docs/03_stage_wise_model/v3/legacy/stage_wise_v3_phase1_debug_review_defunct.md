@@ -1,3 +1,12 @@
+> **DEFUNCT — March 2026**
+> This debug review diagnosed bugs in the original Washburn-ODE Stage 1
+> implementation (spurious w in geometry factor; missing network driving pressure).
+> The Washburn ODE has since been replaced entirely. The current Stage 1 model is
+> `t = C_visc × V_reset / (P_j / R_rung)`. Bugs documented here no longer apply.
+> See `stage_wise_v3_implementation_plan.md` progress log (March 15 2026).
+
+---
+
 # Stage-Wise V3 Phase 1 — Debug Review & Calculation Flow
 
 **Date**: March 14, 2026

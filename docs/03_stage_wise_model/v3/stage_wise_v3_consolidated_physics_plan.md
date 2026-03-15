@@ -79,6 +79,17 @@ The result is a modest change in volumetric flow but an increase in **local neck
 
 ## A3. Stage 1 Physical Model
 
+> **NOTE — March 2026**: The Washburn ODE section below (baseline refill physics
+> through junction exit) has been superseded. The current implementation uses:
+>
+>     t_stage1 = C_visc × V_reset / (P_j / R_rung)
+>
+> where V_reset = L_r × exit_width × exit_depth, R_rung is the rung Poiseuille
+> resistance, and C_visc = stage1_viscosity_correction (default 1.0, calibrate from
+> experiment). The Washburn ODE predicted ~0.2 ms at 200–300 mbar — too fast by
+> ~3 orders of magnitude. The qualitative reasoning below (Po-dependence, t_stage1
+> ≈ t_refill) remains valid. See implementation_plan.md progress log March 15 2026.
+
 Stage 1 consists of two processes:
 
 1. **Fast reset / back‑intrusion**
@@ -132,6 +143,19 @@ where:
 The meniscus advances when ΔP_drive > 0. Refill speed increases with higher P_j
 (i.e. higher Po), which is consistent with experimental observations.
 
+### Channel geometry for the reset zone
+
+The reset meniscus moves through the **junction exit region**, not the rung.
+
+The rung (mcd, mcw) is a long high-resistance upstream channel. Its resistance is already
+captured in P_j from the hydraulic network and must NOT be re-introduced in this ODE.
+
+Dimensions for the ODE:
+
+• h = exit_depth   (junction exit channel depth)
+• w = exit_width   (junction exit channel width; also equals L_r)
+• L_r = exit_width (reset distance — the oil was pushed back approximately one exit width)
+
 ### Two-fluid resistance of the reset zone
 
 At meniscus position x along the reset zone of total length L_r:
@@ -141,7 +165,7 @@ At meniscus position x along the reset zone of total length L_r:
 where:
 
 • f(α) = rectangular-channel resistance correction factor (Shah & London)
-• α    = h/w, channel aspect ratio
+• α    = h/w = exit_depth / exit_width (junction exit aspect ratio)
 • μ_oil, μ_water = viscosities of the two phases
 
 As oil replaces water, resistance evolves with x, giving naturally Washburn-like dynamics
@@ -150,7 +174,7 @@ even under pressure-driven flow.
 ### Governing equation
 
   dx/dt = ΔP_drive / [w · h · R_reset(x)]
-        = (P_j − P_water − P_cap) · h² / [f(α) · (μ_oil · x + μ_water · (L_r − x))]
+        = (P_j − P_cap) · h² / [f(α) · (μ_oil · x + μ_water · (L_r − x))]
 
 Stage 1 refill time is obtained by integrating x from 0 to L_r.
 
@@ -248,6 +272,7 @@ Inputs:
 2. Obtain P_j from hydraulic network (pre-neck oil pressure, same as Stage 2)
 3. Obtain P_water from hydraulic network (local continuous-phase pressure)
 4. Compute capillary barrier: P_cap = γ cos(θ_eff) · (1/h + 1/w)
+   where h = exit_depth, w = exit_width (junction exit dims — the reset zone)
 5. Compute driving pressure: ΔP_drive = P_j − P_water − P_cap
 6. Integrate dx/dt = ΔP_drive · h² / [f(α) · (μ_oil · x + μ_water · (L_r − x))]
    from x = 0 to x = L_r

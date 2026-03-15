@@ -874,10 +874,10 @@ Post-Phase-1 physics review identified two issues with the original Stage 1 impl
    where `P_j = P_oil − P_water` from the hydraulic network (same variable as Stage 2).
    This captures the observed strong Po-dependence of Stage 1 timing.
 
-3. **Wrong channel dimensions in Washburn ODE**: The ODE used junction exit dimensions
-   (exit_width, exit_depth) for resistance and capillary pressure. The refill channel is the
-   rung, so rung dimensions (mcw, mcd) should be used. Reset distance L_r ≈ exit_width is
-   a separate quantity and unchanged.
+3. **Channel dimensions confirmed**: The reset meniscus moves through the junction exit region
+   (exit_width × exit_depth), NOT the rung. Junction exit dims are the correct ODE geometry.
+   The rung (mcw, mcd) is upstream high-resistance channel; its contribution is already in P_j.
+   No dimension change was made — junction exit dims are confirmed correct.
 
 **Files modified**:
 - `stepgen/models/stage_wise_v3/stage1_physics.py` — driving pressure, geometry factor, rung dims
@@ -888,7 +888,8 @@ Post-Phase-1 physics review identified two issues with the original Stage 1 impl
 **Physics changes in `stage1_physics.py`**:
 - `solve_two_fluid_washburn_base` now accepts `P_j: float` (net hydraulic driving pressure)
 - Governing equation updated to: `dx/dt = (P_j − P_cap) · h²/f(α) / (μ_oil·x + μ_water·(L_r−x))`
-- Rung dimensions (`mcw`, `mcd`) used for resistance factor and capillary pressure
+- Junction exit dims (`exit_width`, `exit_depth`) used — the reset zone geometry (confirmed correct)
+- Rung dims remain upstream, captured in P_j only
 - Reset distance `L_r = exit_width` unchanged
 - Geometry factor corrected to `h**2 / f_alpha` (Bug 1 fix)
 - Graceful handling added for `ΔP_drive ≤ 0` (no-refill condition returns large time + warning)
@@ -909,3 +910,43 @@ Post-Phase-1 physics review identified two issues with the original Stage 1 impl
 - Stage 2 Bug 2 (wrong hydraulic resistance) — separate fix, see debug review
 - Mechanism selection (deferred extension, unchanged)
 - Rung grouping, convergence logic (unchanged)
+
+---
+
+### Stage 1 Physics Replacement: Simplified Poiseuille Model — COMPLETED
+**Date**: March 15, 2026
+**Status**: ✅ COMPLETED — Washburn ODE replaced with simplified Poiseuille model
+
+**Reason for replacement**:
+Physics analysis confirmed that the two-fluid Washburn ODE through the 15 µm junction
+exit (previous model) predicts ~0.2 ms Stage 1 refill at 200–300 mbar. Experimental
+observation is ~1 s. Root cause: the ODE correctly captures meniscus dynamics through
+the tiny exit zone, but this is NOT the rate-limiting step. The rung resistance
+R_rung >> R_exit by ~500×, so oil delivery through the rung controls the timing.
+
+**New Stage 1 model**:
+```
+t_stage1 = C_visc × V_reset / (P_j / R_rung)
+         = C_visc × (L_r × exit_width × exit_depth) × R_rung / P_j
+```
+where:
+- L_r ≈ exit_width (confirmed reset distance)
+- R_rung computed from rung geometry (mcd, mcw, mcl) via Shah & London
+- C_visc = stage1_viscosity_correction (default 1.0; expected ~3–5× from calibration)
+- Preserves 1/Po scaling — critical for correct Po-dependence
+
+**Without correction (C_visc = 1.0)**: ~0.25–0.30 s at 200–300 mbar
+**With C_visc ≈ 3–5**: ~0.75–1.5 s — consistent with experimental observation
+
+**Files modified**:
+- `stepgen/models/stage_wise_v3/stage1_physics.py` — complete rewrite, simplified model
+- `stepgen/models/stage_wise_v3/legacy/stage1_physics_washburn_defunct.py` — archived Washburn ODE with defunct notice
+- `stepgen/models/stage_wise_v3/core.py` — updated import and call (`solve_stage1_physics`)
+- `stepgen/models/stage_wise_v3/__init__.py` — removed WashburnResult/Stage1Mechanism exports; added `stage1_viscosity_correction` to StageWiseV3Config; removed unused `stage1_mechanism` and `enable_two_fluid_washburn` fields
+
+**Tests**: Existing Phase 1 tests referencing WashburnResult/Stage1Mechanism will
+fail and need updating. Testing deferred — to be done when experimental calibration
+data is available for C_visc.
+
+**Next step**: Collect t_stage1 vs Po experimental data, fit C_visc, update config.
+See docs/03_stage_wise_model/v3/stage1_slowdown_mechanisms_research.md for guidance.

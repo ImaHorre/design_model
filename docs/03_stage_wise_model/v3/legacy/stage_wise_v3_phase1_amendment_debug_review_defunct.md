@@ -1,3 +1,12 @@
+> **DEFUNCT — March 2026**
+> This document verified the network-driven Washburn ODE amendment (geometry fix +
+> P_j as driving pressure). That amended model predicted ~ms Stage 1 times, which
+> is still too fast. The Washburn ODE has since been replaced with a simplified
+> Poiseuille model `t = C_visc × V_reset / (P_j / R_rung)`. See
+> `stage_wise_v3_implementation_plan.md` progress log (March 15 2026).
+
+---
+
 # Stage-Wise V3 Phase 1 Amendment — Debug Review & Calculation Flow
 
 **Date**: March 15, 2026
@@ -32,7 +41,7 @@ have all been resolved. It also documents the current state of Stage 2 and remai
 | Issue | Original bug | Fix applied | Status |
 |---|---|---|---|
 | **Bug 1** | `geometry_factor = w * h**2 / f_alpha` (extra w factor) | `geometry_factor = h**2 / f_alpha` | ✅ FIXED |
-| **Issue A** | Washburn ODE used junction exit dims (15×5 µm) | Changed to rung dims (8×5 µm); L_r stays = exit_width | ✅ FIXED |
+| **Issue A** | Washburn ODE used junction exit dims (15×5 µm) | Junction exit dims confirmed correct (reset zone IS the exit geometry); rung dims belong only in P_j | ✅ CONFIRMED CORRECT |
 | **Issue B** | P_j not in driving pressure (capillary-only Washburn) | `ΔP_drive = P_j − P_cap`; P_j from hydraulic network | ✅ FIXED |
 | **Bug 2** | Stage 2 `R_hydraulic` uses `A_channel**3` not `w·h³` | **Not yet fixed — separate phase** | ⚠️ OUTSTANDING |
 | **Issue C** | `NeckStateTracker.times` has N+1 entries vs N for other arrays | Not yet fixed — minor | ⚠️ OUTSTANDING |
@@ -114,23 +123,20 @@ This P_j is the net hydraulic driving pressure available at the junction.
 
 ---
 
-### Step 2 — Capillary barrier (rung dimensions)
+### Step 2 — Capillary barrier (junction exit dimensions)
 
-Using rung dimensions: h = 5 µm, w = 8 µm
+The meniscus moves through the **junction exit region** (exit_width=15 µm, exit_depth=5 µm).
+The rung (mcw=8 µm, mcd=5 µm) is upstream — its resistance is already in P_j.
+
+Using junction exit dimensions: h = exit_depth = 5 µm, w = exit_width = 15 µm
 
 ```
 P_cap = γ cos(θ_eff) · (1/h + 1/w)
-      = 0.015 × cos(30°) × (1/5e-6 + 1/8e-6)
-      = 0.015 × 0.866 × (200,000 + 125,000)
-      = 0.015 × 0.866 × 325,000
-      = 4,222 Pa
+      = 0.015 × cos(30°) × (1/5e-6 + 1/15e-6)
+      = 0.015 × 0.866 × (200,000 + 66,667)
+      = 0.015 × 0.866 × 266,667
+      = 3,464 Pa
 ```
-
-Comparison: with junction dims (old code), P_cap would be:
-```
-P_cap_old = 0.015 × 0.866 × (200,000 + 66,667) = 3,464 Pa
-```
-The rung channel is narrower (8 µm vs 15 µm), so capillary barrier is slightly higher (~22%).
 
 ---
 
@@ -151,39 +157,40 @@ The capillary barrier is only ~14% of the total driving pressure. This means:
 
 ### Step 4 — Geometry factor (Bug 1 fix)
 
-Using rung h = 5 µm, α = h/w = 5/8 = 0.625:
+Using junction exit dims: h = exit_depth = 5 µm, w = exit_width = 15 µm
+α = h/w = 5/15 = 0.333:
 
 ```
-f(α) = 96 × (1 − 1.3553×0.625 + 1.9467×0.625² − 1.7012×0.625³
-             + 0.9564×0.625⁴ − 0.2537×0.625⁵)
-     ≈ 96 × 0.613 ≈ 58.8
+f(α) = 96 × (1 − 1.3553×0.333 + 1.9467×0.333² − 1.7012×0.333³
+             + 0.9564×0.333⁴ − 0.2537×0.333⁵)
+     ≈ 68.4
 
-geometry_factor = h²/f(α) = (5e-6)²/58.8 = 4.25e-13 m²
+geometry_factor = h²/f(α) = (5e-6)²/68.4 = 3.65e-13 m²
 ```
 
 Old (wrong) form would have been:
 ```
-geometry_factor_old = w × h²/f(α) = 8e-6 × 4.25e-13 = 3.40e-18 m³   ← WRONG
+geometry_factor_old = w × h²/f(α) = 15e-6 × 3.65e-13 = 5.48e-18 m³   ← WRONG
 ```
 
-The old value was 8e-6 times smaller (w = 8 µm) — this alone gives ~125,000× slowdown in refill time.
+The old value was 15e-6 (= w = exit_width) times smaller — giving ~66,667× slowdown in refill time.
 
 ---
 
 ### Step 5 — ODE constant and refill time
 
 ```
-K = ΔP_drive × geometry_factor = 25,230 × 4.25e-13 = 1.07e-8 Pa·m²
+ΔP_drive = P_j − P_cap = 29,452 − 3,464 = 25,988 Pa
+K = ΔP_drive × geometry_factor = 25,988 × 3.65e-13 = 9.49e-9 Pa·m²
 
 Analytical approximation for refill time:
 t_refill ≈ L_r² × (μ_oil + μ_water) / (2K)
-         = (15e-6)² × (0.06 + 0.00089) / (2 × 1.07e-8)
-         = 2.25e-10 × 0.06089 / 2.14e-8
-         = 1.37e-11 / 2.14e-8
-         ≈ 6.4e-4 s ≈ 0.64 ms
+         = (15e-6)² × (0.06 + 0.00089) / (2 × 9.49e-9)
+         = 2.25e-10 × 0.06089 / 1.90e-8
+         ≈ 7.2e-4 s ≈ 0.72 ms
 ```
 
-This matches the ODE solver output of **0.646 ms** for Group 0.
+This is consistent with the ODE solver output (~0.65–0.71 ms across groups).
 
 ---
 

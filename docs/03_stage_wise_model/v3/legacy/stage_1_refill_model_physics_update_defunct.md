@@ -1,3 +1,14 @@
+> **DEFUNCT — March 2026**
+> This document resolved the Washburn vs Poiseuille question in favour of a
+> network-driven two-fluid Washburn ODE through the junction exit. That approach
+> has since been superseded: the Washburn ODE through the 15 µm exit predicts
+> ~0.2 ms at 200–300 mbar (orders of magnitude too fast). The current model uses
+> simplified Poiseuille `t = C_visc × V_reset / (P_j / R_rung)`. See
+> `stage_wise_v3_implementation_plan.md` progress log (March 15 2026) and
+> `stage1_slowdown_mechanisms_research.md` for the current basis.
+
+---
+
 # Stage 1 Meniscus Refill – Pressure and Resistance Model
 
 ## Purpose

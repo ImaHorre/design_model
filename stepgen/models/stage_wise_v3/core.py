@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, List, Dict, Any
 import numpy as np
 
 from .hydraulics import solve_dynamic_hydraulic_network, DynamicHydraulicResult
-from .stage1_physics import solve_stage1_washburn_physics
+from .stage1_physics import solve_stage1_physics
 from .stage2_physics import solve_stage2_critical_size_with_tracking
 from .regime_classification import classify_regime_multi_factor
 from .stage2_physics import generate_transition_warnings
@@ -271,8 +271,8 @@ def solve_droplet_physics_for_group_v3(
     P_j = group["P_j_avg"]
     Q_nominal = group["Q_avg"]
 
-    # Stage 1: Two-fluid Washburn baseline (Issue 3A)
-    stage1_result = solve_stage1_washburn_physics(P_j, Q_nominal, config, v3_config)
+    # Stage 1: Simplified Poiseuille refill (V_reset / Q_rung × C_visc)
+    stage1_result = solve_stage1_physics(P_j, Q_nominal, config, v3_config)
 
     # Stage 2: Critical size with neck tracking (Issue 4)
     stage2_result = solve_stage2_critical_size_with_tracking(P_j, config, v3_config)
