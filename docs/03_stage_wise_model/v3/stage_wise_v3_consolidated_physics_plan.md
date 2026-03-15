@@ -92,16 +92,76 @@ t_stage1 ≈ t_refill
 
 ### Baseline refill physics
 
-Refill is modeled using a **two‑fluid Washburn moving‑interface model**.
+Refill is modeled as **network-driven Poiseuille flow through a short two-fluid reset
+zone with a capillary pressure barrier**.
 
-Single‑phase Poiseuille refill is **not used** as the baseline model because it
+This formulation generalises the two-fluid Washburn moving-interface model by explicitly
+including the hydraulic network pressure as the primary driving force. Pure capillary-only
+Washburn is the limiting case when P_j ≈ P_water, but is not used as the baseline because
+it has no dependence on inlet oil pressure (Po) and therefore cannot reproduce the observed
+strong Po-dependence of Stage 1 timing.
+
+Single-phase Poiseuille refill is **not used** as the baseline model because it
 systematically overpredicts refill speed.
 
-Optional alternate mechanisms (not required initially):
+### Wettability and capillary pressure direction
 
-• dynamic contact‑line effects  
-• adsorption‑limited refill  
-• backflow‑dominated refill
+The device uses a **hydrophilic channel** (SDS/water continuous phase, vegetable oil
+dispersed phase). Water is the wetting phase; oil is non-wetting.
+
+Consequence: capillary pressure **opposes** oil advance into the water-filled reset zone.
+It acts as a barrier that must be overcome by the hydraulic driving pressure.
+
+### Driving pressure
+
+The net driving pressure for meniscus advance is:
+
+  ΔP_drive = P_j − P_water − P_cap
+
+where:
+
+• P_j     = oil pressure at the junction, pre-neck (from the hydraulic network solver —
+            same variable as used in Stage 2; already includes all upstream oil-column
+            resistance and must NOT be added again here)
+• P_water = local continuous-phase pressure downstream of the reset zone
+• P_cap   = γ cos(θ_eff) · (1/h + 1/w)   [capillary barrier, positive value]
+• γ       = oil-water interfacial tension
+• θ_eff   = effective contact angle (treated as a calibration parameter; back-calculated
+            from experimental Stage 1 timing data once available)
+
+The meniscus advances when ΔP_drive > 0. Refill speed increases with higher P_j
+(i.e. higher Po), which is consistent with experimental observations.
+
+### Two-fluid resistance of the reset zone
+
+At meniscus position x along the reset zone of total length L_r:
+
+  R_reset(x) = f(α) / (w · h³) · [μ_oil · x + μ_water · (L_r − x)]
+
+where:
+
+• f(α) = rectangular-channel resistance correction factor (Shah & London)
+• α    = h/w, channel aspect ratio
+• μ_oil, μ_water = viscosities of the two phases
+
+As oil replaces water, resistance evolves with x, giving naturally Washburn-like dynamics
+even under pressure-driven flow.
+
+### Governing equation
+
+  dx/dt = ΔP_drive / [w · h · R_reset(x)]
+        = (P_j − P_water − P_cap) · h² / [f(α) · (μ_oil · x + μ_water · (L_r − x))]
+
+Stage 1 refill time is obtained by integrating x from 0 to L_r.
+
+Note: the geometry factor is h²/f(α), not w·h²/f(α). The extra factor of w is a known
+transcription error in earlier derivation documents and must not be reintroduced.
+
+### Optional alternate mechanisms (extensions, not baseline)
+
+• dynamic contact-line effects
+• adsorption-limited refill
+• backflow-dominated refill
 
 These are **extensions**, not baseline physics.
 
@@ -184,11 +244,19 @@ Inputs:
 
 ### Stage 1 Algorithm
 
-1. apply instantaneous reset displacement
-2. integrate Washburn refill model
-3. compute refill time
+1. Apply instantaneous reset displacement (x = 0 at start of reset zone)
+2. Obtain P_j from hydraulic network (pre-neck oil pressure, same as Stage 2)
+3. Obtain P_water from hydraulic network (local continuous-phase pressure)
+4. Compute capillary barrier: P_cap = γ cos(θ_eff) · (1/h + 1/w)
+5. Compute driving pressure: ΔP_drive = P_j − P_water − P_cap
+6. Integrate dx/dt = ΔP_drive · h² / [f(α) · (μ_oil · x + μ_water · (L_r − x))]
+   from x = 0 to x = L_r
+7. Refill time = integration time
 
 Stage 1 duration = refill time.
+
+Important: do NOT add upstream oil-column resistance inside the Stage 1 ODE. P_j
+already incorporates all upstream losses.
 
 ---
 

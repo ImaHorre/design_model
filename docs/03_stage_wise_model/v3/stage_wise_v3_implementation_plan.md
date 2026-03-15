@@ -852,3 +852,60 @@ Phase 2 - Stage 1 Two-Fluid Washburn Physics enhancement with competing mechanis
 - All modules successfully importable and testable
 - Comprehensive docstrings and physics basis documentation
 - Clean separation of concerns achieved
+
+---
+
+### Phase 1 Amendment: Network-Driven Stage 1 Physics — COMPLETED
+**Date**: March 15, 2026
+**Status**: ✅ COMPLETED — Physics amendment implemented and tested
+**Amends**: Phase 1 Stage 1 implementation (capillary-only Washburn → network-driven model)
+
+**Reason for amendment**:
+Post-Phase-1 physics review identified two issues with the original Stage 1 implementation:
+
+1. **Bug 1 (critical)**: `geometry_factor = w * h**2 / f_alpha` contained a spurious factor of `w`.
+   Correct form is `h**2 / f_alpha`. This made refill time ~67,000× too long (causing 0 Hz output).
+   See `stage_wise_v3_phase1_debug_review.md` Bug 1 for full derivation.
+
+2. **Physics model incomplete**: The driving pressure used only capillary pressure as the driving force,
+   giving zero dependence on inlet oil pressure `Po`. The authoritative physics plan (A3, updated
+   March 15, 2026) requires the full network-driven driving pressure:
+   `ΔP_drive = P_j − P_cap`
+   where `P_j = P_oil − P_water` from the hydraulic network (same variable as Stage 2).
+   This captures the observed strong Po-dependence of Stage 1 timing.
+
+3. **Wrong channel dimensions in Washburn ODE**: The ODE used junction exit dimensions
+   (exit_width, exit_depth) for resistance and capillary pressure. The refill channel is the
+   rung, so rung dimensions (mcw, mcd) should be used. Reset distance L_r ≈ exit_width is
+   a separate quantity and unchanged.
+
+**Files modified**:
+- `stepgen/models/stage_wise_v3/stage1_physics.py` — driving pressure, geometry factor, rung dims
+- `stepgen/models/stage_wise_v3/core.py` — no changes required (P_j already passed correctly)
+- `tests/test_stage_wise_v3_phase1.py` — updated Washburn test; added network-driving and geometry tests
+- `docs/03_stage_wise_model/v3/stage_wise_v3_consolidated_physics_plan.md` — A3 and Stage 1 Algorithm updated
+
+**Physics changes in `stage1_physics.py`**:
+- `solve_two_fluid_washburn_base` now accepts `P_j: float` (net hydraulic driving pressure)
+- Governing equation updated to: `dx/dt = (P_j − P_cap) · h²/f(α) / (μ_oil·x + μ_water·(L_r−x))`
+- Rung dimensions (`mcw`, `mcd`) used for resistance factor and capillary pressure
+- Reset distance `L_r = exit_width` unchanged
+- Geometry factor corrected to `h**2 / f_alpha` (Bug 1 fix)
+- Graceful handling added for `ΔP_drive ≤ 0` (no-refill condition returns large time + warning)
+- `WashburnResult` extended with `driving_pressure_Pa` and `P_j_hydraulic` diagnostic fields
+
+**Tests run**:
+- test_washburn_geometry_factor_correct — verifies h²/f(α), not wh²/f(α)
+- test_washburn_network_driving_pressure — verifies P_j dependence on refill time
+- test_washburn_uses_rung_dimensions — verifies mcw/mcd used, not junction exit dims
+- test_two_fluid_washburn_basic — updated; refill time now in physically reasonable range
+- Full integration test (end-to-end solve) — frequency output now non-zero
+
+**Expected refill time after fixes (test config)**:
+- Before amendment: ~361 s (0 Hz output)
+- After amendment: ~ms range (depends on P_j from hydraulic network)
+
+**Deferred (unchanged)**:
+- Stage 2 Bug 2 (wrong hydraulic resistance) — separate fix, see debug review
+- Mechanism selection (deferred extension, unchanged)
+- Rung grouping, convergence logic (unchanged)

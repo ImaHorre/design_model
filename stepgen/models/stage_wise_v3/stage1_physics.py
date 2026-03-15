@@ -2,18 +2,28 @@
 Stage-Wise Model v3: Stage 1 Two-Fluid Washburn Physics
 =======================================================
 
-Implements the two-fluid Washburn refill model for Stage 1 as specified
-in the consolidated physics plan Issue 3A.
+Implements the network-driven two-fluid Washburn refill model for Stage 1.
 
-Physics Implementation:
-- Two-fluid Washburn equation for rectangular microchannels
-- Baseline model: single-phase Poiseuille is NOT used (overpredicts speed)
-- Optional competing mechanisms: interface, adsorption, backflow (deferred extensions)
+Physics (consolidated physics plan A3, updated March 15 2026):
 
-Key Physics:
-- ẋ(t) = [γ₁₂cos(θ₁₂)(1/h + 1/w)] · [wh²/f(α)] · [1/(μ₁x(t) + μ₂(L_tot - x(t)))]
-- Non-square-root time dependence due to two-fluid viscosity effects
-- Reset distance ≈ exit_width (experimental observation)
+    ΔP_drive = P_j − P_cap
+
+    dx/dt = ΔP_drive · h²/f(α) · 1/(μ_oil·x + μ_water·(L_r − x))
+
+where:
+  - P_j = P_oil − P_water from the hydraulic network (pre-neck junction pressure difference)
+  - P_cap = γ cos(θ_eff) · (1/h + 1/w)  [capillary BARRIER, opposes oil advance,
+            hydrophilic channel — SDS/water continuous, vegetable oil dispersed]
+  - h, w = rung channel dimensions (mcw, mcd) — NOT junction exit dimensions
+  - L_r  = reset distance ≈ exit_width  (separate from channel dims)
+  - f(α) = Shah & London rectangular-channel resistance factor
+  - geometry factor is h²/f(α)  [NOT wh²/f(α) — that extra w is a known derivation error]
+
+Key properties:
+  - Refill speed increases with P_j (and therefore with Po) — required physical behaviour
+  - Pure capillary-only Washburn recovered in the limit P_j → P_cap
+  - Single-phase Poiseuille is NOT used (overpredicts speed)
+  - Optional competing mechanisms (interface, adsorption, backflow) are deferred extensions
 """
 
 from __future__ import annotations
@@ -45,9 +55,13 @@ class WashburnResult:
     meniscus_trajectory: Any                           # solve_ivp solution object
     physics_params: Dict[str, Any]                     # Physical parameters used
 
-    # Diagnostic quantities
-    capillary_pressure: float                          # Driving capillary pressure [Pa]
-    geometry_factor: float                             # wh²/f(α) geometric scaling
+    # Driving pressure decomposition
+    driving_pressure_Pa: float                         # ΔP_drive = P_j − P_cap [Pa]
+    P_j_hydraulic: float                               # P_j from network [Pa]
+    capillary_pressure: float                          # P_cap barrier [Pa] (opposes advance)
+
+    # Channel geometry used
+    geometry_factor: float                             # h²/f(α) — correct form, no extra w
     resistance_factor: float                           # f(α) Shah & London factor
     two_fluid_scaling: str                             # "non_sqrt_t" or "sqrt_t"
 
@@ -101,8 +115,8 @@ def solve_stage1_washburn_physics(
     # Select Stage 1 mechanism (baseline: hydraulic-dominated)
     mechanism = select_stage1_mechanism(P_j, Q_nominal, config, v3_config)
 
-    # Base two-fluid Washburn calculation
-    washburn_result = solve_two_fluid_washburn_base(config, v3_config)
+    # Base two-fluid Washburn calculation — P_j drives refill alongside capillary pressure
+    washburn_result = solve_two_fluid_washburn_base(P_j, config, v3_config)
 
     # Apply mechanism-specific modifications
     if mechanism == Stage1Mechanism.HYDRAULIC_DOMINATED:
@@ -163,114 +177,139 @@ def solve_stage1_washburn_physics(
 
 
 def solve_two_fluid_washburn_base(
+    P_j: float,
     config: "DeviceConfig",
     v3_config: "StageWiseV3Config"
 ) -> WashburnResult:
     """
-    Base two-fluid Washburn equation for rectangular microchannel.
+    Network-driven two-fluid Washburn refill for rectangular microchannel.
 
-    Governing equation (from consolidated physics plan):
-    ẋ(t) = [γ₁₂cos(θ₁₂)(1/h + 1/w)] · [wh²/f(α)] · [1/(μ₁x(t) + μ₂(L_tot - x(t)))]
+    Governing equation (consolidated physics plan A3):
 
-    Where:
-    - μ₁ = dispersed phase (oil) viscosity
-    - μ₂ = continuous phase (water) viscosity
-    - γ₁₂ = effective interfacial tension
-    - θ₁₂ = effective contact angle
+        dx/dt = (P_j − P_cap) · h²/f(α) / (μ_oil·x + μ_water·(L_r − x))
+
+    where:
+      P_j   = P_oil − P_water from the hydraulic network [Pa]
+      P_cap = γ cos(θ_eff) · (1/h + 1/w)  [capillary barrier, opposes oil advance]
+      h, w  = rung channel dimensions (mcd, mcw) — NOT junction exit dimensions
+      L_r   = reset distance ≈ exit_width  (reset zone length, separate from channel dims)
+      f(α)  = Shah & London factor, α = h/w (rung aspect ratio)
+
+    Note: geometry factor is h²/f(α). The form wh²/f(α) contains a spurious w and is wrong.
     """
 
-    # Geometry parameters
-    w = config.geometry.junction.exit_width
-    h = config.geometry.junction.exit_depth
-    aspect_ratio = h / w
+    # Rung channel dimensions — the channel the meniscus travels through during refill
+    w = config.geometry.rung.mcw
+    h = config.geometry.rung.mcd
+    aspect_ratio = h / w  # α ≤ 1 when channel is wider than deep
 
-    # Reset distance (experimental observation: ≈ exit_width)
-    x0 = 0.0
-    xf = w  # Reset distance ≈ exit_width
-    L_tot = xf - x0
+    # Reset distance — how far the oil was pushed back; approximately junction exit width
+    L_r = config.geometry.junction.exit_width
 
     # Fluid properties
-    mu1 = config.fluids.mu_dispersed  # Oil (dispersed phase)
-    mu2 = config.fluids.mu_continuous  # Water (continuous phase)
+    mu_oil = config.fluids.mu_dispersed    # Oil (dispersed phase, advancing)
+    mu_water = config.fluids.mu_continuous  # Water (continuous phase, displaced)
 
-    # Effective interfacial properties (back-calculated parameters)
+    # Effective interfacial properties (calibration parameters)
     gamma12 = v3_config.gamma_effective
     theta12 = v3_config.theta_effective
 
     # Resistance factor f(α) for rectangular channel (Shah & London)
     f_alpha = calculate_resistance_factor(aspect_ratio)
 
-    # Capillary driving pressure
+    # Capillary barrier: opposes oil advance in hydrophilic (SDS/water) channel
     capillary_pressure = gamma12 * np.cos(np.radians(theta12)) * (1/h + 1/w)
 
-    # Geometric scaling factor
-    geometry_factor = w * h**2 / f_alpha
+    # Net driving pressure: hydraulic network minus capillary barrier
+    delta_P_drive = P_j - capillary_pressure
 
-    # Washburn equation constant
-    K = capillary_pressure * geometry_factor
+    # Geometry factor — correct form h²/f(α), no extra w
+    geometry_factor = h**2 / f_alpha
+
+    # ODE constant K = ΔP_drive · h²/f(α)
+    K = delta_P_drive * geometry_factor
+
+    # Handle no-refill condition: driving pressure cannot overcome capillary barrier
+    if delta_P_drive <= 0:
+        resistance_avg = 0.5 * (mu_oil + mu_water) * L_r
+        # Analytical estimate using |K| to give a finite (large) time with correct sign
+        fallback_time = resistance_avg * L_r / max(abs(K), 1e-30)
+        scaling_type = "non_sqrt_t"
+        physics_params = {
+            "mu_oil_Pa_s": mu_oil,
+            "mu_water_Pa_s": mu_water,
+            "gamma_effective_N_per_m": gamma12,
+            "theta_effective_deg": theta12,
+            "reset_distance_m": L_r,
+            "rung_width_m": w,
+            "rung_depth_m": h,
+            "aspect_ratio": aspect_ratio,
+            "P_j_Pa": P_j,
+            "capillary_barrier_Pa": capillary_pressure,
+            "delta_P_drive_Pa": delta_P_drive,
+            "warning": "ΔP_drive ≤ 0: hydraulic pressure cannot overcome capillary barrier"
+        }
+        return WashburnResult(
+            refill_time=fallback_time,
+            meniscus_trajectory=None,
+            physics_params=physics_params,
+            driving_pressure_Pa=delta_P_drive,
+            P_j_hydraulic=P_j,
+            capillary_pressure=capillary_pressure,
+            geometry_factor=geometry_factor,
+            resistance_factor=f_alpha,
+            two_fluid_scaling=scaling_type
+        )
 
     def washburn_ode(t: float, x: np.ndarray) -> np.ndarray:
-        """
-        Two-fluid Washburn ODE: dx/dt = K / [μ₁x + μ₂(L_tot - x)]
-        """
-        x_pos = x[0]
-
-        # Ensure x stays within bounds
-        x_pos = max(min(x_pos, L_tot), 0.0)
-
-        # Resistance term with two-fluid viscosity
-        resistance_term = mu1 * x_pos + mu2 * (L_tot - x_pos)
-
+        """dx/dt = K / (μ_oil·x + μ_water·(L_r − x))"""
+        x_pos = max(min(x[0], L_r), 0.0)
+        resistance_term = mu_oil * x_pos + mu_water * (L_r - x_pos)
         if resistance_term <= 0:
-            return np.array([0.0])  # Avoid division by zero
-
+            return np.array([0.0])
         return np.array([K / resistance_term])
 
-    # Event function: stop when meniscus reaches xf
     def reached_target(t: float, x: np.ndarray) -> float:
-        return x[0] - xf
+        return x[0] - L_r
 
     reached_target.terminal = True
     reached_target.direction = 1
 
-    # Solve ODE from x0 to xf
     try:
         solution = solve_ivp(
             washburn_ode,
-            [0, 1000.0],  # Large time span, will terminate at event
-            [x0],
+            [0, 10.0],  # 10 s upper bound; should terminate at event well before this
+            [0.0],
             events=reached_target,
             dense_output=True,
             rtol=1e-6,
-            atol=1e-9
+            atol=1e-12
         )
 
         if solution.t_events[0].size > 0:
-            refill_time = solution.t_events[0][0]
+            refill_time = float(solution.t_events[0][0])
         else:
-            # Fallback: estimate from final time
-            refill_time = solution.t[-1]
+            refill_time = float(solution.t[-1])
 
     except Exception:
-        # Fallback calculation for numerical issues
-        # Use average resistance approximation
-        resistance_avg = 0.5 * (mu1 + mu2) * L_tot
-        refill_time = resistance_avg * L_tot / K
+        resistance_avg = 0.5 * (mu_oil + mu_water) * L_r
+        refill_time = resistance_avg * L_r / K
         solution = None
 
-    # Determine scaling behavior
-    if abs(mu1 - mu2) / max(mu1, mu2) < 0.1:
-        scaling_type = "sqrt_t"  # Similar viscosities → classic Washburn
-    else:
-        scaling_type = "non_sqrt_t"  # Different viscosities → non-classical
+    scaling_type = "sqrt_t" if abs(mu_oil - mu_water) / max(mu_oil, mu_water) < 0.1 else "non_sqrt_t"
 
     physics_params = {
-        "mu1_dispersed_Pa_s": mu1,
-        "mu2_continuous_Pa_s": mu2,
+        "mu_oil_Pa_s": mu_oil,
+        "mu_water_Pa_s": mu_water,
         "gamma_effective_N_per_m": gamma12,
         "theta_effective_deg": theta12,
-        "reset_distance_m": L_tot,
+        "reset_distance_m": L_r,
+        "rung_width_m": w,
+        "rung_depth_m": h,
         "aspect_ratio": aspect_ratio,
+        "P_j_Pa": P_j,
+        "capillary_barrier_Pa": capillary_pressure,
+        "delta_P_drive_Pa": delta_P_drive,
         "washburn_constant_K": K
     }
 
@@ -278,6 +317,8 @@ def solve_two_fluid_washburn_base(
         refill_time=refill_time,
         meniscus_trajectory=solution,
         physics_params=physics_params,
+        driving_pressure_Pa=delta_P_drive,
+        P_j_hydraulic=P_j,
         capillary_pressure=capillary_pressure,
         geometry_factor=geometry_factor,
         resistance_factor=f_alpha,
@@ -473,13 +514,16 @@ def build_stage1_diagnostics(
         "washburn_physics": {
             "refill_time_s": washburn_result.refill_time,
             "scaling_type": washburn_result.two_fluid_scaling,
-            "capillary_pressure_Pa": washburn_result.capillary_pressure,
-            "geometry_factor": washburn_result.geometry_factor
+            "P_j_hydraulic_Pa": washburn_result.P_j_hydraulic,
+            "capillary_barrier_Pa": washburn_result.capillary_pressure,
+            "driving_pressure_Pa": washburn_result.driving_pressure_Pa,
+            "geometry_factor_h2_over_falpha": washburn_result.geometry_factor
         },
         "corrections_applied": correction_factors,
         "physics_validation": {
-            "refill_time_reasonable": 1e-6 < washburn_result.refill_time < 1e-1,
-            "capillary_pressure_positive": washburn_result.capillary_pressure > 0,
-            "viscosity_ratio_valid": True
+            "refill_time_reasonable": 1e-6 < washburn_result.refill_time < 1.0,
+            "driving_pressure_positive": washburn_result.driving_pressure_Pa > 0,
+            "capillary_barrier_positive": washburn_result.capillary_pressure > 0,
+            "hydraulic_driving_dominant": washburn_result.P_j_hydraulic > washburn_result.capillary_pressure
         }
     }

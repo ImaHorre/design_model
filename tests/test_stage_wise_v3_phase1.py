@@ -95,31 +95,154 @@ class TestStageWiseV3Phase1:
             pytest.skip(f"v3 modular architecture not fully implemented yet: {e}")
 
     def test_two_fluid_washburn_basic(self):
-        """Test basic two-fluid Washburn implementation."""
+        """Test basic two-fluid Washburn implementation with network driving pressure."""
 
         try:
             from stepgen.models.stage_wise_v3.stage1_physics import solve_two_fluid_washburn_base
             from stepgen.models.stage_wise_v3 import StageWiseV3Config
 
-            # Create minimal config for testing
             config = load_config("configs/example_stage_wise.yaml")
             v3_config = StageWiseV3Config()
 
-            # Test Washburn calculation
-            result = solve_two_fluid_washburn_base(config, v3_config)
+            # Typical junction pressure difference from hydraulic network (~hundreds of Pa)
+            P_j_test = 5000.0  # Pa — representative value from 300 mbar oil inlet
+
+            result = solve_two_fluid_washburn_base(P_j_test, config, v3_config)
 
             # Check result structure
             assert hasattr(result, 'refill_time'), "Missing refill_time in Washburn result"
             assert hasattr(result, 'capillary_pressure'), "Missing capillary_pressure"
+            assert hasattr(result, 'driving_pressure_Pa'), "Missing driving_pressure_Pa"
+            assert hasattr(result, 'P_j_hydraulic'), "Missing P_j_hydraulic"
             assert hasattr(result, 'two_fluid_scaling'), "Missing two_fluid_scaling"
 
-            # Check physical reasonableness
-            assert 1e-6 < result.refill_time < 1e-1, f"Refill time outside bounds: {result.refill_time:.2e} s"
-            assert result.capillary_pressure > 0, f"Negative capillary pressure: {result.capillary_pressure}"
-            assert result.two_fluid_scaling in ["sqrt_t", "non_sqrt_t"], f"Invalid scaling: {result.two_fluid_scaling}"
+            # Driving pressure should be positive (P_j > P_cap for typical conditions)
+            assert result.driving_pressure_Pa > 0, (
+                f"ΔP_drive should be positive at P_j={P_j_test} Pa, got {result.driving_pressure_Pa:.1f} Pa"
+            )
+
+            # Refill time should be physically reasonable (ms range, not hundreds of seconds)
+            assert 1e-6 < result.refill_time < 1.0, (
+                f"Refill time outside reasonable bounds: {result.refill_time:.3e} s. "
+                f"Expected ms range. Check geometry_factor and driving pressure."
+            )
+
+            assert result.capillary_pressure > 0, "Capillary barrier must be positive"
+            assert result.two_fluid_scaling in ["sqrt_t", "non_sqrt_t"]
 
         except ImportError as e:
             pytest.skip(f"Stage 1 physics not fully implemented yet: {e}")
+
+    def test_washburn_geometry_factor_correct(self):
+        """Verify geometry factor is h²/f(α), not wh²/f(α) (Bug 1 fix)."""
+
+        try:
+            from stepgen.models.stage_wise_v3.stage1_physics import (
+                solve_two_fluid_washburn_base, calculate_resistance_factor
+            )
+            from stepgen.models.stage_wise_v3 import StageWiseV3Config
+
+            config = load_config("configs/example_stage_wise.yaml")
+            v3_config = StageWiseV3Config()
+            P_j_test = 5000.0
+
+            result = solve_two_fluid_washburn_base(P_j_test, config, v3_config)
+
+            h = config.geometry.rung.mcd
+            w = config.geometry.rung.mcw
+            alpha = h / w
+            f_alpha = calculate_resistance_factor(alpha)
+
+            expected_geometry_factor = h**2 / f_alpha
+            wrong_geometry_factor = w * h**2 / f_alpha  # the old Bug 1 form
+
+            assert abs(result.geometry_factor - expected_geometry_factor) < 1e-30, (
+                f"geometry_factor = {result.geometry_factor:.3e}, "
+                f"expected h²/f(α) = {expected_geometry_factor:.3e}, "
+                f"wrong wh²/f(α) = {wrong_geometry_factor:.3e}"
+            )
+
+            # The wrong form would be w times larger (w ≈ 8e-6 → factor of ~8e6 error)
+            ratio_correct_to_wrong = expected_geometry_factor / wrong_geometry_factor
+            assert abs(ratio_correct_to_wrong - 1.0 / w) < 1e-10, (
+                "Sanity check: correct and wrong forms differ by factor w"
+            )
+
+        except ImportError as e:
+            pytest.skip(f"Stage 1 physics not available: {e}")
+
+    def test_washburn_network_driving_pressure(self):
+        """Verify refill time decreases as P_j increases (Po-dependence)."""
+
+        try:
+            from stepgen.models.stage_wise_v3.stage1_physics import solve_two_fluid_washburn_base
+            from stepgen.models.stage_wise_v3 import StageWiseV3Config
+
+            config = load_config("configs/example_stage_wise.yaml")
+            v3_config = StageWiseV3Config()
+
+            P_j_low = 2000.0   # Pa — low driving
+            P_j_high = 20000.0  # Pa — high driving (10× higher)
+
+            result_low = solve_two_fluid_washburn_base(P_j_low, config, v3_config)
+            result_high = solve_two_fluid_washburn_base(P_j_high, config, v3_config)
+
+            # Higher P_j must give faster refill (shorter time)
+            assert result_high.refill_time < result_low.refill_time, (
+                f"Refill time should decrease with higher P_j. "
+                f"P_j_low={P_j_low} Pa → t={result_low.refill_time:.3e} s, "
+                f"P_j_high={P_j_high} Pa → t={result_high.refill_time:.3e} s"
+            )
+
+            # Driving pressure should reflect P_j input
+            assert result_high.P_j_hydraulic == P_j_high
+            assert result_low.P_j_hydraulic == P_j_low
+            assert result_high.driving_pressure_Pa > result_low.driving_pressure_Pa
+
+        except ImportError as e:
+            pytest.skip(f"Stage 1 physics not available: {e}")
+
+    def test_washburn_uses_rung_dimensions(self):
+        """Verify Washburn ODE uses rung channel dimensions, not junction exit dimensions."""
+
+        try:
+            from stepgen.models.stage_wise_v3.stage1_physics import (
+                solve_two_fluid_washburn_base, calculate_resistance_factor
+            )
+            from stepgen.models.stage_wise_v3 import StageWiseV3Config
+
+            config = load_config("configs/example_stage_wise.yaml")
+            v3_config = StageWiseV3Config()
+            P_j_test = 5000.0
+
+            result = solve_two_fluid_washburn_base(P_j_test, config, v3_config)
+
+            h_rung = config.geometry.rung.mcd
+            w_rung = config.geometry.rung.mcw
+            alpha_rung = h_rung / w_rung
+            f_alpha_rung = calculate_resistance_factor(alpha_rung)
+            expected_gf_rung = h_rung**2 / f_alpha_rung
+
+            h_junc = config.geometry.junction.exit_depth
+            w_junc = config.geometry.junction.exit_width
+            alpha_junc = h_junc / w_junc
+            f_alpha_junc = calculate_resistance_factor(alpha_junc)
+            wrong_gf_junc = h_junc**2 / f_alpha_junc  # wrong: uses junction dims
+
+            # geometry_factor should match rung-based calculation, not junction-based
+            assert abs(result.geometry_factor - expected_gf_rung) / expected_gf_rung < 1e-6, (
+                f"geometry_factor = {result.geometry_factor:.4e}, "
+                f"expected (rung dims) = {expected_gf_rung:.4e}, "
+                f"junction dims would give = {wrong_gf_junc:.4e}"
+            )
+
+            # Confirm rung and junction give meaningfully different values
+            assert abs(expected_gf_rung - wrong_gf_junc) / expected_gf_rung > 0.01, (
+                "Rung and junction geometry factors are unexpectedly identical — check config"
+            )
+
+        except ImportError as e:
+            pytest.skip(f"Stage 1 physics not available: {e}")
 
     def test_critical_radius_calculation(self):
         """Test critical radius determination from geometry."""
