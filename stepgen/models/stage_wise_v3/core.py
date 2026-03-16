@@ -268,13 +268,22 @@ def solve_droplet_physics_for_group_v3(
 ) -> RungGroupResult:
     """Solve droplet physics for a single rung group."""
 
-    P_j = group["P_j_avg"]
+    # Separate pressure variables for different physics stages
+    # Stage 1: Local oil pressure for rung flow during refill
+    Po_local = group["P_oil_avg"] - group["P_water_avg"]  # Local oil pressure at rung inlet
+
+    # Stage 2: Preneck junction pressure for droplet formation
+    P_j = group["P_j_avg"]                          # Preneck junction pressure (should equal Po_local)
+
     Q_nominal = group["Q_avg"]
 
-    # Stage 1: Simplified Poiseuille refill (V_reset / Q_rung × C_visc)
-    stage1_result = solve_stage1_physics(P_j, Q_nominal, config, v3_config)
+    # Diagnostic: Check if pressures are equal (they should be in current hydraulic model)
+    pressure_difference = abs(Po_local - P_j) if P_j != 0 else 0.0
 
-    # Stage 2: Critical size with neck tracking (Issue 4)
+    # Stage 1: Simplified Poiseuille refill using local oil pressure for rung flow
+    stage1_result = solve_stage1_physics(Po_local, Q_nominal, config, v3_config)
+
+    # Stage 2: Critical size with neck tracking using preneck junction pressure for droplet physics
     stage2_result = solve_stage2_critical_size_with_tracking(P_j, config, v3_config)
 
     # Multi-factor regime classification (Issue 9 + Strategic improvement)
@@ -298,7 +307,10 @@ def solve_droplet_physics_for_group_v3(
         stage2_result=stage2_result,
         regime_result=regime_result,
         confidence_level=_assess_group_confidence(regime_result, warnings),
-        warnings=[str(w) for w in warnings]
+        warnings=[str(w) for w in warnings] + [
+            f"Pressure separation: Po_local={Po_local:.1f} Pa, P_j={P_j:.1f} Pa, "
+            f"difference={pressure_difference:.1f} Pa"
+        ]
     )
 
 
