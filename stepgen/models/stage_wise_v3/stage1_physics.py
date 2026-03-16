@@ -5,13 +5,13 @@ Stage-Wise Model v3: Stage 1 Simplified Poiseuille Refill Physics
 Physics basis (updated March 2026):
 
     t_stage1 = C_visc × V_reset / Q_rung
-             = C_visc × V_reset × R_rung / Po_local
+             = C_visc × V_reset × R_rung / DP_rung
 
 where:
   - V_reset = L_r × exit_width × exit_depth  (junction exit volume to displace)
   - L_r ≈ exit_width  (confirmed reset distance)
   - R_rung = f(α) × μ_oil × mcl / (w × h³)  (rung Poiseuille resistance)
-  - Po_local = P_oil(x) − P_water(x)  (local oil pressure at rung inlet x)
+  - DP_rung = P_oil(x) − P_water(x)  (pressure difference driving flow through rung)
     (DISTINCT from P_j which is preneck junction pressure for Stage 2)
   - C_visc = stage1_viscosity_correction  (calibration multiplier, default 1.0)
 
@@ -56,7 +56,7 @@ class Stage1Result:
 
 
 def solve_stage1_physics(
-    Po_local: float,
+    DP_rung: float,
     Q_rung: float,
     config: "DeviceConfig",
     v3_config: "StageWiseV3Config"
@@ -66,9 +66,9 @@ def solve_stage1_physics(
 
     Parameters
     ----------
-    Po_local : float
-        Local oil pressure at rung inlet relative to water pressure [Pa]
-        This is the driving pressure for rung flow: Po_local = P_oil(x) - P_water(x)
+    DP_rung : float
+        Pressure difference driving flow through rung: DP_rung = P_oil(x) - P_water(x) [Pa]
+        This is the driving pressure for rung Poiseuille flow during Stage 1 refill
         DISTINCT from P_j which is preneck junction pressure for Stage 2 droplet formation
     Q_rung : float
         Rung flow rate from hydraulic network [m³/s] (used for diagnostics only;
@@ -90,11 +90,11 @@ def solve_stage1_physics(
     # Rung Poiseuille resistance from geometry
     R_rung = compute_rung_resistance(config)
 
-    # Base refill time: V_reset / Q_rung where Q_rung = Po_local / R_rung
-    if Po_local <= 0 or R_rung <= 0:
+    # Base refill time: V_reset / Q_rung where Q_rung = DP_rung / R_rung
+    if DP_rung <= 0 or R_rung <= 0:
         t_base = float('inf')
     else:
-        t_base = V_reset * R_rung / Po_local            # = V_reset / (Po_local / R_rung)
+        t_base = V_reset * R_rung / DP_rung            # = V_reset / (DP_rung / R_rung)
 
     # Effective viscosity correction — calibrated from t_stage1 vs Po experiment
     C_visc = v3_config.stage1_viscosity_correction
@@ -103,22 +103,22 @@ def solve_stage1_physics(
     diagnostics = {
         "V_reset_m3": V_reset,
         "R_rung_Pa_s_per_m3": R_rung,
-        "Po_local_Pa": Po_local,
-        "pressure_type": "local_oil_pressure_at_rung_inlet",
+        "DP_rung_Pa": DP_rung,
+        "pressure_type": "rung_pressure_difference_driving_flow",
         "Q_rung_network_m3s": Q_rung,
-        "Q_rung_computed_m3s": Po_local / R_rung if R_rung > 0 else 0.0,
+        "Q_rung_computed_m3s": DP_rung / R_rung if R_rung > 0 else 0.0,
         "t_base_s": t_base,
         "viscosity_correction": C_visc,
         "exit_width_m": exit_width,
         "exit_depth_m": exit_depth,
         "L_r_m": L_r,
-        "physics_valid": Po_local > 0 and R_rung > 0,
+        "physics_valid": DP_rung > 0 and R_rung > 0,
     }
 
     return Stage1Result(
         t_displacement=t_displacement,
         mechanism="poiseuille_viscosity_corrected",
-        physics_basis="V_reset / (Po_local / R_rung) × C_visc",
+        physics_basis="V_reset / (DP_rung / R_rung) × C_visc",
         diagnostics=diagnostics
     )
 

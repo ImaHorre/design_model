@@ -56,14 +56,14 @@ Hydraulics operates at **device scale**, while droplet formation physics operate
 
 Pj = upstream pressure located **immediately before the neck region** (used in Stage 2).
 
-Po_local = local oil pressure at rung inlet **P_oil(x) - P_water(x)** (used in Stage 1).
+DP_rung = pressure difference driving flow through rung **P_oil(x) - P_water(x)** (used in Stage 1).
 
 Bulb pressure exists **downstream of the neck**.
 
 **Pressure Variable Separation (March 2026 Physics Correction):**
 
 Stage 1 and Stage 2 use different pressure variables to reflect different physics:
-- **Stage 1**: Uses Po_local for rung flow physics during refill
+- **Stage 1**: Uses DP_rung for rung flow physics during refill
 - **Stage 2**: Uses Pj for preneck junction pressure during droplet formation
 
 Relationship:
@@ -277,21 +277,21 @@ Inputs:
 ### Stage 1 Algorithm
 
 1. Apply instantaneous reset displacement (x = 0 at start of reset zone)
-2. Obtain Po_local from hydraulic network (local oil pressure at rung inlet for Stage 1 flow)
-   NOTE: Stage 1 now uses Po_local = P_oil(x) - P_water(x) for rung flow physics
+2. Obtain DP_rung from hydraulic network (pressure difference across rung for Stage 1 flow)
+   NOTE: Stage 1 now uses DP_rung = P_oil(x) - P_water(x) for rung flow physics
    This is distinct from P_j (preneck junction pressure) used in Stage 2
 3. Obtain P_water from hydraulic network (local continuous-phase pressure)
 4. Compute capillary barrier: P_cap = γ cos(θ_eff) · (1/h + 1/w)
    where h = exit_depth, w = exit_width (junction exit dims — the reset zone)
-5. Compute driving pressure: ΔP_drive = Po_local − P_cap
-   NOTE: Po_local already accounts for local pressure difference (P_oil - P_water)
+5. Compute driving pressure: ΔP_drive = DP_rung − P_cap
+   NOTE: DP_rung already accounts for pressure difference across rung (P_oil - P_water)
 6. Integrate dx/dt = ΔP_drive · h² / [f(α) · (μ_oil · x + μ_water · (L_r − x))]
    from x = 0 to x = L_r
 7. Refill time = integration time
 
 Stage 1 duration = refill time.
 
-Important: do NOT add upstream oil-column resistance inside the Stage 1 ODE. Po_local
+Important: do NOT add upstream oil-column resistance inside the Stage 1 ODE. DP_rung
 already incorporates all upstream losses.
 
 ---
