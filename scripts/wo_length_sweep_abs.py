@@ -1,0 +1,123 @@
+"""
+wo_length_sweep_abs.py  —  absolute x-axis (mm)
+================================================
+Pressure profiles for wo_w11 at three device lengths (full / half / quarter Mcl).
+Lines stop at different positions — you see the physical length difference directly.
+
+Layout: 4 rows (one per P_disp) x 3 columns (one per Q_cont).
+Colour  = device length.
+Solid   = dispersed channel (P_oil in solver).
+Dashed  = continuous channel (P_water in solver).
+
+Usage
+-----
+    python scripts/wo_length_sweep_abs.py
+    python scripts/wo_length_sweep_abs.py --out-dir results/wo_w11/
+"""
+
+import argparse
+import os
+import sys
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from stepgen.config import load_config, DeviceConfig
+from stepgen.models.generator import iterative_solve
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+BASE_CONFIG   = "configs/wo_w11.yaml"
+P_DISP_VALS   = [100, 200, 400, 800]   # mbar
+Q_CONT_VALS   = [1.0, 2.5, 5.0]        # mL/hr
+LENGTH_FRACS  = {"full": 1.0, "half": 0.5, "quarter": 0.25}
+LENGTH_COLORS = {"full": "#2ca02c", "half": "#ff7f0e", "quarter": "#d62728"}
+
+
+def _make_config(base: DeviceConfig, mcl: float) -> DeviceConfig:
+    """Return a copy of base with Mcl replaced."""
+    from dataclasses import replace
+    new_main = replace(base.geometry.main, Mcl=mcl)
+    new_geom = replace(base.geometry, main=new_main)
+    return replace(base, geometry=new_geom)
+
+
+def run(out_dir: str) -> None:
+    base = load_config(BASE_CONFIG)
+    disp_lbl, cont_lbl = base.fluids.channel_labels
+    base_mcl = base.geometry.main.Mcl
+
+    configs = {
+        label: _make_config(base, base_mcl * frac)
+        for label, frac in LENGTH_FRACS.items()
+    }
+
+    n_rows = len(P_DISP_VALS)
+    n_cols = len(Q_CONT_VALS)
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(4.5 * n_cols, 3.5 * n_rows),
+        sharex=False, sharey=False,
+    )
+
+    for r, Pd in enumerate(P_DISP_VALS):
+        for c, Qc in enumerate(Q_CONT_VALS):
+            ax = axes[r][c]
+            for label, cfg in configs.items():
+                result = iterative_solve(cfg, Po_in_mbar=Pd, Qw_in_mlhr=Qc)
+                x_mm = result.x_positions * 1e3
+                col = LENGTH_COLORS[label]
+                nmc = cfg.geometry.Nmc
+                ax.plot(x_mm, result.P_oil   * 1e-2,
+                        color=col, ls="-",  lw=1.4,
+                        label=f"{label} (Nmc={nmc:,})" if r == 0 and c == 0 else "_")
+                ax.plot(x_mm, result.P_water * 1e-2,
+                        color=col, ls="--", lw=1.4)
+            ax.grid(True, alpha=0.22)
+            if r == 0:
+                ax.set_title(f"Q_cont = {Qc} mL/hr", fontsize=9)
+            if c == 0:
+                ax.set_ylabel(f"P_disp={Pd} mbar\nPressure [mbar]", fontsize=8)
+            if r == n_rows - 1:
+                ax.set_xlabel("Position [mm]", fontsize=8)
+
+    # Legend (top-left panel)
+    from matplotlib.lines import Line2D
+    handles = []
+    for label, col in LENGTH_COLORS.items():
+        mcl = base_mcl * LENGTH_FRACS[label]
+        nmc = int(mcl / base.geometry.rung.pitch)
+        handles.append(Line2D([0], [0], color=col, lw=1.4,
+                               label=f"{label}  Mcl={mcl:.3f}m  Nmc={nmc:,}"))
+    handles += [
+        Line2D([0], [0], color="gray", ls="-",  lw=1.4, label=f"solid = P_{disp_lbl}"),
+        Line2D([0], [0], color="gray", ls="--", lw=1.4, label=f"dashed = P_{cont_lbl}"),
+    ]
+    axes[0][0].legend(handles=handles, fontsize=7, loc="upper right")
+
+    fig.suptitle(
+        f"wo_w11 — pressure vs absolute position  |  full / half / quarter Mcl\n"
+        f"({disp_lbl} dispersed / {cont_lbl} continuous)",
+        fontsize=11,
+    )
+    plt.tight_layout()
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "wo_length_sweep_abs.png")
+    fig.savefig(out_path, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out-dir", default="results/wo_w11")
+    args = parser.parse_args()
+    run(args.out_dir)
+
+
+if __name__ == "__main__":
+    main()
