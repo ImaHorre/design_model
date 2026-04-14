@@ -67,10 +67,16 @@ def plot_pressure_profiles(
     result : SimResult
     config : DeviceConfig (optional — used only for axis labels)
     """
+    disp_lbl = "P_oil (disp)"
+    cont_lbl = "P_water (cont)"
+    if config is not None:
+        d, c = config.fluids.channel_labels
+        disp_lbl = f"P_{d}"
+        cont_lbl = f"P_{c}"
     fig, ax = _new_fig()
     x_mm = result.x_positions * 1e3
-    ax.plot(x_mm, result.P_oil   * 1e-2, label="P_oil",   color="tab:orange")
-    ax.plot(x_mm, result.P_water * 1e-2, label="P_water", color="tab:blue")
+    ax.plot(x_mm, result.P_oil   * 1e-2, label=disp_lbl, color="tab:orange")
+    ax.plot(x_mm, result.P_water * 1e-2, label=cont_lbl, color="tab:blue")
     ax.set_xlabel("Position along channel [mm]")
     ax.set_ylabel("Pressure [mbar]")
     ax.set_title("Pressure profiles")
@@ -212,9 +218,10 @@ def plot_combined_profiles(
                            alpha=alpha, color=color, linewidth=0)
 
     # ── Panel 1: Pressure profiles ─────────────────────────────────────────
+    _d, _c = config.fluids.channel_labels
     ax1 = axes[0]
-    ax1.plot(x_mm, result.P_oil   * 1e-2, color="tab:orange", linewidth=1.2, label="P_oil")
-    ax1.plot(x_mm, result.P_water * 1e-2, color="tab:blue",   linewidth=1.2, label="P_water")
+    ax1.plot(x_mm, result.P_oil   * 1e-2, color="tab:orange", linewidth=1.2, label=f"P_{_d}")
+    ax1.plot(x_mm, result.P_water * 1e-2, color="tab:blue",   linewidth=1.2, label=f"P_{_c}")
     ax1.set_ylabel("Pressure [mbar]")
     ax1.legend(fontsize=8, loc="upper right")
     _shade(ax1)
@@ -699,9 +706,10 @@ def plot_spatial_comparison(
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
 
     # Panel 1: Pressure profiles
+    _d, _c = config.fluids.channel_labels
     ax1 = axes[0]
-    ax1.plot(x_fr, result.P_oil   * 1e-2, color="tab:orange", label="P_oil")
-    ax1.plot(x_fr, result.P_water * 1e-2, color="tab:blue",   label="P_water")
+    ax1.plot(x_fr, result.P_oil   * 1e-2, color="tab:orange", label=f"P_{_d}")
+    ax1.plot(x_fr, result.P_water * 1e-2, color="tab:blue",   label=f"P_{_c}")
     ax1.set_ylabel("Pressure [mbar]")
     ax1.set_title("Pressure profiles")
     ax1.legend(fontsize=8)

@@ -38,11 +38,25 @@ def mlhr_to_m3s(mlhr: float) -> float:
 
 @dataclass(frozen=True)
 class FluidConfig:
-    mu_continuous: float       # Pa·s  water (continuous phase)
-    mu_dispersed: float        # Pa·s  oil  (dispersed phase — forms droplets)
-    emulsion_ratio: float      # Q_oil / Q_water  (dimensionless)
+    mu_continuous: float       # Pa·s  continuous phase (carrier)
+    mu_dispersed: float        # Pa·s  dispersed phase (forms droplets)
+    emulsion_ratio: float      # Q_dispersed / Q_continuous  (dimensionless)
     gamma: float = 0.0          # N/m  interfacial tension (optional)
     temperature_C: float = 25.0 # °C (informational)
+    phase_system: str = "o/w"          # "o/w" or "w/o"
+    continuous_fluid_name: str = ""    # e.g. "water", "sunflower_oil"
+    dispersed_fluid_name: str = ""     # e.g. "oil", "DI_water"
+
+    @property
+    def channel_labels(self) -> tuple[str, str]:
+        """Return (dispersed_label, continuous_label) for output and plots."""
+        if self.phase_system == "w/o":
+            d = self.dispersed_fluid_name or "water (disp)"
+            c = self.continuous_fluid_name or "oil (cont)"
+        else:
+            d = self.dispersed_fluid_name or "oil (disp)"
+            c = self.continuous_fluid_name or "water (cont)"
+        return d, c
 
 
 @dataclass(frozen=True)
@@ -319,6 +333,9 @@ def _parse_fluids(d: dict[str, Any]) -> FluidConfig:
         emulsion_ratio=float(d["emulsion_ratio"]),
         gamma=float(d.get("gamma", 0.0)),
         temperature_C=float(d.get("temperature_C", 25.0)),
+        phase_system=str(d.get("phase_system", "o/w")),
+        continuous_fluid_name=str(d.get("continuous_fluid_name", "")),
+        dispersed_fluid_name=str(d.get("dispersed_fluid_name", "")),
     )
 
 

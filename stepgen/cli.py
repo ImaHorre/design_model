@@ -86,23 +86,25 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         model_type=args.model,
     )
 
+    disp_lbl, cont_lbl = config.fluids.channel_labels
     print("=== simulate ===")
     print(f"  Config  : {args.config}")
+    print(f"  System  : {config.fluids.phase_system}  (dispersed={disp_lbl}, continuous={cont_lbl})")
     if "derived_Po_in_mbar" in row:
         print(f"  Mode    : B (flow-flow)")
-        print(f"  Qo      : {row['Qo_in_mlhr']:.3f} mL/hr (requested)")
-        print(f"  Po      : {row['derived_Po_in_mbar']:.1f} mbar (derived)")
+        print(f"  Q_disp  : {row['Qo_in_mlhr']:.3f} mL/hr [{disp_lbl}] (requested)")
+        print(f"  P_disp  : {row['derived_Po_in_mbar']:.1f} mbar [{disp_lbl}] (derived)")
     else:
         print(f"  Mode    : A (pressure-flow)")
-        print(f"  Po      : {row['Po_in_mbar']:.1f} mbar")
-    print(f"  Qw      : {row['Qw_in_mlhr']:.2f} mL/hr")
+        print(f"  P_disp  : {row['Po_in_mbar']:.1f} mbar  [{disp_lbl} inlet pressure]")
+    print(f"  Q_cont  : {row['Qw_in_mlhr']:.2f} mL/hr  [{cont_lbl} inlet flow]")
     q_oil_total    = row['Q_oil_total']
     q_oil_droplets = row['Q_oil_droplets']
     q_water = row['Q_water_total']
     emulsion_ratio = q_oil_droplets / (q_oil_droplets + q_water) if (q_oil_droplets + q_water) > 0 else 0.0
-    print(f"  Qo_total: {q_oil_total*3.6e12:.1f} µL/hr (hydraulic oil flow)")
-    print(f"  Qo_drops: {q_oil_droplets*3.6e12:.1f} µL/hr (effective droplet production)")
-    print(f"  emulsion: {emulsion_ratio:.3f}  ({emulsion_ratio*100:.1f}% oil by volume)")
+    print(f"  Q_disp_total : {q_oil_total*3.6e12:.1f} µL/hr (hydraulic dispersed flow)")
+    print(f"  Q_disp_drops : {q_oil_droplets*3.6e12:.1f} µL/hr (effective droplet production)")
+    print(f"  emulsion     : {emulsion_ratio:.3f}  ({emulsion_ratio*100:.1f}% {disp_lbl} by volume)")
     print(f"  Nmc     : {row['Nmc']}")
     print(f"  active  : {row['active_fraction']*100:.1f} %")
     print(f"  reverse : {row['reverse_fraction']*100:.1f} %")
