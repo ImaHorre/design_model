@@ -82,6 +82,8 @@ droplet_model:
 
 # ── OPERATING MAP defaults (used by 'stepgen map' if no CLI flags given) ──────
 operating_map:
+  Po_values: [100, 200, 400, 800]   # dispersed (water) pressures [mbar]
+  Qw_values: [1.0, 2.5, 5.0]        # continuous (oil) flows [mL/hr]
   Po_min_mbar: 100.0
   Po_max_mbar: 800.0
   Po_n: 4

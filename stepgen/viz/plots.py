@@ -795,6 +795,75 @@ def plot_spatial_comparison(
 
 
 # ---------------------------------------------------------------------------
+# Pressure sweep plot (multi-condition, grouped by dispersed-phase pressure)
+# ---------------------------------------------------------------------------
+
+def plot_pressure_sweep(
+    config: "DeviceConfig",
+    Po_vals: list[float],
+    Qw_vals: list[float],
+) -> "matplotlib.figure.Figure":
+    """
+    One panel per dispersed-phase inlet pressure (Po_vals).
+    Each panel shows P_dispersed(x) and P_continuous(x) for every
+    continuous-phase flow in Qw_vals on the same axes.
+
+    Orange = dispersed channel.  Blue = continuous channel.
+    Linestyle encodes Q_cont value.
+
+    Parameters
+    ----------
+    config   : DeviceConfig (phase labels taken from config.fluids.channel_labels)
+    Po_vals  : list of dispersed-phase inlet pressures [mbar]
+    Qw_vals  : list of continuous-phase flows [mL/hr]
+    """
+    from stepgen.models.generator import iterative_solve
+
+    disp_lbl, cont_lbl = config.fluids.channel_labels
+    ls_cycle = ["-", "--", ":", "-."]
+    n = len(Po_vals)
+
+    fig, axes = plt.subplots(n, 1, figsize=(11, 3.5 * n), sharex=True)
+    if n == 1:
+        axes = [axes]
+
+    for ax, Pd in zip(axes, Po_vals):
+        for i, Qc in enumerate(Qw_vals):
+            result = iterative_solve(config, Po_in_mbar=Pd, Qw_in_mlhr=Qc)
+            x_mm = result.x_positions * 1e3
+            ls = ls_cycle[i % len(ls_cycle)]
+            ax.plot(x_mm, result.P_oil   * 1e-2, color="tab:orange", ls=ls, lw=1.4)
+            ax.plot(x_mm, result.P_water * 1e-2, color="tab:blue",   ls=ls, lw=1.4)
+        ax.set_ylabel("Pressure [mbar]")
+        ax.set_title(
+            f"P_{disp_lbl} inlet = {Pd} mbar",
+            fontsize=9,
+        )
+        ax.grid(True, alpha=0.25)
+
+    # Shared legend on first panel
+    from matplotlib.lines import Line2D
+    handles = [
+        Line2D([0], [0], color="tab:orange", lw=1.4, label=f"P_{disp_lbl} (dispersed)"),
+        Line2D([0], [0], color="tab:blue",   lw=1.4, label=f"P_{cont_lbl} (continuous)"),
+    ]
+    for i, Qc in enumerate(Qw_vals):
+        handles.append(Line2D([0], [0], color="gray",
+                               ls=ls_cycle[i % len(ls_cycle)], lw=1.4,
+                               label=f"Q_cont = {Qc} mL/hr"))
+    axes[0].legend(handles=handles, fontsize=8, loc="upper right")
+    axes[-1].set_xlabel("Position along channel [mm]")
+
+    fig.suptitle(
+        f"Hydraulic pressure profiles — {config.fluids.phase_system}  "
+        f"({disp_lbl} dispersed / {cont_lbl} continuous)",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Design results plots
 # ---------------------------------------------------------------------------
 
