@@ -38,11 +38,25 @@ def mlhr_to_m3s(mlhr: float) -> float:
 
 @dataclass(frozen=True)
 class FluidConfig:
-    mu_continuous: float       # Pa·s  water (continuous phase)
-    mu_dispersed: float        # Pa·s  oil  (dispersed phase — forms droplets)
-    emulsion_ratio: float      # Q_oil / Q_water  (dimensionless)
+    mu_continuous: float       # Pa·s  continuous phase (carrier)
+    mu_dispersed: float        # Pa·s  dispersed phase (forms droplets)
+    emulsion_ratio: float      # Q_dispersed / Q_continuous  (dimensionless)
     gamma: float = 0.0          # N/m  interfacial tension (optional)
     temperature_C: float = 25.0 # °C (informational)
+    phase_system: str = "o/w"          # "o/w" or "w/o"
+    continuous_fluid_name: str = ""    # e.g. "water", "sunflower_oil"
+    dispersed_fluid_name: str = ""     # e.g. "oil", "DI_water"
+
+    @property
+    def channel_labels(self) -> tuple[str, str]:
+        """Return (dispersed_label, continuous_label) for output and plots."""
+        if self.phase_system == "w/o":
+            d = self.dispersed_fluid_name or "water (disp)"
+            c = self.continuous_fluid_name or "oil (cont)"
+        else:
+            d = self.dispersed_fluid_name or "oil (disp)"
+            c = self.continuous_fluid_name or "water (cont)"
+        return d, c
 
 
 @dataclass(frozen=True)
@@ -103,13 +117,21 @@ class FootprintConfig:
 
 @dataclass(frozen=True)
 class OperatingMapConfig:
-    """Default grid for 'stepgen map'. CLI flags override these when provided."""
+    """Default grid for 'stepgen map' and 'stepgen report' sweeps.
+
+    If Po_values / Qw_values are set they define the exact operating points
+    used by 'stepgen report' for the pressure sweep plot (and override the
+    min/max/n grid for that command).  The min/max/n fields are still used
+    by 'stepgen map'.
+    """
     Po_min_mbar: float = 50.0
     Po_max_mbar: float = 500.0
     Po_n: int = 10
     Qw_min_mlhr: float = 1.0
     Qw_max_mlhr: float = 20.0
     Qw_n: int = 5
+    Po_values: tuple[float, ...] | None = None  # exact sweep pressures [mbar]
+    Qw_values: tuple[float, ...] | None = None  # exact sweep flows    [mL/hr]
 
 
 @dataclass(frozen=True)
@@ -319,6 +341,9 @@ def _parse_fluids(d: dict[str, Any]) -> FluidConfig:
         emulsion_ratio=float(d["emulsion_ratio"]),
         gamma=float(d.get("gamma", 0.0)),
         temperature_C=float(d.get("temperature_C", 25.0)),
+        phase_system=str(d.get("phase_system", "o/w")),
+        continuous_fluid_name=str(d.get("continuous_fluid_name", "")),
+        dispersed_fluid_name=str(d.get("dispersed_fluid_name", "")),
     )
 
 
@@ -392,6 +417,8 @@ def _parse_manufacturing(d: dict[str, Any]) -> ManufacturingConfig:
 
 
 def _parse_operating_map(d: dict[str, Any]) -> OperatingMapConfig:
+    po_vals_raw = d.get("Po_values", None)
+    qw_vals_raw = d.get("Qw_values", None)
     return OperatingMapConfig(
         Po_min_mbar=float(d.get("Po_min_mbar", 50.0)),
         Po_max_mbar=float(d.get("Po_max_mbar", 500.0)),
@@ -399,6 +426,8 @@ def _parse_operating_map(d: dict[str, Any]) -> OperatingMapConfig:
         Qw_min_mlhr=float(d.get("Qw_min_mlhr", 1.0)),
         Qw_max_mlhr=float(d.get("Qw_max_mlhr", 20.0)),
         Qw_n=int(d.get("Qw_n", 5)),
+        Po_values=tuple(float(v) for v in po_vals_raw) if po_vals_raw else None,
+        Qw_values=tuple(float(v) for v in qw_vals_raw) if qw_vals_raw else None,
     )
 
 

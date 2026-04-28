@@ -86,23 +86,25 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         model_type=args.model,
     )
 
+    disp_lbl, cont_lbl = config.fluids.channel_labels
     print("=== simulate ===")
     print(f"  Config  : {args.config}")
+    print(f"  System  : {config.fluids.phase_system}  (dispersed={disp_lbl}, continuous={cont_lbl})")
     if "derived_Po_in_mbar" in row:
         print(f"  Mode    : B (flow-flow)")
-        print(f"  Qo      : {row['Qo_in_mlhr']:.3f} mL/hr (requested)")
-        print(f"  Po      : {row['derived_Po_in_mbar']:.1f} mbar (derived)")
+        print(f"  Q_disp  : {row['Qo_in_mlhr']:.3f} mL/hr [{disp_lbl}] (requested)")
+        print(f"  P_disp  : {row['derived_Po_in_mbar']:.1f} mbar [{disp_lbl}] (derived)")
     else:
         print(f"  Mode    : A (pressure-flow)")
-        print(f"  Po      : {row['Po_in_mbar']:.1f} mbar")
-    print(f"  Qw      : {row['Qw_in_mlhr']:.2f} mL/hr")
+        print(f"  P_disp  : {row['Po_in_mbar']:.1f} mbar  [{disp_lbl} inlet pressure]")
+    print(f"  Q_cont  : {row['Qw_in_mlhr']:.2f} mL/hr  [{cont_lbl} inlet flow]")
     q_oil_total    = row['Q_oil_total']
     q_oil_droplets = row['Q_oil_droplets']
     q_water = row['Q_water_total']
     emulsion_ratio = q_oil_droplets / (q_oil_droplets + q_water) if (q_oil_droplets + q_water) > 0 else 0.0
-    print(f"  Qo_total: {q_oil_total*3.6e12:.1f} µL/hr (hydraulic oil flow)")
-    print(f"  Qo_drops: {q_oil_droplets*3.6e12:.1f} µL/hr (effective droplet production)")
-    print(f"  emulsion: {emulsion_ratio:.3f}  ({emulsion_ratio*100:.1f}% oil by volume)")
+    print(f"  Q_disp_total : {q_oil_total*3.6e12:.1f} µL/hr (hydraulic dispersed flow)")
+    print(f"  Q_disp_drops : {q_oil_droplets*3.6e12:.1f} µL/hr (effective droplet production)")
+    print(f"  emulsion     : {emulsion_ratio:.3f}  ({emulsion_ratio*100:.1f}% {disp_lbl} by volume)")
     print(f"  Nmc     : {row['Nmc']}")
     print(f"  active  : {row['active_fraction']*100:.1f} %")
     print(f"  reverse : {row['reverse_fraction']*100:.1f} %")
@@ -190,32 +192,55 @@ def _cmd_report(args: argparse.Namespace) -> int:
     from stepgen.config import load_config
     from stepgen.design.layout import compute_layout
     from stepgen.models.generator import iterative_solve
-    from stepgen.viz.plots import plot_layout_schematic, plot_combined_profiles
+    from stepgen.viz.plots import plot_layout_schematic, plot_pressure_sweep
 
     config  = load_config(args.config)
-    Po      = args.Po if args.Po is not None else config.operating.Po_in_mbar
-    Qw      = args.Qw if args.Qw is not None else config.operating.Qw_in_mlhr
-
-    print("=== report ===")
-    print(f"  solving  Po={Po} mbar  Qw={Qw} mL/hr  Nmc={config.geometry.Nmc} ...")
-    result  = iterative_solve(config, Po_in_mbar=Po, Qw_in_mlhr=Qw)
-    layout  = compute_layout(config)
-    print("  rendering plots ...")
-
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    plot_fns = {
-        "layout_schematic":  lambda: plot_layout_schematic(config, layout),
-        "spatial_profiles":  lambda: plot_combined_profiles(result, config),
-    }
+    print("=== report ===")
+    print(f"  Config : {args.config}")
+    print(f"  System : {config.fluids.phase_system}  {config.fluids.channel_labels}")
 
-    for name, fn in plot_fns.items():
-        print(f"  {name} ...", end="", flush=True)
-        fig  = fn()
-        path = out_dir / f"{name}.png"
-        fig.savefig(path, dpi=150)
-        print(f"  saved")
+    # ── Determine sweep values ────────────────────────────────────────────────
+    # Priority: CLI flags > YAML operating_map.Po_values/Qw_values > single point
+    cli_Po = args.Po  # list[float] | None
+    cli_Qw = args.Qw  # list[float] | None
+
+    om = config.operating_map
+    yaml_Po = list(om.Po_values) if om.Po_values else None
+    yaml_Qw = list(om.Qw_values) if om.Qw_values else None
+
+    Po_vals = cli_Po or yaml_Po
+    Qw_vals = cli_Qw or yaml_Qw
+
+    sweep_mode = (Po_vals is not None and len(Po_vals) > 1) or \
+                 (Qw_vals is not None and len(Qw_vals) > 1)
+
+    if not sweep_mode:
+        # Single operating point — fall back to scalar
+        Po_single = (Po_vals[0] if Po_vals else None) or config.operating.Po_in_mbar
+        Qw_single = (Qw_vals[0] if Qw_vals else None) or config.operating.Qw_in_mlhr
+        Po_vals = [Po_single]
+        Qw_vals = [Qw_single]
+
+    print(f"  Po sweep : {Po_vals} mbar")
+    print(f"  Qw sweep : {Qw_vals} mL/hr")
+    print(f"  Nmc      : {config.geometry.Nmc}")
+
+    # ── Layout schematic (always) ─────────────────────────────────────────────
+    layout = compute_layout(config)
+    fig = plot_layout_schematic(config, layout)
+    path = out_dir / "layout_schematic.png"
+    fig.savefig(path, dpi=150)
+    print(f"  layout_schematic saved")
+
+    # ── Pressure sweep plot ───────────────────────────────────────────────────
+    print(f"  running pressure sweep ({len(Po_vals)} × {len(Qw_vals)} points) ...")
+    fig = plot_pressure_sweep(config, Po_vals, Qw_vals)
+    path = out_dir / "pressure_sweep.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    print(f"  pressure_sweep saved -> {path}")
 
     return 0
 
@@ -699,8 +724,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Generate simulation plots for a single config.",
     )
     p_rep.add_argument("config", help="Path to device YAML config.")
-    p_rep.add_argument("--Po", type=float, default=None, metavar="MBAR")
-    p_rep.add_argument("--Qw", type=float, default=None, metavar="MLHR")
+    p_rep.add_argument("--Po", type=float, nargs="+", default=None, metavar="MBAR",
+                       help="Dispersed-phase inlet pressure(s) [mbar]. "
+                            "Multiple values → sweep plot. Overrides YAML operating_map.Po_values.")
+    p_rep.add_argument("--Qw", type=float, nargs="+", default=None, metavar="MLHR",
+                       help="Continuous-phase flow(s) [mL/hr]. "
+                            "Multiple values → sweep plot. Overrides YAML operating_map.Qw_values.")
     p_rep.add_argument("--out-dir", type=str, default=".",
                        metavar="DIR", help="Directory for output PNGs (default: .).")
 

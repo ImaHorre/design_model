@@ -1,0 +1,64 @@
+fluids:
+  phase_system: "o/w"
+  continuous_fluid_name: "DI_water"
+  dispersed_fluid_name: "sunflower_oil"
+  mu_continuous: 0.00089   # Pa·s  DI water (continuous)
+  mu_dispersed:  0.050     # Pa·s  sunflower oil (dispersed)
+  emulsion_ratio: 0.1
+  gamma: 0.015
+  temperature_C: 20.0
+
+geometry:
+  main:
+    Mcd: 200.0e-6
+    Mcw: 2000.0e-6
+    Mcl: 0.75
+
+  rung:
+    mcd: 5e-6
+    mcw: 8e-6
+    mcl: 4000.0e-6
+    pitch: 30e-6
+    constriction_ratio: 0.9
+
+  junction:
+    exit_width: 15e-6
+    exit_depth: 5e-6
+    junction_type: step
+
+# Po_in_mbar = sunflower oil (dispersed) inlet pressure
+# Qw_in_mlhr = DI water (continuous) inlet flow
+operating:
+  mode: A
+  Po_in_mbar: 300.0
+  Qw_in_mlhr: 5.0
+  P_out_mbar: 0.0
+
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 0.0
+  dP_cap_wo_mbar: 0.0
+
+footprint:
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 2000.0e-6
+
+operating_map:
+  Po_values: [100, 200, 400, 800]
+  Qw_values: [1.0, 2.5, 5.0]
+  Po_min_mbar: 100.0
+  Po_max_mbar: 800.0
+  Po_n: 4
+  Qw_min_mlhr: 1.0
+  Qw_max_mlhr: 5.0
+  Qw_n: 3

@@ -1,0 +1,108 @@
+# wo_v5_30.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# W/O emulsion variant of v5_30 — water-in-oil (sunflower oil continuous phase,
+# DI water dispersed phase).
+#
+# PHASE MAPPING (Mode A):
+#   Po_in_mbar  = DI water (DISPERSED) inlet pressure [mbar]
+#   Qw_in_mlhr  = sunflower oil (CONTINUOUS) inlet flow [mL/hr]
+#
+# The hydraulic solver labels these internally as "oil channel" (pressure inlet)
+# and "water channel" (flow inlet).  For w/o the physical identity is inverted
+# — only the viscosity values and phase_system label change here.
+#
+# Usage:
+#   stepgen simulate configs/wo_v5_30.yaml
+#   stepgen simulate configs/wo_v5_30.yaml --Po 400 --Qw 2.5
+#   stepgen report   configs/wo_v5_30.yaml --out-dir results/wo_report/
+#   stepgen map      configs/wo_v5_30.yaml \
+#       --Po-min 100 --Po-max 800 --Po-n 4 \
+#       --Qw-min 1   --Qw-max 5   --Qw-n 3 \
+#       --out-dir results/wo_sweep/
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── FLUIDS ────────────────────────────────────────────────────────────────────
+fluids:
+  phase_system: "w/o"
+  continuous_fluid_name: "sunflower_oil"
+  dispersed_fluid_name: "DI_water"
+
+  # Viscosities — NOTE the swap vs o/w:
+  #   mu_continuous = oil (continuous, flow-controlled)
+  #   mu_dispersed  = water (dispersed, pressure-controlled)
+  mu_continuous: 0.050      # Pa·s  sunflower oil at ~25 °C (~50 mPa·s)
+  mu_dispersed:  0.00089    # Pa·s  DI water at 25 °C
+
+  emulsion_ratio: 0.3       # Q_water / Q_oil  (informational in Mode A)
+  gamma: 0.015              # N/m  water–oil interfacial tension (~15 mN/m with surfactant)
+  temperature_C: 25.0
+
+
+# ── GEOMETRY — identical to v5_30 ────────────────────────────────────────────
+geometry:
+  main:
+    Mcd: 200.0e-6    # main channel depth  [m]  200 µm
+    Mcw: 1000.0e-6   # main channel width  [m]  1000 µm
+    Mcl: 693e-3      # routed length       [m]  → Nmc = floor(0.693 / 60e-6) = 11 550
+
+  rung:
+    mcd: 10e-6       # rung depth   [m]   10 µm
+    mcw: 8e-6        # rung width   [m]    8 µm
+    mcl: 4000.0e-6   # rung length  [m] 4000 µm
+    pitch: 60e-6     # pitch        [m]   60 µm
+    constriction_ratio: 0.9
+
+  junction:
+    exit_width: 30e-6   # [m]  30 µm
+    exit_depth: 10e-6   # [m]  10 µm
+    junction_type: step
+
+
+# ── OPERATING — defaults for interactive / single-point runs ─────────────────
+# Sweep: --Po 100/200/400/800   --Qw 1/2.5/5
+operating:
+  mode: A
+  Po_in_mbar: 200.0   # DI water inlet pressure [mbar]  — override with --Po on CLI
+  Qw_in_mlhr: 5.0     # sunflower oil flow      [mL/hr] — override with --Qw on CLI
+  P_out_mbar: 0.0
+
+
+# ── DROPLET MODEL ─────────────────────────────────────────────────────────────
+# Power-law droplet diameter: D = k * exit_width^a * exit_depth^b
+# Capillary thresholds: estimate for w/o — tune from experiment.
+# For w/o the "active" direction is water → oil (dispersed pushing into continuous).
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 30.0   # active threshold (water dispersed → oil continuous) [mbar]
+  dP_cap_wo_mbar: 30.0   # reverse threshold [mbar]
+
+
+# ── OPERATING MAP defaults (used by 'stepgen map' if no CLI flags given) ──────
+operating_map:
+  Po_values: [100, 200, 400, 800]   # dispersed (water) pressures [mbar]
+  Qw_values: [1.0, 2.5, 5.0]        # continuous (oil) flows [mL/hr]
+  Po_min_mbar: 100.0
+  Po_max_mbar: 800.0
+  Po_n: 4
+  Qw_min_mlhr: 1.0
+  Qw_max_mlhr: 5.0
+  Qw_n: 3
+
+
+# ── FOOTPRINT ────────────────────────────────────────────────────────────────
+footprint:
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+
+# ── MANUFACTURING ─────────────────────────────────────────────────────────────
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6
