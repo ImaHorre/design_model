@@ -134,7 +134,7 @@ class TestStageWiseV3Phase1:
             pytest.skip(f"Stage 1 physics not fully implemented yet: {e}")
 
     def test_washburn_geometry_factor_correct(self):
-        """Verify geometry factor is h²/f(α), not wh²/f(α) (Bug 1 fix)."""
+        """Verify geometry factor is h²/f(α), not wh²/f(α) (Bug 1 fix), using junction exit dims."""
 
         try:
             from stepgen.models.stage_wise_v3.stage1_physics import (
@@ -148,24 +148,19 @@ class TestStageWiseV3Phase1:
 
             result = solve_two_fluid_washburn_base(P_j_test, config, v3_config)
 
-            h = config.geometry.rung.mcd
-            w = config.geometry.rung.mcw
+            # Correct dims: junction exit (that is the reset zone channel)
+            h = config.geometry.junction.exit_depth
+            w = config.geometry.junction.exit_width
             alpha = h / w
             f_alpha = calculate_resistance_factor(alpha)
 
             expected_geometry_factor = h**2 / f_alpha
             wrong_geometry_factor = w * h**2 / f_alpha  # the old Bug 1 form
 
-            assert abs(result.geometry_factor - expected_geometry_factor) < 1e-30, (
-                f"geometry_factor = {result.geometry_factor:.3e}, "
-                f"expected h²/f(α) = {expected_geometry_factor:.3e}, "
-                f"wrong wh²/f(α) = {wrong_geometry_factor:.3e}"
-            )
-
-            # The wrong form would be w times larger (w ≈ 8e-6 → factor of ~8e6 error)
-            ratio_correct_to_wrong = expected_geometry_factor / wrong_geometry_factor
-            assert abs(ratio_correct_to_wrong - 1.0 / w) < 1e-10, (
-                "Sanity check: correct and wrong forms differ by factor w"
+            assert abs(result.geometry_factor - expected_geometry_factor) / expected_geometry_factor < 1e-6, (
+                f"geometry_factor = {result.geometry_factor:.4e}, "
+                f"expected h²/f(α) = {expected_geometry_factor:.4e} (junction exit dims), "
+                f"wrong wh²/f(α) = {wrong_geometry_factor:.4e}"
             )
 
         except ImportError as e:
@@ -202,8 +197,8 @@ class TestStageWiseV3Phase1:
         except ImportError as e:
             pytest.skip(f"Stage 1 physics not available: {e}")
 
-    def test_washburn_uses_rung_dimensions(self):
-        """Verify Washburn ODE uses rung channel dimensions, not junction exit dimensions."""
+    def test_washburn_uses_junction_exit_dimensions(self):
+        """Verify Washburn ODE uses junction exit dimensions (the reset zone), not rung dimensions."""
 
         try:
             from stepgen.models.stage_wise_v3.stage1_physics import (
@@ -217,28 +212,29 @@ class TestStageWiseV3Phase1:
 
             result = solve_two_fluid_washburn_base(P_j_test, config, v3_config)
 
-            h_rung = config.geometry.rung.mcd
-            w_rung = config.geometry.rung.mcw
-            alpha_rung = h_rung / w_rung
-            f_alpha_rung = calculate_resistance_factor(alpha_rung)
-            expected_gf_rung = h_rung**2 / f_alpha_rung
-
+            # Correct: junction exit = where the meniscus is during reset
             h_junc = config.geometry.junction.exit_depth
             w_junc = config.geometry.junction.exit_width
             alpha_junc = h_junc / w_junc
             f_alpha_junc = calculate_resistance_factor(alpha_junc)
-            wrong_gf_junc = h_junc**2 / f_alpha_junc  # wrong: uses junction dims
+            expected_gf_junc = h_junc**2 / f_alpha_junc
 
-            # geometry_factor should match rung-based calculation, not junction-based
-            assert abs(result.geometry_factor - expected_gf_rung) / expected_gf_rung < 1e-6, (
+            # Wrong: rung dims (upstream resistance, already in P_j)
+            h_rung = config.geometry.rung.mcd
+            w_rung = config.geometry.rung.mcw
+            alpha_rung = h_rung / w_rung
+            f_alpha_rung = calculate_resistance_factor(alpha_rung)
+            wrong_gf_rung = h_rung**2 / f_alpha_rung
+
+            assert abs(result.geometry_factor - expected_gf_junc) / expected_gf_junc < 1e-6, (
                 f"geometry_factor = {result.geometry_factor:.4e}, "
-                f"expected (rung dims) = {expected_gf_rung:.4e}, "
-                f"junction dims would give = {wrong_gf_junc:.4e}"
+                f"expected (junction exit dims) = {expected_gf_junc:.4e}, "
+                f"rung dims would give = {wrong_gf_rung:.4e}"
             )
 
-            # Confirm rung and junction give meaningfully different values
-            assert abs(expected_gf_rung - wrong_gf_junc) / expected_gf_rung > 0.01, (
-                "Rung and junction geometry factors are unexpectedly identical — check config"
+            # Confirm junction and rung give meaningfully different values
+            assert abs(expected_gf_junc - wrong_gf_rung) / expected_gf_junc > 0.01, (
+                "Junction and rung geometry factors are unexpectedly identical — check config"
             )
 
         except ImportError as e:

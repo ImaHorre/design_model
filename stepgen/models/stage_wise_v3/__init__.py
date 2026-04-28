@@ -68,9 +68,12 @@ class StageWiseV3Config:
     enabled: bool = True
 
     # Stage 1 calibration — viscosity correction multiplier
-    # t_stage1 = stage1_viscosity_correction × V_reset / (P_j / R_rung)
-    # Default 1.0; expected ~3–5× from experiment once calibrated.
-    # Calibrate by fitting t_stage1 vs Po at fixed SDS concentration.
+    # t_stage1 = stage1_viscosity_correction × V_reset × R_rung / DP_rung
+    # Default 1.0. Calibrated against V5_30_3_3 data (2026-03-20):
+    #   fitted C_visc = 0.96 +/- 0.06 at Po=200-500 mbar, mu_oil=60 mPa.s.
+    #   Default 1.0 is correct for bulk Poiseuille with known oil viscosity.
+    #   Re-calibrate if device geometry or mu_oil changes significantly.
+    #   See: data/analysis/cvisc_calibration_results.md
     stage1_viscosity_correction: float = 1.0
 
     # Physics switches

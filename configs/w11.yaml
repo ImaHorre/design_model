@@ -23,7 +23,7 @@ geometry:
     constriction_ratio: 0.9
 
   junction:
-    exit_width: 15e-6
+    exit_width: 10e-6
     exit_depth: 5e-6
     junction_type: step
 

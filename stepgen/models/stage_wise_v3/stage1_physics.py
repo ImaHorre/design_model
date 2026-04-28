@@ -18,19 +18,24 @@ where:
 Rationale:
   The rate-limiting step for Stage 1 refill is oil delivery through the rung,
   not meniscus motion through the short junction exit. R_rung >> R_exit by ~500×,
-  so the correct model is V_reset / Q_rung where Q_rung = P_j / R_rung.
+  so the correct model is V_reset / Q_rung where Q_rung = DP_rung / R_rung.
 
-  The two-fluid Washburn ODE through the 15 µm junction exit (previous approach)
-  predicted ~0.2 ms at 200–300 mbar — orders of magnitude too fast. This
-  simplified model gives ~0.25–0.30 s at 200–300 mbar without correction, which
-  is 3–4× short of experiment.
+  The two-fluid Washburn ODE through the junction exit (previous approach)
+  predicted ~0.2 ms at 200–300 mbar — orders of magnitude too fast, and was
+  superseded by this rung-flow model.
 
-  C_visc accounts for fresh-interface effects (surface viscosity, partial SDS
-  depletion) that slow flow beyond bulk Poiseuille. Expected value ~3–5× from
-  experiment; to be calibrated from t_stage1 vs Po data. Preserves 1/Po scaling.
+  Calibration against V5_30_3_3 data (2026-03-20, data/analysis/calibrate_cvisc.py):
+    - mu_oil = 60 mPa.s, rung 10x8x4000 um, junction 30x10 um, Qw = 5 mL/hr
+    - Hydraulic network gives DP_rung ~ 82% of Po (water back-pressure at Qw = 5 mL/hr)
+    - Fitted C_visc = 0.96 +/- 0.06 across Po = 200-500 mbar
+    - Default C_visc = 1.0 is correct for this device; no large empirical correction needed.
+    - Residual trend: model exponent -1.026 vs observed -1.168; likely capillary
+      back-pressure (~20 mbar) reduces effective DP more at low Po. Not corrected here.
 
-  Candidate mechanisms for C_visc > 1 are documented in:
-  docs/03_stage_wise_model/v3/stage1_slowdown_mechanisms_research.md
+  C_visc is a calibration multiplier for device-specific deviations (surface viscosity,
+  contact-line effects, geometric entry/exit losses). For bulk Poiseuille flow with
+  known mu_oil the expected value is close to 1.0. Re-calibrate if mu_oil changes
+  or a new device geometry is used.
 
   The superseded Washburn model is archived at:
   stepgen/models/stage_wise_v3/legacy/stage1_physics_washburn_defunct.py
