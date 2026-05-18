@@ -168,23 +168,17 @@ class HydraulicModelRegistry:
         """Get a hydraulic model instance by type."""
         # Lazy import enhanced models to avoid circular imports
         if model_type not in cls._models:
-            if model_type == "duty_factor":
-                from stepgen.models.time_state.duty_factor import DutyFactorModel
-                cls.register(model_type, DutyFactorModel)
-            elif model_type == "time_state":
-                from stepgen.models.time_state.time_state_dfu import TimeStateDFUModel
-                cls.register(model_type, TimeStateDFUModel)
-            elif model_type == "time_state_filling":
-                from stepgen.models.time_state.time_state_filling import TimeStateFillingModel
-                cls.register(model_type, TimeStateFillingModel)
-            elif model_type == "stage_wise":
-                from stepgen.models.time_state.stage_wise_model import StageWiseModel
-                cls.register(model_type, StageWiseModel)
+            if model_type in ("duty_factor", "time_state", "time_state_filling", "stage_wise"):
+                raise ValueError(
+                    f"Model '{model_type}' has been archived. "
+                    "Use 'stage_wise_v3' instead. "
+                    "Archived model code is in archive/models_time_state/ and archive/models_v2/."
+                )
             elif model_type == "stage_wise_v3":
                 from stepgen.models.stage_wise_v3.hydraulic_interface import StageWiseV3Model
                 cls.register(model_type, StageWiseV3Model)
             else:
-                available = list(cls._models.keys()) + ["duty_factor", "time_state", "time_state_filling", "stage_wise", "stage_wise_v3"]
+                available = list(cls._models.keys()) + ["stage_wise_v3"]
                 raise ValueError(f"Unknown hydraulic model '{model_type}'. Available: {available}")
 
         return cls._models[model_type]()
@@ -192,11 +186,9 @@ class HydraulicModelRegistry:
     @classmethod
     def list_models(cls) -> list[str]:
         """List all registered model types."""
-        # Include lazily-loaded models in the list
         available = list(cls._models.keys())
-        for model_type in ["duty_factor", "time_state", "time_state_filling", "stage_wise", "stage_wise_v3"]:
-            if model_type not in available:
-                available.append(model_type)
+        if "stage_wise_v3" not in available:
+            available.append("stage_wise_v3")
         return available
 
 
