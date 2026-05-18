@@ -46,8 +46,10 @@ class TestStageWiseV3Phase1:
             # Test default configuration creation
             config = StageWiseV3Config()
 
-            # Check required physics switches
-            assert hasattr(config, 'enable_two_fluid_washburn'), "Missing two_fluid_washburn switch"
+            # Check Stage 1 physics controls
+            assert hasattr(config, 'stage1_viscosity_correction'), "Missing stage1_viscosity_correction"
+            assert hasattr(config, 'stage1_reset_length_factor'), "Missing stage1_reset_length_factor"
+            assert hasattr(config, 'enable_stage1_capillary_correction'), "Missing enable_stage1_capillary_correction"
             assert hasattr(config, 'enable_outer_phase_necking'), "Missing outer_phase_necking switch"
             assert hasattr(config, 'enable_multi_factor_regime'), "Missing multi_factor_regime switch"
 
@@ -60,6 +62,8 @@ class TestStageWiseV3Phase1:
             assert 0 < config.gamma_effective < 0.1, "gamma_effective outside reasonable bounds"
             assert 0 < config.theta_effective < 90, "theta_effective outside reasonable bounds"
             assert 0 < config.R_critical_ratio < 2, "R_critical_ratio outside reasonable bounds"
+            assert 0 < config.stage1_reset_length_factor <= 2.0, "reset_length_factor outside reasonable bounds"
+            assert config.stage1_viscosity_correction > 0, "viscosity_correction must be positive"
 
         except ImportError as e:
             pytest.skip(f"v3 configuration not fully implemented yet: {e}")
@@ -83,9 +87,9 @@ class TestStageWiseV3Phase1:
             assert hasattr(hydraulics, 'solve_dynamic_hydraulic_network'), "Dynamic hydraulic network function not found"
             assert hasattr(hydraulics, 'calculate_junction_pressures'), "Junction pressure function not found"
 
-            # Check Stage 1 physics
-            assert hasattr(stage1_physics, 'solve_stage1_washburn_physics'), "Stage 1 Washburn solver not found"
-            assert hasattr(stage1_physics, 'solve_two_fluid_washburn_base'), "Two-fluid Washburn base not found"
+            # Check Stage 1 physics (Poiseuille model — Washburn superseded March 2026)
+            assert hasattr(stage1_physics, 'solve_stage1_physics'), "Stage 1 Poiseuille solver not found"
+            assert hasattr(stage1_physics, 'compute_rung_resistance'), "Rung resistance function not found"
 
             # Check Stage 2 physics
             assert hasattr(stage2_physics, 'solve_stage2_critical_size_with_tracking'), "Stage 2 solver not found"
@@ -335,12 +339,9 @@ class TestStageWiseV3Phase1:
         try:
             from stepgen.models.stage_wise_v3.core import stage_wise_v3_solve
 
-            # Load test configuration with v3 section
-            config = load_config("configs/example_stage_wise.yaml")
-
-            # Add v3 configuration section for testing
-            from stepgen.models.stage_wise_v3 import StageWiseV3Config
-            config.stage_wise_v3 = StageWiseV3Config()
+            # Use the dedicated v3 config which already contains the stage_wise_v3 section
+            config = load_config("configs/test_stage_wise_v3.yaml")
+            assert config.stage_wise_v3 is not None, "test_stage_wise_v3.yaml must have stage_wise_v3 section"
 
             # Test full solver
             result = stage_wise_v3_solve(config, 200.0, 5.0, 0.0)

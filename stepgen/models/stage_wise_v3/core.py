@@ -283,8 +283,9 @@ def solve_droplet_physics_for_group_v3(
     # Stage 1: Simplified Poiseuille refill using pressure difference across rung
     stage1_result = solve_stage1_physics(DP_rung, Q_nominal, config, v3_config)
 
-    # Stage 2: Critical size with neck tracking using preneck junction pressure for droplet physics
-    stage2_result = solve_stage2_critical_size_with_tracking(P_j, config, v3_config)
+    # Stage 2: Critical size with neck tracking.
+    # Q_nominal drives droplet growth; P_j provides Laplace correction scaling.
+    stage2_result = solve_stage2_critical_size_with_tracking(P_j, Q_nominal, config, v3_config)
 
     # Multi-factor regime classification (Issue 9 + Strategic improvement)
     regime_result = classify_regime_multi_factor(P_j, Q_nominal, config, v3_config)

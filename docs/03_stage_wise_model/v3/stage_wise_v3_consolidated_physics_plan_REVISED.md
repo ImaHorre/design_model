@@ -90,13 +90,23 @@ The result is a modest change in volumetric flow but an increase in **local neck
 > **NOTE — March 2026**: The Washburn ODE section below (baseline refill physics
 > through junction exit) has been superseded. The current implementation uses:
 >
->     t_stage1 = C_visc × V_reset / (P_j / R_rung)
+>     t_stage1 = C_visc × V_reset / (DP_rung / R_rung)
 >
-> where V_reset = L_r × exit_width × exit_depth, R_rung is the rung Poiseuille
-> resistance, and C_visc = stage1_viscosity_correction (default 1.0, calibrate from
-> experiment). The Washburn ODE predicted ~0.2 ms at 200–300 mbar — too fast by
-> ~3 orders of magnitude. The qualitative reasoning below (Po-dependence, t_stage1
-> ≈ t_refill) remains valid. See implementation_plan.md progress log March 15 2026.
+> where:
+>   V_reset = L_r × exit_width × exit_depth  (L_r = stage1_reset_length_factor × exit_width,
+>             default factor = 1.0; set from L_menpoint measurement when available)
+>   R_rung   = Shah-London Poiseuille resistance of the rung channel
+>   DP_rung  = P_oil(x) − P_water(x) from the hydraulic network (distinct from P_j)
+>   C_visc   = stage1_viscosity_correction (default 1.0; re-calibrate per device)
+>
+> Optional capillary correction: when enable_stage1_capillary_correction is True,
+> DP_eff = DP_rung − P_cap where P_cap = γ·cos(θ_eff)·(1/h + 1/w). Calibrated
+> value P_cap ≈ 12 mbar for V5-30 geometry at θ_eff ≈ 30°. Disabled by default to
+> preserve C_visc calibration without recalibration.
+>
+> The Washburn ODE predicted ~0.2 ms at 200–300 mbar — too fast by ~3 orders of
+> magnitude. The qualitative reasoning below (Po-dependence, t_stage1 ≈ t_refill)
+> remains valid. See implementation_plan.md progress log March 15 2026.
 
 Stage 1 consists of two processes:
 
@@ -412,6 +422,54 @@ The following should **not block the first working version**:
 • full adsorption kinetics modeling
 • full dynamic hydraulic network
 • design optimization tools
+
+---
+
+# SECTION F — MODEL SCOPE AND CALIBRATION LIMITS
+
+The model is designed to be **device-geometry-general**. All key outputs (Stage 1 timing,
+Stage 2 timing, droplet diameter, generation frequency) are derived from configurable
+geometry and fluid parameters — not hardcoded to any specific experimental device.
+
+For example, a 10 µm junction device uses the same model equations as a 30 µm device;
+R_critical, V_reset, R_rung, and Q_rung all scale correctly with the new geometry once
+the config dimensions are updated.
+
+---
+
+## Known calibration parameters (re-calibrate per device/fluid system)
+
+| Parameter | Default | Meaning | When to recalibrate |
+|---|---|---|---|
+| `stage1_viscosity_correction` | 1.0 | Absorbs contact-line, entry/exit losses | New geometry, µ_oil, or if Stage 1 error > 15% |
+| `stage1_reset_length_factor` | 1.0 | L_r / exit_width; set from L_menpoint measurement | Whenever L_menpoint is measured |
+| `R_critical_ratio` | 0.7 | R_crit / min(w,h) | New junction geometry; back-calculate from observed droplet size |
+| `gamma_effective` | 15 mN/m | Effective interfacial tension | New fluid system; measure by pendant/spinning drop |
+| `theta_effective` | 30° | Effective contact angle for capillary correction | When enable_stage1_capillary_correction is True |
+
+---
+
+## Documented model limitations
+
+**Surfactant concentration effects (Stage 1):**
+C_visc is NOT a universal material constant when surfactant concentration varies.
+Below the CMC, contact-angle effects reduce the effective driving pressure (dP_eff)
+by up to 20% without corresponding changes in DP_rung — the hydraulic model cannot
+predict this. Do not apply C_visc calibrated at high [SDS] to sub-CMC conditions.
+Error can reach 1.87× on Stage 1 below CMC. Parameterising this requires θ([SDS])
+as a measured input.
+
+**Stage 2 Qw dependence:**
+Stage 2 timing shows significant Qw dependence at low Po (e.g. +89% from Qw=5→10 at
+Po=200 mbar). This is partially captured by the Q_rung-based growth model (which
+correctly reflects Qw effects via the hydraulic network), but the Laplace correction
+uses an approximate average radius. Full Qw-resolved accuracy requires higher frame-rate
+imaging data to fit a functional form.
+
+**Below-CMC regime change:**
+At [SDS] < CMC (~0.24% mass for SDS), the formation regime changes qualitatively —
+Stage 3 (tail/stalled phase) appears, cycle time more than doubles, and droplet size
+increases markedly. The baseline model does not apply to below-CMC conditions.
 
 ---
 

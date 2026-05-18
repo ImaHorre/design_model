@@ -7,7 +7,7 @@ consolidated physics plan. This module provides the main entry points and
 common data structures for the v3 physics implementation.
 
 Authoritative Physics Basis:
-- Two-fluid Washburn refill for Stage 1
+- Simplified Poiseuille refill for Stage 1 (rung-flow-limited; see A3 NOTE in consolidated plan)
 - Critical size (Rcrit) controlled snap-off for Stage 2
 - Neck-state tracking for diagnostics and warning logic
 - Dynamic reduced-order hydraulic network
@@ -75,6 +75,23 @@ class StageWiseV3Config:
     #   Re-calibrate if device geometry or mu_oil changes significantly.
     #   See: data/analysis/cvisc_calibration_results.md
     stage1_viscosity_correction: float = 1.0
+
+    # Stage 1 reset length factor: L_r = stage1_reset_length_factor × exit_width
+    # The reset distance is the length of the oil-filled zone that must be refilled.
+    # Nominal assumption: L_r = exit_width (factor = 1.0).
+    # Experimental measurements (L_menpoint) often show a shorter reset length, e.g.
+    # V5-8-1: L_menpoint ≈ 20 µm vs 30 µm exit_width → factor ≈ 0.67.
+    # Using the measured L_menpoint brings C_visc close to 1.0 and removes a systematic
+    # ~15% per-rung Hz error. Set per-device from L_menpoint / exit_width.
+    stage1_reset_length_factor: float = 1.0
+
+    # Enable Stage 1 capillary back-pressure correction (optional, second-order)
+    # When True, subtracts P_cap = γ·cos(θ_eff)·(1/h + 1/w) from DP_rung.
+    # Calibrated from Exp 1: P_cap ≈ 12 mbar for V5-30, explains residual Po-exponent
+    # steepness (-1.17 observed vs -1.0 Poiseuille). Requires theta_effective and
+    # gamma_effective to be calibrated for the device/fluid system.
+    # Default False preserves existing C_visc calibration without re-fitting.
+    enable_stage1_capillary_correction: bool = False
 
     # Physics switches
     enable_outer_phase_necking: bool = True         # Strategic: Literature-corrected necking

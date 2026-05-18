@@ -136,6 +136,7 @@ class NeckStateTracker:
 
 def solve_stage2_critical_size_with_tracking(
     P_j: float,
+    Q_rung: float,
     config: "DeviceConfig",
     v3_config: "StageWiseV3Config"
 ) -> Stage2Result:
@@ -148,7 +149,11 @@ def solve_stage2_critical_size_with_tracking(
     Parameters
     ----------
     P_j : float
-        Junction pressure difference [Pa]
+        Junction pressure difference [Pa] — used for Laplace correction scaling
+    Q_rung : float
+        Rung flow rate from hydraulic network [m³/s] — primary driver of growth time.
+        Using Q_rung rather than an internal resistance model ensures the growth time
+        naturally captures Po and Qw dependence and generalises to any device geometry.
     config : DeviceConfig
         Device configuration
     v3_config : StageWiseV3Config
@@ -168,7 +173,7 @@ def solve_stage2_critical_size_with_tracking(
 
     # Stage 2 growth simulation to critical radius
     growth_result = simulate_droplet_growth_to_critical_radius(
-        R_critical, P_j, config, neck_tracker
+        R_critical, P_j, Q_rung, config, neck_tracker
     )
 
     # Calculate necking time using outer-phase physics (strategic improvement)
@@ -255,75 +260,70 @@ def calculate_critical_radius_from_geometry(
 def simulate_droplet_growth_to_critical_radius(
     R_critical: float,
     P_j: float,
+    Q_rung: float,
     config: "DeviceConfig",
     neck_tracker: NeckStateTracker
 ) -> Dict[str, Any]:
     """
     Simulate droplet growth from initial size to critical radius.
 
-    This is a simplified growth model for baseline implementation.
-    Future versions may include detailed Laplace pressure evolution.
+    Growth time is derived from Q_rung (the oil flow rate from the hydraulic network)
+    with a Laplace pressure correction. This approach:
+      - Naturally captures Po and Qw dependence via Q_rung (no separate resistance model)
+      - Generalises to any device geometry (Q_rung already encodes geometry via R_rung)
+      - At higher Po: Q_rung increases → shorter Stage 2 (correct)
+      - At higher Qw: DP_rung decreases → lower Q_rung → longer Stage 2 (correct)
     """
 
-    # Simplified growth model: constant effective driving pressure
-    gamma = getattr(config, 'stage_wise_v3', None)
-    if gamma is not None:
-        gamma_eff = gamma.gamma_effective
-    else:
-        gamma_eff = 15e-3  # Default 15 mN/m
+    v3_cfg = getattr(config, 'stage_wise_v3', None)
+    gamma = v3_cfg.gamma_effective if v3_cfg is not None else 15e-3
+
+    mu_oil = config.fluids.mu_dispersed
+    A_channel = config.geometry.junction.exit_width * config.geometry.junction.exit_depth
 
     # Initial droplet radius (small seed)
     R_initial = 0.1 * min(config.geometry.junction.exit_width,
-                         config.geometry.junction.exit_depth)
+                          config.geometry.junction.exit_depth)
 
-    # Effective flow rate for growth (simplified)
-    A_channel = config.geometry.junction.exit_width * config.geometry.junction.exit_depth
-    mu_oil = config.fluids.mu_dispersed
+    # Laplace pressure correction: growing droplet back-pressure reduces effective Q.
+    # Use geometric mean of initial and final radius for the average Laplace pressure —
+    # this is more accurate than arithmetic mean because P_laplace ~ 1/R is convex.
+    R_geom = np.sqrt(R_initial * R_critical) if R_initial > 0 and R_critical > 0 else R_critical
+    P_laplace_avg = 2.0 * gamma / R_geom if R_geom > 0 else 0.0
 
-    # Average Laplace pressure during growth
-    P_laplace_initial = 2 * gamma_eff / R_initial
-    P_laplace_final = 2 * gamma_eff / R_critical
-    P_laplace_avg = 0.5 * (P_laplace_initial + P_laplace_final)
+    # Effective flow: Q_rung scaled down by Laplace back-pressure fraction.
+    # Clamp to at least 10% of Q_rung so Laplace never fully stalls the model.
+    if P_j > 0 and P_laplace_avg < P_j:
+        Q_factor = max(1.0 - P_laplace_avg / P_j, 0.1)
+    else:
+        Q_factor = 0.1
+    Q_eff = Q_rung * Q_factor
 
-    # Effective driving pressure
-    P_driving = max(P_j - P_laplace_avg, 0.1 * P_j)
-
-    # Effective resistance (simplified)
-    L_eff = config.geometry.junction.exit_width
-    R_hydraulic = 12 * mu_oil * L_eff / A_channel**3 if A_channel > 0 else 1e12
-
-    # Effective flow rate
-    Q_eff = P_driving / R_hydraulic if R_hydraulic > 0 else 1e-15
-
-    # Volume change and growth time
+    # Volume change and growth time: t = ΔV / Q_eff
     V_initial = (4.0/3.0) * np.pi * (R_initial ** 3)
     V_final = (4.0/3.0) * np.pi * (R_critical ** 3)
     dV = V_final - V_initial
 
     growth_time = dV / Q_eff if Q_eff > 0 else 1e-3
+    growth_time = max(min(growth_time, 1e-1), 1e-6)   # 1 µs to 100 ms
 
-    # Bound growth time to reasonable values
-    growth_time = max(min(growth_time, 1e-1), 1e-6)  # 1 µs to 100 ms
-
-    # Track neck evolution during growth (simplified)
+    # Track neck evolution during growth
+    U_neck = Q_eff / A_channel if A_channel > 0 else 0.0
     n_points = 10
     for i in range(n_points + 1):
         t = i * growth_time / n_points
-        R_current = R_initial + (R_critical - R_initial) * i / n_points
-
-        # Estimate neck properties (simplified)
-        neck_width = 0.5 * config.geometry.junction.exit_depth  # Constant for simplicity
-        U_neck = Q_eff / A_channel if A_channel > 0 else 0.0
-
-        neck_tracker.update(t, neck_width, U_neck, gamma_eff, mu_oil)
+        neck_width = 0.5 * config.geometry.junction.exit_depth
+        neck_tracker.update(t, neck_width, U_neck, gamma, mu_oil)
 
     return {
         "growth_time": growth_time,
         "R_initial": R_initial,
         "R_final": R_critical,
+        "Q_rung": Q_rung,
         "Q_effective": Q_eff,
-        "P_driving_avg": P_driving,
-        "growth_physics": "simplified_constant_pressure"
+        "Q_laplace_factor": Q_factor,
+        "P_laplace_avg_Pa": P_laplace_avg,
+        "growth_physics": "Q_rung_laplace_corrected"
     }
 
 

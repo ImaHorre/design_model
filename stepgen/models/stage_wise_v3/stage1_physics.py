@@ -43,6 +43,7 @@ Rationale:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Any
 
@@ -86,20 +87,38 @@ def solve_stage1_physics(
     Stage1Result
     """
 
-    # Junction exit geometry — the volume that must be displaced
+    # Junction exit geometry — the volume that must be displaced during reset
     exit_width = config.geometry.junction.exit_width
     exit_depth = config.geometry.junction.exit_depth
-    L_r = exit_width                               # reset distance ≈ one junction exit width
+
+    # Reset length: L_r = factor × exit_width.  Default factor=1.0 (nominal L_r = exit_width).
+    # Set from L_menpoint measurements: factor = L_menpoint / exit_width.
+    # E.g. V5-8-1: L_menpoint ≈ 20 µm, exit_width = 30 µm → factor = 0.67.
+    L_r = exit_width * v3_config.stage1_reset_length_factor
     V_reset = L_r * exit_width * exit_depth        # [m³]
 
     # Rung Poiseuille resistance from geometry
     R_rung = compute_rung_resistance(config)
 
-    # Base refill time: V_reset / Q_rung where Q_rung = DP_rung / R_rung
-    if DP_rung <= 0 or R_rung <= 0:
+    # Optional capillary back-pressure correction (physics plan A3, Step 4-5).
+    # P_cap = γ·cos(θ_eff)·(1/h + 1/w) opposes oil advance through the reset zone.
+    # Disabled by default — enabling requires re-calibration of C_visc.
+    P_cap = 0.0
+    if v3_config.enable_stage1_capillary_correction:
+        theta_rad = math.radians(v3_config.theta_effective)
+        gamma = v3_config.gamma_effective
+        h = exit_depth
+        w = exit_width
+        P_cap = gamma * math.cos(theta_rad) * (1.0 / h + 1.0 / w)
+
+    # Effective driving pressure after capillary correction
+    DP_effective = max(DP_rung - P_cap, 0.0)
+
+    # Base refill time: V_reset / Q_rung where Q_rung = DP_effective / R_rung
+    if DP_effective <= 0 or R_rung <= 0:
         t_base = float('inf')
     else:
-        t_base = V_reset * R_rung / DP_rung            # = V_reset / (DP_rung / R_rung)
+        t_base = V_reset * R_rung / DP_effective   # = V_reset / (DP_effective / R_rung)
 
     # Effective viscosity correction — calibrated from t_stage1 vs Po experiment
     C_visc = v3_config.stage1_viscosity_correction
@@ -109,9 +128,13 @@ def solve_stage1_physics(
         "V_reset_m3": V_reset,
         "R_rung_Pa_s_per_m3": R_rung,
         "DP_rung_Pa": DP_rung,
+        "P_cap_Pa": P_cap,
+        "DP_effective_Pa": DP_effective,
+        "capillary_correction_enabled": v3_config.enable_stage1_capillary_correction,
+        "reset_length_factor": v3_config.stage1_reset_length_factor,
         "pressure_type": "rung_pressure_difference_driving_flow",
         "Q_rung_network_m3s": Q_rung,
-        "Q_rung_computed_m3s": DP_rung / R_rung if R_rung > 0 else 0.0,
+        "Q_rung_computed_m3s": DP_effective / R_rung if R_rung > 0 else 0.0,
         "t_base_s": t_base,
         "viscosity_correction": C_visc,
         "exit_width_m": exit_width,
