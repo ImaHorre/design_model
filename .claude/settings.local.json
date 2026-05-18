@@ -28,7 +28,23 @@
       "Bash(mv:*)",
       "Bash(mv stage_wise:*)",
       "Bash(pip install:*)",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "Bash(cmd /c dir \"C:\\\\Users\\\\ConorO''''Sullivan\\\\OneDrive - Peak Emulsions\\\\Documents - Tech sharepoint\\\\XX_Conor\\\\PeakEmulsions\")",
+      "Bash(env)",
+      "Bash(find \"/c/Users/ConorO''''Sullivan/OneDrive - Peak Emulsions\" -type d -name *obsidian*)",
+      "Bash(git checkout:*)",
+      "Bash(git fetch *)",
+      "Bash(git check-ignore *)",
+      "Bash(git pull *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\LOCAL\\\\Projects\\\\PE\\\\design_model\" -Recurse -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(Get-ChildItem -Path \"C:\\\\LOCAL\\\\Projects\\\\PE\\\\design_model\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Get-ChildItem -Path \"C:\\\\LOCAL\\\\Projects\\\\test_database\\\\test_database\" -Recurse -Force)",
+      "Bash(Select-Object FullName, Length, LastWriteTime)",
+      "PowerShell(Head *)"
     ]
   }
 }
