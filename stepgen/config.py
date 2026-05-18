@@ -497,8 +497,7 @@ def _parse_stage_wise_v3(d: dict[str, Any]) -> Optional["StageWiseV3Config"]:
 
     return StageWiseV3Config(
         enabled=bool(d.get("enabled", True)),
-        stage1_mechanism=str(d.get("stage1_mechanism", "auto")),
-        enable_two_fluid_washburn=bool(d.get("enable_two_fluid_washburn", True)),
+        stage1_viscosity_correction=float(d.get("stage1_viscosity_correction", 1.0)),
         enable_outer_phase_necking=bool(d.get("enable_outer_phase_necking", True)),
         enable_multi_factor_regime=bool(d.get("enable_multi_factor_regime", True)),
         enable_design_feedback=bool(d.get("enable_design_feedback", False)),
