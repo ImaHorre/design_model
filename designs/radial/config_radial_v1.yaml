@@ -1,0 +1,53 @@
+# config_radial_v1.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Radial DFU Array — Concept Design v1
+# Geometry: oil-in-bath, wheel topology
+#
+# Hub at centre → N radial DFU channels → open bath at P_atm
+# No continuous-phase channel.  Bath = stationary atmosphere.
+#
+# Key formula (from radial_hydraulics.py):
+#   Q_total = (2π/pitch) × ΔP × w_up × h³ × (1 − 0.63·h/w_up) / (12·µ)
+#   → Q_total is INDEPENDENT of radius R
+#   → Adjust upstream_width_um to hit target flow
+#
+# Reference: v5-30 config exit geometry is preserved (30 µm × 10 µm, pitch 60 µm)
+# ─────────────────────────────────────────────────────────────────────────────
+
+design:
+  name: radial_v1
+  type: radial_bath              # oil-in-bath, wheel geometry
+  description: >
+    Wheel: hub inlet → N radial DFUs → open atmosphere bath.
+    Exit geometry matches v5-30 (step-emulsification, 30 µm × 10 µm).
+
+geometry:
+  radius_max_mm: 63.5            # 2.5 inch maximum; set working radius here
+
+  dfu:
+    exit_width_um: 30.0          # µm — fixed, matches v5-30
+    exit_depth_um: 10.0          # µm — fixed, matches v5-30
+    pitch_um: 60.0               # µm — 2 × exit_width (DFU spacing at rim)
+    constriction_ratio: 0.9      # step-emulsification geometry (90 % → 100 % width)
+
+    # ── KEY DESIGN VARIABLE ─────────────────────────────────────────────────
+    # Upstream channel width (hub → rim, same depth as exit = 10 µm).
+    # Controls total flow and upstream resistance:
+    #   narrower  →  higher R_DFU, lower Q, more stable (higher Ca margin)
+    #   wider     →  lower  R_DFU, higher Q, easier to run but less stable
+    # See pq_radial.png for the full design space.
+    upstream_width_um: 20.0
+
+fluids:
+  mu_dispersed_Pa_s: 0.06        # oil dynamic viscosity
+  # Continuous phase: stationary open bath — no channel, P_bath = P_atm = 0
+
+operating:
+  P_hub_mbar: 200.0              # oil inlet pressure at hub  [mbar]
+  P_bath_mbar: 0.0               # atmospheric bath (always 0)
+
+# ── Expected performance at defaults (radius 63.5 mm, w_up 20 µm, P 200 mbar)
+# N_DFU   ≈  6 649
+# Q_total ≈  ~120 µL/hr   (independent of R — see formula above)
+# Q/DFU   ≈  ~18 nL/hr
+# ─────────────────────────────────────────────────────────────────────────────
