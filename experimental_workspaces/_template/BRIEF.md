@@ -1,7 +1,8 @@
 # Workspace Brief: <Title>
 
 **Created**: YYYY-MM-DD  
-**Status**: active | paused | complete
+**Status**: active | paused | complete  
+**Study type**: experimental | computational | synthesis
 
 ## Research question
 
