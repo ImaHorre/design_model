@@ -1,344 +1,390 @@
-\# CLAUDE.md
+# CLAUDE.md
 
 
+## Project context
 
-\## Project context
+This repository contains the StepGen stage-wise droplet model and related tooling for
+microfluidic step-emulsification device design.
 
+The Stage-Wise V3 model is the current implemented model. It is not in progress — the
+core physics are in place. The active focus is experimental validation: running lab
+experiments across inlet conditions (Po, Qw, fluid systems), comparing results to
+model outputs, and adjusting model parameters to achieve broad agreement. The goal is
+a model that gives reliable operating predictions for new device designs.
 
-
-This repository uses a phase-gated implementation workflow.
-
-
-
-Claude must stop after each phase, run tests, document results,
-
-and wait for explicit user continuation before proceeding.
-
-
-
-This repository contains the stage-wise droplet model and related hydraulic modeling code.
-
+Work in this repo spans three areas:
+1. **Model development** — physics in `stepgen/models/stage_wise_v3/`
+2. **Experimental comparison** — ingesting lab data and comparing to model via workspaces and scripts
+3. **Design tooling** — `stepgen/design/` for operating maps, sweeps, and design search
 
 
-We are implementing a controlled v3 update to the stage-wise model.
+## Repository layout
 
-This is not a greenfield rewrite.
+```
+stepgen/                     core library
+  models/
+    stage_wise_v3/           current model (Stage 1 Poiseuille + Stage 2 Rcrit snap-off)
+    hydraulic_models.py      steady-state ladder network
+    model_comparison.py      model-vs-experiment comparison logic
+  io/
+    experiments.py           experiment data ingest
+    results.py               results I/O
+  design/
+    design_search.py
+    operating_map.py
+    sweep.py
+  viz/plots.py               result plotting
+  cli.py                     stepgen CLI entry point
 
-Preserve existing interfaces where practical and use previous code as reference, not authority.
+configs/                     device YAML config files (one per device geometry/fluid system)
+experimental_workspaces/     focused studies (see Experimental Workflow below)
+scripts/                     utility scripts (compare, workspace creation, parameter studies)
+tests/                       pytest suite
+docs/                        physics plans, implementation history
+```
 
 
+## Authoritative physics documents
 
-\## Authoritative document order
+When documents conflict on physics assumptions, use this order:
 
-
-
-When documents conflict, use this order:
-
-
-
-1\. `stage\_wise\_v3\_consolidated\_physics\_plan\_REVISED.md`
-
-2\. `stage\_wise\_v3\_implementation\_plan\_REVISED.md`
-
-3\. `v3\_execution\_summary\_REVISED.md`
-
-4\. previous v2 docs and existing codebase as reference only
-
-
+1. `docs/03_stage_wise_model/v3/stage_wise_v3_consolidated_physics_plan_REVISED.md`
+2. `docs/03_stage_wise_model/v3/stage_wise_v3_implementation_plan_REVISED.md`
+3. `docs/03_stage_wise_model/v3/v3_execution_summary_REVISED.md`
+4. Previous v2 docs and existing codebase as reference only
 
 Do not average conflicting physics assumptions across documents.
-
 Do not reintroduce older assumptions if they conflict with the revised v3 physics plan.
 
 
+## Current model state (v3)
 
-\## Core v3 implementation rules
+Core physics — implemented:
+- Stage 1: simplified Poiseuille model — rung-resistance-limited oil delivery, 1/Po scaling
+- Stage 2: snap-off controlled by `Rcrit`; neck-state variables are diagnostic only
+- Grouped rung simulation
+- Regime classification is warning/diagnostic logic only — does not override snap-off
+- `stage1_viscosity_correction` (C_visc) is a calibration scalar in config; default 1.0
 
+Deferred (not yet implemented — do not add unless explicitly requested):
+- Full mechanism auto-selection
+- Predictive neck-instability snap-off
+- Full adsorption kinetics
+- Full dynamic hydraulic network with transient coupling
 
 
-Baseline physics for initial implementation:
+## Experimental workflow
 
+Experimental workspaces are self-contained focused studies in `experimental_workspaces/`.
 
+### Creating a workspace
 
-\- Stage 1 baseline is two-fluid Washburn refill
+```
+python scripts/new_workspace.py <name> "<one-line description>"
+```
 
-\- Stage 2 snap-off is controlled by `Rcrit`
+Prefix the name with `comp_` for computational (model-only) workspaces.
 
-\- Neck-state variables are tracked for diagnostics and warning logic only
+Each workspace contains:
+- `BRIEF.md` — research question, approach, findings; keep this current
+- `analysis.py` — bespoke analysis script for this study
+- `results/` — outputs (CSV, JSON)
+- `figures/` — plots
+- `report.md` — written summary of findings
 
-\- Grouped rung simulation is required
+Study types (declared in BRIEF.md):
+- `experimental` — real lab data, model vs experiment comparison
+- `computational` — model-only parameter sweep or sensitivity test
+- `synthesis` — cross-workspace analysis
 
-\- Regime classification is warning/diagnostic logic and does not override baseline snap-off
+### Running model-experiment comparison
 
-\- Deferred extensions must not delay the first working implementation
+```
+python scripts/compare_experiments.py --config configs/<device>.yaml
 
+# with filters
+python scripts/compare_experiments.py --config configs/v5_30.yaml --device V5-30 --cont-phase SDS
 
+# or via CLI
+stepgen compare <config.yaml> <experiments.csv>
+```
 
-Deferred extensions for later phases unless explicitly requested:
+### Data provenance — snapshots and run manifest
 
+**Trigger**: any time you are working inside a workspace and running model solves, comparison scripts, or any analysis that produces results used in the report.
 
+The goal is that the workspace is fully self-contained and auditable. Anyone opening it must be able to verify exactly what was run, with what inputs, at what state of the model — without relying on external files that may have changed since.
 
-\- full mechanism auto-selection
+#### Workspace structure (extended)
 
-\- predictive neck-instability snap-off
+```
+workspace/
+  BRIEF.md
+  report.md                      ← links everything explicitly
+  analysis.py                    ← scripts that live here; note if adapted from elsewhere
+  snapshots/
+    <config-name>_<YYYY-MM-DD>.yaml   ← verbatim copy of config at time of run
+    run_manifest.md                   ← git hash, commands, timestamps, data sources
+  data/
+    <file>.csv                    ← copy raw data here if file is small (< ~500 rows or < 1 MB)
+    data_sources.md               ← for large files: metadata to locate and verify source
+  results/
+    <output>.csv / .json          ← model outputs, never overwrite
+  figures/
+    fig_01.png …
+```
 
-\- full adsorption kinetics
+#### On every model run or script execution
 
-\- full dynamic hydraulic network
+1. **Copy the config** into `snapshots/` with the date appended (e.g. `v5_30_2026-04-28.yaml`). Never reference the live config path — the snapshot is the record.
 
-\- design optimization tooling
+2. **Record the git commit hash** of the model at the time of the run. Do not copy model source code — the hash is sufficient and exact. Run `git rev-parse HEAD` and paste the result into `run_manifest.md`.
 
+3. **Record the exact command(s)** run (CLI call or script invocation) in `run_manifest.md`.
 
+4. **Handle experimental data by size**:
+   - Small files (< ~500 rows, < 1 MB): copy verbatim into `data/` — this is the snapshot.
+   - Large files: do not copy. Instead, record in `data/data_sources.md`: device ID(s), test date(s), original file path at time of analysis, row count. This is enough to cross-reference with the test database and verify the exact data used.
 
-\## Phase execution protocol
+5. **Save all model outputs** to `results/` inside the workspace. Never write outputs to a shared or external location only.
 
+#### `run_manifest.md` format
 
+```markdown
+# Run Manifest
 
-Work strictly phase-by-phase according to:
+## Run: <short description> — <YYYY-MM-DD>
 
-`stage\_wise\_v3\_implementation\_plan\_REVISED.md`
+**Model commit**: <git hash>
+**Config snapshot**: snapshots/<filename>.yaml
+**Command**: `<exact command run>`
+**Outputs**: results/<filename>
 
+### Experimental data used
+| File | Device ID | Test date | Rows | Notes |
+|---|---|---|---|---|
+| data/<file>.csv (copy) | V5-30 ID A | 2026-03-12 | 48 | full copy in data/ |
+| (large file — not copied) | V5-8-1 ID B | 2026-04-01 | 1240 | original: <path> |
 
+### Key config parameters (verify against actual fluid)
+| Parameter | Value in snapshot |
+|---|---|
+| Dispersed phase | sunflower oil |
+| η_dispersed | … mPa·s |
+| Continuous phase | 2% SDS-water |
+| η_continuous | … mPa·s |
+| Interfacial tension | … mN/m |
+| Device geometry | … |
+```
 
-For each phase:
+#### `report.md` linkage
 
+The `## Data provenance` section of `report.md` must reference:
+- Config snapshot: `snapshots/<file>`
+- Run manifest: `snapshots/run_manifest.md`
+- Each figure: which results file it was generated from (e.g. "Fig 2 — `results/compare_Po_sweep.csv`")
+- Each table: same
 
+If you notice a mismatch between the config snapshot values and the actual fluid system used in the experiment, flag it explicitly before writing the report — do not proceed.
 
-1\. restate the phase objective
+**Fluid system note**: the dispersed phase in most Peak Emulsions workspaces is **sunflower oil** (sometimes abbreviated SO — never interpret SO as silicone oil). MCT oil is always written as MCT. Always confirm the fluid name and viscosity explicitly in the run manifest; never inherit it from a label in a prior file without checking.
 
-2\. inspect relevant existing code before editing
+### Repeat tests on a completed workspace
 
-3\. implement only the scoped changes for that phase
+**Trigger**: new experimental data collected at the same conditions as an existing completed workspace.
 
-4\. run targeted tests for that phase
+Do not create a new workspace. Do not overwrite existing analysis. Instead:
 
-5\. summarize:
+1. Add the new dataset to the `data/` folder with a distinct filename (include date).
+2. Add a new entry to `snapshots/run_manifest.md` for the new run.
+3. Add a dated **"Consistency check — YYYY-MM-DD"** section to the report, after the original findings. This section states: what was repeated, how the new results compare to the original (numerically where possible), and what the agreement or deviation means.
+4. Update the `## Consistency checks` table in `BRIEF.md`.
+5. Do not alter the original findings sections — the comparison between old and new is the result.
 
-&#x20;  - files changed
+### Multi-workspace data
 
-&#x20;  - tests run
+**Trigger**: a single experimental session produces data relevant to more than one research question (and therefore more than one workspace).
 
-&#x20;  - results
+The data has one identity (`test_id` from the DB, e.g. `TST-0042`). It lives physically in one place. Multiple workspaces reference it.
 
-&#x20;  - unresolved issues
+Protocol:
+1. **Choose a primary workspace** — the one whose research question is most directly answered by this data. The data file (or a copy if small) lives in that workspace's `data/` folder.
+2. **Secondary workspaces** reference the data by its identity in their `## Data sources` table, with a note pointing to the primary workspace for the physical file.
+3. Each workspace runs its own analysis on the relevant slice of that data and keeps its own snapshot and report section.
+4. The wiki is the integration point — claims pages accumulate supporting evidence from each workspace's independent analysis of the same underlying data.
 
-&#x20;  - recommended next step
+Do not duplicate analysis across workspaces. Do not create a new workspace just to hold shared data — `test_id` is sufficient for cross-referencing.
 
-6\. update the implementation plan doc with progress notes and results
+### Getting data from the DB
 
-6b. git commit and push - see git workflow below. 
+Experimental data for design model workspaces comes from the DB web app:
 
-7\. STOP and wait for explicit user continuation before starting the next phase
+1. Navigate to `/exports/design-model` in the DB web app
+2. Filter by design ID, pressure range, flow rate, and fluid phases as needed
+3. Download CSV → place in workspace `data/`
+4. Record the `test_id`s used in `BRIEF.md ## Data sources` table
+5. Record the DB filters applied in `snapshots/run_manifest.md`
 
+For data that predates the DB (pre-2026 workspaces), the legacy identity `@exp-YYYY-MM-DD-device` is used. Do not migrate legacy workspace data into the DB.
 
+### Giving Claude context for a workspace session
 
-Do not continue automatically to the next phase.
+At the start of a session focused on a workspace:
 
+> Read `experimental_workspaces/<name>/BRIEF.md`.
+> The core model is in `stepgen/models/stage_wise_v3/`.
 
 
-\## Git Workflow
+## CLI commands
 
+```
+stepgen simulate <config.yaml>   [--Po P] [--Qw Q] [--Qo Q] [--out results.json]
+stepgen sweep    <config.yaml>   [--Po P] [--Qw Q] [--out sweep.csv]
+stepgen report   <config.yaml>   [--Po P] [--Qw Q] [--out-dir DIR]
+stepgen map      <config.yaml>   [--Po-min …] [--Po-max …] [--Qw-min …] [--Qw-max …] [--out-dir DIR]
+stepgen design   <design_search.yaml>  [--out design_results.csv]
+stepgen compare  <config.yaml>   <experiments.csv>  [--out compare.csv] [--calibrate]
+```
 
 
-This repository uses Git for version control. Git is already configured for this repository.
+## Testing
 
+Run the full test suite:
+```
+pytest
+```
 
+Run targeted tests for a specific area:
+```
+pytest tests/test_stage_wise_v3_phase1.py
+pytest tests/test_simulate.py
+pytest tests/test_comparison.py
+```
 
-Claude should follow this workflow when implementing updates.
+After any model or physics change:
+- Run the smallest relevant test first
+- Then run a broader regression check
+- Do not declare work complete without reporting actual test results
+- Always distinguish: implemented / partially implemented / not yet implemented
 
 
+## Git workflow
 
-\### Phase-based commits
+### Commits
 
+Commit per meaningful unit of completed work (a model change, an analysis, a new workspace).
 
+Commit procedure:
+1. Review `git status`
+2. Stage only intentionally modified files — never `git add .` unless explicitly instructed
+3. Write a structured commit message
+4. Push to the repository
 
-After completing each implementation phase:
+### Safety rules
 
+- Never use `git add .` unless explicitly instructed
+- Never force push
+- Never rewrite history
+- Never delete branches
 
 
-1\. Ensure tests for that phase have been executed.
+## Code-change policy
 
-2\. Confirm the phase summary and results have been written to the progress log in:
+- Prefer minimal, controlled edits over broad rewrites
+- Preserve backward compatibility where reasonable
+- Do not introduce speculative abstractions beyond what the current task requires
+- Keep module boundaries clean and aligned with the physics plan
+- Before implementing any model change: inspect the current code, identify reusable components,
+  explicitly note where the change departs from existing behaviour
 
-&#x20;  `stage\_wise\_v3\_implementation\_plan\_REVISED.md`
 
-3\. Stage only the files that were intentionally modified.
+## Path access on this machine
 
+Never hardcode `C:\Users\ConorO'Sullivan\` in any tool call — the apostrophe in the
+username breaks path resolution in Bash, Read, Write, Glob, and Grep tools.
+Always use `$env:USERPROFILE` in the PowerShell tool for any path under the user home.
+Use `Get-Content` / `Get-ChildItem` / `Set-Content` for file operations that the Read
+or Write tools cannot reach.
 
+Save all plan files to the local `.claude/` folder in this project, not the global
+`~/.claude/` folder — the global path has the same apostrophe access problem.
 
-\### Commit procedure
+See `docs/claude_windows_apostrophe_path_fix.md` for full details and key paths.
 
+## DMF Research Wiki
 
+The DMF research wiki (`03_Research/Droplet-Microfluidics/`) is a persistent, LLM-maintained knowledge base of droplet microfluidics literature. It is a compounding feedback loop — literature informs model development, and model/experimental results feed back into the wiki.
 
-Use the following process:
+### Vault path (PowerShell only — apostrophe in path)
 
+```powershell
+$wiki = "$env:USERPROFILE\OneDrive - Peak Emulsions\Documents - Tech sharepoint\XX_Conor\PeakEmulsions\PeakEmulsions\03_Research\Droplet-Microfluidics"
 
+# Navigation: always read the index first
+Get-Content "$wiki\wiki\index.md"
+Get-Content "$wiki\wiki\<category>\<page>.md"
+```
 
-1\. Review changed files
+### When to check the wiki (proactively, without being asked)
 
-2\. Stage relevant files
+- Writing or reviewing a workspace `report.md`
+- Any physics question: snap-off, capillary number, surfactant effects, droplet size scaling, Stage 1/2 mechanisms, contact angle, interfacial tension
+- Comparing model outputs to experimental data
+- Proposing model parameter changes
+- Proposing a new experiment
 
-3\. Create a commit with a structured message
+### How to read
 
-4\. Push to the repository
+Always read `wiki/index.md` first via `Get-Content`, then drill into relevant pages. Never guess paths.
 
+### Manual trigger
 
+User says "check the wiki for X".
 
+### Ingest trigger
 
+When a workspace `BRIEF.md` shows `Status: complete`, prompt the user to confirm wiki ingest. If confirmed, write `wiki_ingest.md` to the workspace folder.
 
-\### Safety rules
+### Handoff format (`wiki_ingest.md`)
 
+Write to `experimental_workspaces/<name>/wiki_ingest.md` with four sections:
 
+1. What was measured `[experimental]`
+2. What the model predicted `[model-v3, YYYY-MM]`
+3. Obvious divergences already noticed during analysis
+4. Open questions surfaced
 
-Claude must:
+Template:
 
+```markdown
+# Wiki Ingest Handoff — <workspace-name>
 
+**Date**: YYYY-MM-DD
+**Workspace**: experimental_workspaces/<name>/
+**Device**: 
+**Citekey**: @ws-YYYY-MM-DD-<name>
 
-\- Never use `git add .` unless explicitly instructed
+## What was measured [experimental]
 
-\- Review `git status` before committing
+## What the model predicted [model-v3, YYYY-MM]
 
-\- Never force push
+## Divergences noticed during analysis
 
-\- Never rewrite history
+## Open questions surfaced
+```
 
-\- Never delete branches
+### Model wiki updates
 
+Three triggers for updating `wiki/model/open-questions.md` and affected wiki pages:
+- Completed implementation phase
+- Physics assumption change
+- Calibration result
 
+Code refactors do not trigger wiki updates.
 
-\### Phase completion workflow
 
+## Session hygiene
 
-
-After finishing a phase:
-
-
-
-1\. Run tests
-
-2\. Update implementation progress log
-
-3\. Commit changes
-
-4\. Push to repository
-
-5\. Stop and wait for user approval before starting the next phase
-
-
-
-
-
-\## Testing rules
-
-
-
-After each phase:
-
-
-
-\- run the smallest relevant test set first
-
-\- then run any broader regression checks that are safe and fast
-
-\- if tests fail, debug before proposing phase completion
-
-\- do not declare a phase complete without reporting actual test results
-
-
-
-Always distinguish:
-
-\- implemented
-
-\- partially implemented
-
-\- not yet implemented
-
-
-
-\## Documentation and progress logging
-
-
-
-Use `stage\_wise\_v3\_implementation\_plan\_REVISED.md` as the main progress tracker.
-
-
-
-For each completed phase, append a progress log section including:
-
-
-
-\- date/time
-
-\- phase name
-
-\- summary of implementation
-
-\- files modified
-
-\- tests run
-
-\- test outcomes
-
-\- deviations from plan
-
-\- follow-up risks or notes
-
-
-
-Do not overwrite earlier plan content.
-
-Append progress notes clearly under a dedicated progress log heading.
-
-
-
-\## Code-change policy
-
-
-
-Prefer minimal, controlled edits over broad rewrites.
-
-Preserve backward compatibility where reasonable.
-
-Avoid introducing speculative abstractions unless they are directly needed for the current phase.
-
-Keep module boundaries clean and aligned with the revised implementation plan.
-
-
-
-\## Existing codebase usage
-
-
-
-Before implementing any phase:
-
-
-
-\- inspect the current v2 code and surrounding utilities
-
-\- identify reusable components
-
-\- reuse stable working logic where it does not conflict with v3 physics
-
-\- explicitly note where v3 departs from v2
-
-
-
-\## Session hygiene
-
-
-
-Use fresh context for each major phase if the session becomes noisy.
-
-When switching to a substantially different task, consider clearing session context and re-reading this file plus the three v3 docs first.
-
-
-
-\## Commands
-
-
-
-Document and use the project’s actual test/build commands.
-
-If commands are missing, find them from the repo before making assumptions.
-
+For a workspace session: start by reading the workspace `BRIEF.md`.
+For a model change session: re-read the consolidated physics plan and implementation plan first.
+Use fresh context for substantially different task types.
