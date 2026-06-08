@@ -25,6 +25,15 @@ the stage-wise model translates across fluid systems is important for generalisi
 
 See `nacas_mct_report.md` for the full analysis.
 
-- NaCas/MCT produced longer Stage 1 times (higher aqueous viscosity)
-- Stage 2 was similar across systems — snap-off geometry-controlled
-- Model needs different `gamma_effective` for NaCas/MCT vs SDS/SO
+> **CORRECTION 2026-06-08**: All absolute timing and frequency values in `nacas_mct_report.md` are 2× wrong (fps=25 used instead of 50). Relative comparisons between NaCas and SDS survive. See the correction notice at the top of `nacas_mct_report.md`.
+
+Qualitative findings (survive fps correction — ratios preserved):
+- NaCas/MCT produced shorter Stage 1 times than SDS/SO at same pressure (shorter reset geometry)
+- Stage 3 (snap-off) faster for NaCas/MCT — points to lower interfacial tension with NaCas adsorbed
+- NaCas/MCT minimum operating pressure is higher (≥ 300 mbar vs ≥ 200 mbar for SDS/SO)
+- Droplet diameter is consistent along the device for both systems (spatial measurement, unaffected)
+
+Quantitative values needing correction (all absolute timing/frequency numbers should be halved/doubled):
+- All Stage*_s values in the report should be halved
+- All Hz values should be doubled
+- Rerun `analysis.py` after applying `scripts/correct_fps_error.py` to the source CSV

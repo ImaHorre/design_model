@@ -4,7 +4,27 @@
 
 ---
 
-## Quick verdict
+> **CORRECTION — 2026-06-08: FPS error discovered**
+>
+> All Stage timing and production-rate values in this report are **incorrect** due to a systematic error:
+> the video analysis tool used fps = 25, but the videos for devices **3D and 4C** were recorded at **50 fps**.
+> This makes all Stage*_s values for 3D and 4C **2× too long** and their frequencies **2× too low**.
+>
+> Device **1B** was genuinely recorded at 25 fps and is **unaffected**.
+>
+> **What this changes:**
+> - The reported "40% spread in production rate" is an artefact of the fps mismatch, not manufacturing variation.
+> - After correction (×0.5 on 3D and 4C timing values), 3D and 4C frequencies are expected to match 1B — indicating **all three devices are consistent**.
+> - The "1B was an outlier with 2× frequency" observation is now explained: 1B was the only correctly analysed device.
+> - Droplet diameter conclusions are **unaffected** (spatial measurement, not timing-derived).
+>
+> To regenerate this report with correct values:
+> 1. Run: `python scripts/correct_fps_error.py <path_to_stage_timings_Mfg050526_combined.csv> --skip-device V5-30-260413-1B`
+> 2. Re-run: `python experimental_workspaces/mfg050526_consistency/analysis.py`
+
+---
+
+## Quick verdict (PRE-CORRECTION — values below are wrong for 3D and 4C)
 
 | What we measured | Are the devices similar? | Short reason |
 |-----------------|--------------------------|--------------|

@@ -6,6 +6,28 @@
 
 ---
 
+> **CORRECTION — 2026-06-08: FPS error discovered**
+>
+> All Stage timing and production-rate values in this report are **2× wrong** due to a systematic error:
+> the video analysis tool used fps = 25, but the videos were recorded at **50 fps**.
+> All Stage*_s values in this report should be **halved**, and all Hz frequency values should be **doubled**.
+>
+> **What changes:**
+> - All absolute timing values (Stage1_s, Stage2_s, Stage3_s, total cycle time) are 2× too long.
+> - All reported frequencies (Hz) are 2× too low.
+>
+> **What does NOT change:**
+> - Relative comparisons between NaCas/MCT and SDS/SO survive: the fps error affects both systems equally, so ratios, speed-up %, and "which stage is longest" conclusions remain valid.
+> - Stage fractions (Stage 1 as % of cycle) are unchanged (numerator and denominator both halved).
+> - Droplet diameter conclusions are unchanged (spatial measurement, not timing-derived).
+> - The 200 mbar no-formation finding is unchanged.
+>
+> To regenerate this report with correct values:
+> 1. Run: `python scripts/correct_fps_error.py <path_to_stage_timings.csv>`
+> 2. Re-run: `python experimental_workspaces/nacas_mct_comparison/analysis.py`
+
+---
+
 ## 1. Overview
 
 This report characterises droplet formation in a new fluid system — 2.5% sodium caseinate
