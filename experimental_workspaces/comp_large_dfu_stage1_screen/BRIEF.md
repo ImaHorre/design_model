@@ -115,6 +115,16 @@ main-channel manufacturability question.
   (8.7 → 3.5 mbar over 20 → 50 µm depth) across the whole grid.
 - Qw-sensitivity hypothesis confirmed: retuning Qw to a 10% emulsion target
   changes worst-rung t_S1 by ≤3% (N = 1000) and <0.2% (N ≤ 100).
+- Oil-side confirmed: for a passing 1000×50 µm ladder the oil main channel
+  drops 343 mbar end-to-end vs only 8 mbar on the water main — the loading is
+  entirely an oil-main-channel problem.
+- Droplet-volume reframe (geometric, via calibrated `D = k·w^a·h^b`; no
+  frequency model): a 50 µm-deep DFU (150×50 µm exit) makes a ~138 µm droplet
+  carrying ~166× the oil volume of a V5-30 droplet (25 µm). At equal
+  frequency you'd need ~166× fewer DFUs for the same oil output — so a deep
+  design matching V5-30-class output likely needs tens-to-low-hundreds of
+  DFUs (a few cm), staying in the easy N ≤ 100 regime. This makes the long
+  1000-DFU deep ladder largely a strawman.
 
 ## Consistency checks
 

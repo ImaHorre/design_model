@@ -1,136 +1,115 @@
 # Report — Large-DFU Stage-1 Hydraulic Screen
 
-**Date**: 2026-07-06
-**Workspace**: `experimental_workspaces/comp_large_dfu_stage1_screen/`
-**Study type**: computational (model-only — no experimental data)
-**Model commit**: `4f415877968db6c34eda03905cbb516778238067`
+**Date**: 2026-07-06 · **Type**: computational (model-only) · **Model commit**: `4f41587`
 
-## Question
+## Bottom line
 
-Can a ladder of large/deep O/W DFUs (20–50 µm deep, 0.5–4 mm long, 10–1000
-rungs) hydraulically refill (Stage 1) fast enough — `t_S1 ≤ 1 s` for **every**
-DFU — at a practical drive pressure (ideal ≤ 500 mbar, hard ceiling
-1000 mbar)? Droplet formation is treated as instantaneous; Stage-2/cyclic
-snap-off is deferred to a follow-up workspace for surviving candidates.
+For deep DFUs (large droplets), Stage-1 refill is a problem *only if you build a
+long single ladder of many of them*. And you probably shouldn't: a 50 µm-deep
+DFU makes a ~140 µm droplet carrying **~166× the oil volume** of a V5-30
+droplet, so you need far fewer DFUs to hit the same output — which lands you
+back in the easy hydraulic regime and sidesteps the whole issue.
 
-## Headline answer
+---
 
-**Stage-1 refill is not the bottleneck for ladders up to ~100 DFUs — every
-one of the 384 candidates with N_DFU ≤ 100 passes at the lowest swept
-pressure band (≈50 mbar). At N_DFU = 1000 the screen starts to bite, and it
-bites through the main channel, not the DFU itself.**
+## The one mechanism that drives everything
 
-Pass rates (576 candidates; pass = `DP_eff > 0` and `t_S1 ≤ 1 s` on every rung):
+Depth is the master variable, and it cuts both ways:
 
-| Criterion | Passing |
-|---|---|
-| Stage-1 pass at 500 mbar | 519 / 576 (90.1%) |
-| Stage-1 pass at 1000 mbar | 530 / 576 (92.0%) |
-| Pass at 500 mbar AND manufacturing OK (main depth ≤ 200 µm) | 157 / 576 (27.3%) |
+- A DFU's hydraulic resistance falls **~40× from 20 µm to 50 µm depth**
+  (`R_DFU ∝ 1/depth⁴`). Individually, a deep DFU refills *faster*.
+- But low resistance means each deep DFU **draws more oil**. Line up a thousand
+  of them and the cumulative draw drops the pressure along the **oil** main
+  channel faster than the channel can supply it. The far rungs starve.
 
-All 46 candidates that never pass ≤ 1000 mbar have N_DFU = 1000, concentrated
-at the deep end (4 at 30 µm, 15 at 40 µm, 27 at 50 µm depth).
+Confirmed in the model: for a passing 1000×50 µm ladder at 500 mbar, the oil
+main channel drops **343 mbar** end-to-end while the water main drops only
+**8 mbar**. The usable driving pressure at the last DFU falls from 492 mbar
+(inlet) to 157 mbar (far end). This is an **oil-side** problem — the water main
+is nearly flat because water flow is small.
 
-## Key findings
+---
 
-### 1. The failure mode is main-channel loading, not DFU resistance
+## Design considerations for deep DFUs
 
-The single-DFU closed form (`t_S1 ∝ L/(depth · DP_eff)`) predicts deeper DFUs
-refill *faster* and should need *less* pressure. The sweep shows the
-opposite at large N: Spearman rho between depth and required pressure is
-**+0.71 at N_DFU = 1000** (n/a at N = 10, where everything passes at the
-minimum). The mechanism: `R_DFU` falls ~40× from 20 µm to 50 µm depth
-(9.9×10¹⁵ → 2.5×10¹⁴ Pa·s/m³), so a 1000-rung ladder of deep DFUs draws far
-more oil, the oil main channel drops hundreds of mbar along its length, and
-`DP_eff` collapses at the far rungs — the worst rung governs the pass. For the
-same reason, *longer* DFUs (higher `R_DFU`) mildly *help* at N = 1000
-(rho = −0.27), reversing the naive length penalty. Pass counts at 500 mbar for
-N = 1000, by DFU depth: 48/48 (20 µm) → 42/48 (30 µm) → 29/48 (40 µm) →
-16/48 (50 µm).
+**1. The oil main channel is the master lever — make it big.**
+At 1000×50 µm, passes at ≤500 mbar go **29 → 48 → 58 (of 64)** as the main
+channel deepens 200 → 300 → 400 µm, and refill-time non-uniformity roughly
+halves. A large (deep) oil main keeps the pressure drop *in the DFUs, where it
+does work,* instead of *in the channel, where it's wasted.* This is your
+primary knob. **Constraint:** every good long-ladder config needs a main
+deeper than the current **200 µm manufacturing limit** — that limit, not the
+physics, is the real blocker for long deep-DFU ladders.
 
-### 2. Main-channel size is the design lever for large ladders
+**2. You cannot claw it back with DFU geometry.**
+Narrowing/lengthening the DFU upstream raises its resistance and helps a
+little, but not enough. At the manufacturable 200 µm main, even the most
+resistive DFU in the whole sweep (4 mm long, narrowest AR=1 upstream) only just
+scrapes a pass at the 1000 mbar ceiling; every other 1000×50 µm config fails
+outright. The ~40× resistance loss from going deep is simply too large to
+recover through upstream shape within buildable limits.
 
-At N_DFU = 1000, passes at 500 mbar rise 29 → 48 → 58 (of 64) as main-channel
-depth goes 200 → 300 → 400 µm, and the refill-time spread across the ladder
-roughly halves over the same range (fig 4). This collides directly with the
-current manufacturing setting `max_main_depth_um = 200`: 362 of the 519
-Stage-1 passes at 500 mbar fail the manufacturing check. **The large-N design
-question is therefore not "can the DFU refill" but "how deep a main channel
-can we build (or how do we split the ladder into shorter manifolded
-segments)".** The manufacturing limits are tunable diagnostics in
-`study_config.yaml`, kept separate from the physics pass/fail.
+**3. If you truly need many deep DFUs, parallelise.**
+Run the count as several shorter ladders fed by a manifold rather than one long
+strip. Ten parallel 100-DFU ladders = same total DFUs, but each sub-ladder
+sits in the easy regime (shallow 200 µm mains, ~50 mbar, manufacturable). Cost
+is the distribution network. This is the clean escape from the oil-main limit.
 
-### 3. Even the marginal N = 1000 passes are close to the criterion
+**4. Best option: use fewer DFUs, because deep ones are volumetrically huge.**
+Droplet diameter and per-droplet oil volume (calibrated `D = k·w^a·h^b`):
 
-Among passing N = 1000 candidates the worst-rung `t_S1` at 500 mbar reaches
-0.97 s — essentially at the 1 s threshold — versus ≤ 0.04 s for N ≤ 100. Any
-Stage-2 follow-up short-list should carry `t_S1_max`, not just the boolean.
+| DFU depth | Exit (w×h) | Droplet D | Oil volume vs V5-30 |
+|---|---|---|---|
+| V5-30 ref | 30×10 µm | 25 µm | 1× |
+| 20 µm | 60×20 µm | 52 µm | 9× |
+| 30 µm | 90×30 µm | 80 µm | 33× |
+| 40 µm | 120×40 µm | 109 µm | 82× |
+| **50 µm** | 150×50 µm | **138 µm** | **166×** |
 
-### 4. The flat 12 mbar back-pressure is conservative across this grid
+At equal formation frequency, one 50 µm DFU replaces ~166 V5-30 DFUs on oil
+throughput. Even if big droplets form an order of magnitude slower (a Stage-2
+quantity **not** modelled here — treat 166× as an upper bound), a deep design
+matching V5-30-class output likely wants only **tens to low-hundreds** of DFUs,
+not thousands. At 50 µm the pitch is 300 µm, so 100 DFUs is a **3 cm** ladder —
+comfortably in the regime where Stage-1 imposes no constraint at all.
 
-The diagnostic Laplace estimate `γ·cos(30°)·(1/depth + 1/exit_width)` is
-8.7 mbar at 20 µm depth falling to 3.5 mbar at 50 µm — below the flat
-12 mbar constant everywhere in the sweep. If the constant is roughly right at
-V5-30 scale, using it unchanged for large DFUs overstates capillary
-back-pressure and the screen errs conservative. (Per-candidate values in
-`P_cap_laplace_mbar`, `candidate_summary.csv`.)
+---
 
-### 5. Qw sensitivity — hypothesis confirmed
+## Small vs long device — the direct answer
 
-Adjusting Qw (continuous/water flow) from the fixed 5 mL/hr to hit a 10%
-target emulsion fraction changes Stage-1 performance negligibly: worst case
-(N = 1000 representative, Qw 5 → 15.9 mL/hr) moves mean `DP_DFU` by −6.6% and
-worst-rung `t_S1` by −3.0%; for N ≤ 100 the change is < 0.2%. The fixed-Qw
-sweep is therefore a valid screen — emulsion fraction can be tuned via Qw
-downstream without re-screening. Note the raw emulsion fractions at fixed
-Qw = 5 mL/hr vary enormously (median 33% at N = 10 to 93% at N = 1000 among
-passing candidates at 500 mbar), which is why they are reported as a
-diagnostic column, not a pass criterion.
+Your two scenarios map onto the sweep because pitch = 300 µm at 50 µm depth:
 
-### 6. Verification status
+| Your device | ≈ grid point | Verdict |
+|---|---|---|
+| ~4 cm, 100 DFUs | N=100 | **Works everywhere.** All 50 µm configs pass at ≤200 mbar, most at 50 mbar. Main-channel depth barely matters. Full design freedom. |
+| ~30 cm, 1000 DFUs | N=1000 | **Conditional.** Needs a deep oil main: 200 µm main essentially fails, 300 µm is a coin-flip at high pressure, 400 µm works (best configs at 50–100 mbar). All passing configs bust the 200 µm manufacturing limit. |
 
-- Depth/length monotonicity checks confirm the expected single-DFU-limit signs
-  are **reversed at large N by the network effect** (finding 1) — the
-  per-N_DFU breakdown in `results/results_summary.md` isolates this cleanly.
-- N_DFU degradation check: mean required pressure 50 → 51.6 → 373 mbar and
-  mean t_S1 spread 0.2% → 15% → 121% for N = 10 → 100 → 1000, as expected.
-- Hard check "no candidate with an inactive rung marked passing": **PASS**
-  (asserted in code).
-- V5-30 reset-length sanity: `sqrt(30×10) = 17.3 µm` vs observed 19–21 µm
-  (~10–15% low; within the loose bound; flagged in BRIEF Open Questions).
+Both *can* hit good pressures — but the long device only does so with a main
+channel you currently can't manufacture, whereas the small device is
+unconstrained. Given consideration 4, the long 1000-DFU device is likely
+solving a throughput problem you don't have.
+
+---
 
 ## Recommendation
 
-Proceed to the Stage-2/cyclic follow-up with a short-list drawn from
-N_DFU = 1000 passes at 500 mbar, stratified by DFU depth — but resolve the
-main-channel manufacturability question first (deeper-than-200-µm mains vs
-segmented/manifolded ladders), since it dominates large-N feasibility. For
-N ≤ 100 devices, Stage-1 hydraulics impose no meaningful constraint anywhere
-in this grid and Stage-2 physics will decide everything.
+If the goal is deep DFUs for large droplets: **size the DFU count from the
+droplet-volume math first** (you'll likely need far fewer than intuition
+suggests), which keeps you in the easy N ≤ 100 regime. Only if a genuine
+high-count requirement survives that should you either (a) commit to a
+deeper-than-200 µm oil main channel, or (b) parallelise into manifolded
+sub-ladders. Then hand the short-list to the Stage-2/cyclic follow-up, which
+will decide formation frequency and actual output — the quantity this Stage-1
+screen deliberately does not model.
+
+---
 
 ## Data provenance
 
-- **Config snapshot**: `snapshots/study_config_2026-07-06.yaml` (verbatim copy
-  of `study_config.yaml` at run time; DeviceConfigs are built in Python from
-  it — no per-candidate YAML exists)
-- **Run manifest**: `snapshots/run_manifest.md` (model commit, exact command,
-  key fluid/geometry parameters)
-- **Experimental data**: none — computational workspace; no `data/` folder by
-  design
-- **Figures** (all generated by `analysis.py` from
-  `results/candidate_summary.csv`, except fig 5):
-  - Fig 1 — `figures/fig_01_pressure_requirement_vs_depth.png` ← `results/candidate_summary.csv`
-  - Fig 2 — `figures/fig_02_pressure_requirement_vs_length.png` ← `results/candidate_summary.csv`
-  - Fig 3 — `figures/fig_03_pressure_requirement_vs_N.png` ← `results/candidate_summary.csv`
-  - Fig 4 — `figures/fig_04_uniformity_vs_main_channel_size.png` ← `results/candidate_summary.csv`
-  - Fig 5 — `figures/fig_05_top_candidate_pressure_profiles.png` ← direct
-    re-simulation of the top-5 candidates (per-rung arrays are not persisted
-    to CSV; candidate selection from `results/candidate_summary.csv`)
-- **Tables**: pass-rate, best/worst, verification and Qw-sensitivity tables in
-  `results/results_summary.md` ← `results/candidate_summary.csv` and direct
-  solves recorded therein; per-pressure detail in
-  `results/per_pressure_long.csv`
-- **Wiki check**: `wiki/index.md` reviewed 2026-07-06 — current wiki content
-  covers Stage-2/snap-off literature (Ca-independence, backflow mechanism);
-  nothing constrains the Stage-1 quantities used here (12 mbar back-pressure,
-  `V_reset`), which remain open questions.
+- **Config snapshot**: `snapshots/study_config_2026-07-06.yaml` (verbatim; per-candidate DeviceConfigs built in Python from it)
+- **Run manifest**: `snapshots/run_manifest.md` (commit, command, fluid/geometry parameters)
+- **Experimental data**: none — computational workspace, no `data/` folder by design
+- **Figures** (from `results/candidate_summary.csv`; fig 5 from direct re-simulation):
+  fig 1 depth, fig 2 length, fig 3 ladder-size N, fig 4 uniformity vs main-channel size, fig 5 top-candidate pressure profiles
+- **Tables/detail**: `results/results_summary.md` (aggregates, verification, Qw-sensitivity); `results/per_pressure_long.csv` (per-pressure detail). Droplet-volume table uses the calibrated `droplet_model` (k=3.3935, a=0.339, b=0.7198) applied to the sweep exit geometry and the V5-30 30×10 µm reference — geometric estimate, no frequency model.
+- **Wiki**: `wiki/index.md` reviewed 2026-07-06 — covers Stage-2/snap-off literature; nothing constrains the Stage-1 quantities used here (12 mbar back-pressure, `V_reset`), which remain open questions.
