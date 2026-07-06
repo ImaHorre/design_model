@@ -1,0 +1,60 @@
+# Study configuration — Large-DFU Stage-1 hydraulic screen
+#
+# All geometric values use _um / _mm suffixes (convention matches
+# configs/design_search_10um.yaml). SI conversion happens only in analysis.py;
+# never store SI values here.
+
+fluids:
+  mu_dispersed: 0.06        # Pa·s — sunflower oil (dispersed phase, driven by Po)
+  mu_continuous: 0.00089    # Pa·s — water (continuous phase)
+  gamma: 0.015              # N/m  — interfacial tension
+  phase_system: "o/w"
+  emulsion_ratio: 0.3       # nominal; unused by the plain hydraulic solve
+
+operating:
+  Qw_in_mlhr: 5.0           # continuous (water) inlet flow — fixed for the main sweep
+  P_out_mbar: 0.0
+  Po_sweep_mbar:
+    min: 50.0
+    max: 1000.0
+    step: 50.0              # 20 points
+
+sweep_grid:
+  N_DFU: [10, 100, 1000]
+  DFU_depth_um: [20.0, 30.0, 40.0, 50.0]
+  DFU_length_mm: [0.5, 1.0, 2.0, 4.0]
+  upstream_AR: [1.0, 1.5, 2.0, 3.0]      # section-1 width = upstream_AR * DFU_depth
+  main_depth_um: [200.0, 300.0, 400.0]
+
+geometry_rules:
+  exit_width_factor: 3.0     # exit_width = 3 * DFU_depth
+  pitch_factor: 2.0          # pitch = 2 * exit_width
+  main_width_factor: 5.0     # main.Mcw = 5 * main_depth ...
+  main_width_cap_um: 5000.0  # ... capped at 5 mm
+  section1_length_frac: 0.9  # 90:10 piecewise DFU profile
+  section2_length_frac: 0.1
+  section2_width_factor: 3.0 # section-2 width = 3 * DFU_depth (matches exit)
+
+stage1_screen:
+  stage1_backpressure_mbar: 12.0   # fitted Stage-1 capillary back-pressure (flat constant)
+  t_S1_max_s: 1.0                  # pass requires t_S1 <= 1 s for EVERY DFU
+  ideal_pressure_mbar: 500.0
+  hard_pressure_mbar: 1000.0
+
+laplace_diagnostic:
+  theta_deg: 30.0            # diagnostic only — P_cap_laplace = gamma*cos(theta)*(1/depth + 1/exit_width)
+                             # compared against, but never substituted for, the flat 12 mbar constant
+
+manufacturing:
+  # Tunable feasibility settings — diagnostic columns only, rows are never excluded.
+  max_main_depth_um: 200.0            # matches stepgen ManufacturingConfig default
+  max_delam_line_load_N_per_m: null   # optional; null = disabled (limit not settled yet)
+
+emulsion_check:
+  target_emulsion_pct: 10.0
+  qw_sensitivity_max_iterations: 3
+
+sanity_checks:
+  v5_30_exit_width_um: 30.0
+  v5_30_exit_depth_um: 10.0
+  v5_30_observed_reset_length_um: [19.0, 21.0]
