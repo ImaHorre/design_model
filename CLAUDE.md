@@ -327,19 +327,43 @@ Get-Content "$wiki\wiki\<category>\<page>.md"
 
 ### When to check the wiki (proactively, without being asked)
 
+Consult the wiki **before answering**, on your own initiative — do not wait for
+the user to ask. Triggers:
+
 - Writing or reviewing a workspace `report.md`
 - Any physics question: snap-off, capillary number, surfactant effects, droplet size scaling, Stage 1/2 mechanisms, contact angle, interfacial tension
 - Comparing model outputs to experimental data
 - Proposing model parameter changes
 - Proposing a new experiment
+- **The user proposes a design target, number, or geometry** — a droplet
+  diameter, DFU depth/width, operating pressure or flow, throughput goal, etc.
+
+### Challenge design targets against the wiki (proactive, cite by default)
+
+When the user proposes a target or design decision (e.g. "let's make 1000 µm
+droplets"), do not just agree and proceed. First ground it in the wiki, then
+answer in the form: *"From the Obsidian memory, citing `@source` (`[theory]`) …
+this looks [sound / unwise / outside the validated envelope] because … — unless
+you change x and y."* Specifically:
+
+- State what the relevant scaling law / regime boundary predicts, with citekey.
+- Say whether the proposal is inside or outside the validated envelope (Ca range,
+  viscosity ratio λ, aspect ratio, geometry) of the supporting sources.
+- If it conflicts with established theory, say how unwise it looks and what
+  concrete changes would bring it back into a supported regime.
+- Distinguish a hard physical limit from an untested extrapolation of the model.
+
+This proactive grounding is the default for physics/design decisions; the
+`dmf-wiki` skill packages the same read-only query workflow for explicit,
+cross-project invocation (`/dmf-wiki <question>`).
 
 ### How to read
 
-Always read `wiki/index.md` first via `Get-Content`, then drill into relevant pages. Never guess paths.
+Always read `wiki/index.md` first via `Get-Content`, then drill into relevant pages. Never guess paths. Cite every factual claim with a citekey or page link, and label its evidence layer (`[theory]` / `[experimental]` / `[model-v3, YYYY-MM]`).
 
 ### Manual trigger
 
-User says "check the wiki for X".
+User says "check the wiki for X", or invokes the `dmf-wiki` skill.
 
 ### Ingest trigger
 
