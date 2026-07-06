@@ -73,6 +73,24 @@ matching V5-30-class output likely wants only **tens to low-hundreds** of DFUs,
 not thousands. At 50 µm the pitch is 300 µm, so 100 DFUs is a **3 cm** ladder —
 comfortably in the regime where Stage-1 imposes no constraint at all.
 
+**5. Regime caveat — the deep-DFU operating point may fall outside step-emulsification.**
+The predicted droplet sizes above assume the device stays in the
+step-emulsification (SE) regime, where droplet size is set by geometry and is
+Ca-independent. A preliminary capillary-number check says this is at risk. Using
+the steady mean oil throughput velocity from the screen (µ_oil = 60 cP,
+σ = 15 mN/m), a 50 µm DFU has nozzle Ca ≈ 0.016 at 200 mbar rising to ≈ 0.04–0.08
+at 500–1000 mbar — at or above the SE→jetting/balloon ceiling of ~0.0125–0.03
+reported in the wiki (`@montessori2020-step-emulsification`, `@chakraborty2017-step-emulsification`,
+`[theory]`). Two compounding concerns: (a) the pressures needed for Stage-1
+refill are the same pressures that push Ca out of SE; (b) the O/W fluid system
+has viscosity ratio λ = µ_c/µ_d ≈ 0.015, far outside the literature-validated
+λ ≈ 0.1–10 (near 1), in the direction that *narrows* the SE window. Above SE, the
+138–200 µm geometric prediction does not hold — droplets become larger and
+flow-rate-dependent. **This is a model-vs-theory divergence to resolve before
+committing to deep DFUs, and it reinforces "fewer DFUs, driven gently."**
+Caveat on the caveat: Ca here uses steady mean throughput, not the true cyclic
+pinch velocity (a Stage-2 quantity), so treat it as an order-of-magnitude flag.
+
 ---
 
 ## Small vs long device — the direct answer

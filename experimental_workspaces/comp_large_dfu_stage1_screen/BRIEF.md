@@ -146,3 +146,11 @@ main-channel manufacturability question.
 - V5-30 reset-length residual: `sqrt(30×10) = 17.3 µm` vs the observed
   19–21 µm lab range — a ~15% gap. Acceptable for a screen, but worth
   revisiting if `V_reset` becomes load-bearing in a Stage-2 follow-up.
+- **Operating-regime risk (added 2026-07-06)**: does a deep DFU driven at
+  Stage-1 pressures stay in the step-emulsification regime? Preliminary Ca
+  check says maybe not — nozzle Ca ≈ 0.016–0.08 over 200–1000 mbar vs an
+  SE ceiling of ~0.0125–0.03 (`@montessori2020-step-emulsification`,
+  `@chakraborty2017-step-emulsification`). Compounded by λ ≈ 0.015 (outside
+  the validated λ ≈ 0.1–10 envelope). If it exits SE, the geometric droplet-
+  size prediction (138–200 µm) fails. Needs a proper Ca/We check at the real
+  cyclic operating point, and is a model-vs-theory divergence for the wiki.
