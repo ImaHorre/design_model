@@ -1,0 +1,67 @@
+# study_template.yaml — the ONE unified study config
+# ─────────────────────────────────────────────────────────────────────────────
+# Run with:   stepgen study configs/study_template.yaml
+#
+# Rules
+#   * Any leaf may be a scalar (fixed) OR a list (swept). Swept axes form a
+#     Cartesian product. `family:` is itself sweepable — a single device is
+#     just "a sweep of one".
+#   * Only the geometry sub-block of the SELECTED family is read per point.
+#   * All geometry values are in µm / mm; SI conversion happens inside the model.
+#
+# This template reproduces the deep-20µm-DFU main-channel study on the current
+# V5 serpentine family. Edit freely.
+# ─────────────────────────────────────────────────────────────────────────────
+
+title: "Deep-DFU serpentine main-channel study"
+goal: flatness                       # 'flatness' or 'throughput' — sets sort + best-3
+
+family: serpentine                   # scalar, or a list e.g. [serpentine] to compare styles
+
+fluids:
+  mu_dispersed:  0.06                # Pa·s — sunflower oil (dispersed, driven by Po)
+  mu_continuous: 0.00089             # Pa·s — 2% SDS water (continuous)
+  gamma:         0.015               # N/m  — effective interfacial tension (enables exit-Ca)
+  emulsion_ratio: 0.10
+  phase_system:  o/w
+
+footprint:
+  square_side_mm: 63.5               # die square for the fits-in-square gate
+
+manufacturing:
+  max_main_depth_um: 200.0           # current fab cap (depth)
+  max_main_width_um: 1000.0          # current fab cap (width)
+  min_wall_um: 5.0
+
+operating:
+  Po_mbar: 500.0                     # scalar or list, e.g. [200, 500]
+  Qw_mlhr: 5.0                       # small carrier flow for the oil-side solve
+
+# ── serpentine (current V5) geometry — the swept design space ────────────────
+serpentine:
+  main:
+    depth_um: [200, 300, 400]        # 200 = fab cap; 300/400 relaxed by design
+    width_um: [1000, 1500, 2000]     # 1000 = fab cap; 1500/2000 relaxed
+  rung:
+    length_mm: [1, 2, 4]             # DFU span (rung length)
+    upstream_width_um: 15            # upstream DFU width (aspect floor)
+    N: 1000                          # DFU count (Mcl derived as N × pitch)
+  junction:
+    exit_width_um: 60                # 60×20 µm deep exit
+    exit_depth_um: 20
+    pitch_um: 120
+  # Alternatively, derive the junction from a droplet target instead of the
+  # explicit junction block above:
+  # target_droplet_um: [1, 10, 40]
+
+# ── declarative scoring — traffic lights, worst-category-wins ────────────────
+scoring:
+  throughput_mlhr:   { green: 5,   orange: 1,   higher_better: true }
+  uniformity_pct:    { green: 20,  orange: 100 }        # ΔP spread, lower = flatter
+  operating_Po_mbar: { green: 100, orange: 500 }
+  regime_Ca:         { green: 0.01, orange: 0.3 }       # dripping / transitional / jetting
+  build:             { from: manufacturing, fits_square: required }
+
+# ── optional click-in reference overlays (Phase 2 — declared, not yet plotted)
+reference:
+  - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }

@@ -14,6 +14,7 @@ Commands
     stepgen design   <design_search.yaml>  [--out design_results.csv]
     stepgen compare  <config.yaml>  <experiments.csv>
                                     [--out compare.csv] [--calibrate]
+    stepgen study    <study.yaml>   [--book DIR]
 
 Experimental Testing Commands
 -----------------------------
@@ -464,6 +465,37 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_study(args: argparse.Namespace) -> int:
+    """Run a unified design study across topology families -> scored HTML chapter."""
+    import matplotlib
+    matplotlib.use("Agg")
+
+    from stepgen.studio import load_study, run_study, write_workbook, write_book_index
+
+    study = load_study(args.study)
+    print("=== study ===")
+    print(f"  Study     : {args.study}")
+    print(f"  Title     : {study.title}")
+    print(f"  Families  : {', '.join(study.families)}")
+    print(f"  Points    : {len(study.points)}")
+
+    result = run_study(study, progress=True)
+
+    book_dir = Path(args.book)
+    chapter = book_dir / (Path(args.study).stem + ".html")
+    write_workbook(result, chapter)
+    index = write_book_index(book_dir)
+
+    n_err = sum(1 for m in result.metrics if m.error)
+    print(f"  Solved    : {len(result.metrics) - n_err}/{len(result.metrics)} "
+          f"({n_err} errors)")
+    print(f"  Model     : {result.provenance.git_hash}")
+    print(f"  -> chapter : {chapter}")
+    print(f"  -> sidecar : {chapter.with_suffix('.json')}")
+    print(f"  -> book    : {index}")
+    return 0
+
+
 def _cmd_test_experimental(args: argparse.Namespace) -> int:
     """Run comprehensive experimental testing framework."""
     from stepgen.testing.experimental_test_suite import run_experimental_testing_cli
@@ -781,6 +813,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cmp.add_argument("--refill-factor", type=float, default=None,
                        metavar="FACTOR", help="Refill length factor: L = factor × exit_height (overrides config).")
 
+    # ── study ─────────────────────────────────────────────────────────────
+    p_study = sub.add_parser(
+        "study",
+        help="Run a unified design study (topology families) → scored HTML workbook.",
+    )
+    p_study.add_argument("study", help="Path to a study YAML (see configs/study_template.yaml).")
+    p_study.add_argument("--book", type=str, default="book",
+                         metavar="DIR", help="Book directory for the chapter + index (default: book).")
+
     # ── test-experimental ─────────────────────────────────────────────────
     p_exp = sub.add_parser(
         "test-experimental",
@@ -859,6 +900,7 @@ def main(argv: list[str] | None = None) -> int:
         "map":      _cmd_map,
         "design":   _cmd_design,
         "compare":  _cmd_compare,
+        "study":    _cmd_study,
         "test-experimental": _cmd_test_experimental,
         "test-duty-factor": _cmd_test_duty_factor,
         "test-time-state": _cmd_test_time_state,

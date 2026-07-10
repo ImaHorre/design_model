@@ -10,7 +10,7 @@ Usage
 
 Creates
 -------
-    workspaces/<name>/
+    experimental_workspaces/<name>/
         BRIEF.md    -- pre-filled with your description, ready to expand
         CONTEXT.md  -- repo context for fresh Claude sessions, topic-filtered
         results/    -- empty, for this workspace's outputs
@@ -27,8 +27,8 @@ from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-TEMPLATE_DIR = REPO_ROOT / "workspaces" / "_template"
-WORKSPACES_DIR = REPO_ROOT / "workspaces"
+WORKSPACES_DIR = REPO_ROOT / "experimental_workspaces"
+TEMPLATE_DIR = WORKSPACES_DIR / "_template"
 
 TOPIC_HINTS = {
     "capillary": [
@@ -129,7 +129,8 @@ def create_workspace(name: str, description: str) -> Path:
     print(f"  1. Edit {slug}/BRIEF.md — fill in your research question and plan")
     print(f"  2. Edit {slug}/CONTEXT.md — add any additional relevant files")
     print(f"  3. Start a fresh Claude session with:")
-    print(f'     "Read workspaces/{slug}/CONTEXT.md and workspaces/{slug}/BRIEF.md."')
+    print(f'     "Read experimental_workspaces/{slug}/CONTEXT.md and '
+          f'experimental_workspaces/{slug}/BRIEF.md."')
     return target
 
 
