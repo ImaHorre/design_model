@@ -15,6 +15,7 @@ Commands
     stepgen compare  <config.yaml>  <experiments.csv>
                                     [--out compare.csv] [--calibrate]
     stepgen study    <study.yaml>   [--book DIR]
+    stepgen studio-ui [study.yaml]  [--port N]   (interactive Design Studio; needs .[ui])
 
 Experimental Testing Commands
 -----------------------------
@@ -30,6 +31,7 @@ Entry point (pyproject.toml):
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -493,6 +495,28 @@ def _cmd_study(args: argparse.Namespace) -> int:
     print(f"  -> chapter : {chapter}")
     print(f"  -> sidecar : {chapter.with_suffix('.json')}")
     print(f"  -> book    : {index}")
+
+    return 0
+
+
+def _cmd_studio_ui(args: argparse.Namespace) -> int:
+    """Launch the interactive Design Studio (Phase 4) via `streamlit run`."""
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        print("The interactive Design Studio needs the optional UI extra.\n"
+              "Install it with:\n\n    pip install -e .[ui]\n")
+        return 1
+
+    ui_path = Path(__file__).resolve().parent / "studio" / "ui.py"
+    cmd = [sys.executable, "-m", "streamlit", "run", str(ui_path)]
+    if args.port:
+        cmd += ["--server.port", str(args.port)]
+    if args.study:
+        cmd += ["--", args.study]
+
+    print(f"Launching Design Studio: {' '.join(cmd)}")
+    return subprocess.call(cmd)
     return 0
 
 
@@ -822,6 +846,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_study.add_argument("--book", type=str, default="book",
                          metavar="DIR", help="Book directory for the chapter + index (default: book).")
 
+    # ── studio-ui ─────────────────────────────────────────────────────────
+    p_ui = sub.add_parser(
+        "studio-ui",
+        help="Launch the interactive Design Studio (Streamlit; needs `pip install -e .[ui]`).",
+    )
+    p_ui.add_argument("study", nargs="?", default=None,
+                      help="Optional study YAML to open on launch.")
+    p_ui.add_argument("--port", type=int, default=None,
+                      help="Port for the Streamlit server (default: Streamlit's own).")
+
     # ── test-experimental ─────────────────────────────────────────────────
     p_exp = sub.add_parser(
         "test-experimental",
@@ -901,6 +935,7 @@ def main(argv: list[str] | None = None) -> int:
         "design":   _cmd_design,
         "compare":  _cmd_compare,
         "study":    _cmd_study,
+        "studio-ui": _cmd_studio_ui,
         "test-experimental": _cmd_test_experimental,
         "test-duty-factor": _cmd_test_duty_factor,
         "test-time-state": _cmd_test_time_state,

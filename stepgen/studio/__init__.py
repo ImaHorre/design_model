@@ -19,7 +19,13 @@ Public API
 
 from __future__ import annotations
 
-from stepgen.studio.study import Study, StudyPoint, expand_grid, load_study
+from stepgen.studio.study import (
+    Study,
+    StudyPoint,
+    expand_grid,
+    load_study,
+    load_study_text,
+)
 from stepgen.studio.run import StudyResult, run_study
 from stepgen.studio.scoring import ScoredRow, score_metrics, score_result
 from stepgen.studio.references import (
@@ -38,6 +44,7 @@ __all__ = [
     "ReferenceSeries",
     "expand_grid",
     "load_study",
+    "load_study_text",
     "run_study",
     "score_metrics",
     "score_result",

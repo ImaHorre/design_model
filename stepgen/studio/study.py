@@ -145,9 +145,14 @@ def build_points(raw: dict[str, Any]) -> list[StudyPoint]:
     return points
 
 
-def load_study(path: str | Path) -> Study:
-    """Load and expand a study YAML file into a :class:`Study`."""
-    text = Path(path).read_text(encoding="utf-8")
+def load_study_text(text: str, source_path: str | Path | None = None) -> Study:
+    """
+    Expand a study YAML *string* into a :class:`Study`.
+
+    This is the parse core shared by :func:`load_study` (file) and the
+    interactive Studio UI (a live-edited text buffer), so both go through
+    exactly the same expansion and metadata handling.
+    """
     raw: dict[str, Any] = yaml.safe_load(text) or {}
 
     points = build_points(raw)
@@ -159,6 +164,12 @@ def load_study(path: str | Path) -> Study:
         references=list(raw.get("reference", []) or []),
         points=points,
         raw=raw,
-        source_path=str(path),
+        source_path=None if source_path is None else str(source_path),
         source_text=text,
     )
+
+
+def load_study(path: str | Path) -> Study:
+    """Load and expand a study YAML file into a :class:`Study`."""
+    text = Path(path).read_text(encoding="utf-8")
+    return load_study_text(text, source_path=path)

@@ -16,6 +16,11 @@ dependencies = [
     "tqdm",
 ]
 
+[project.optional-dependencies]
+# Interactive Design Studio (Phase 4). Kept out of the lean core — install with:
+#   pip install -e .[ui]
+ui = ["streamlit"]
+
 [tool.setuptools.packages.find]
 include = ["stepgen*"]
 
