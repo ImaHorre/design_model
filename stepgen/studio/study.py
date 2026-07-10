@@ -92,6 +92,7 @@ def _label_for(family: str, params: dict[str, Any], operating: dict[str, Any]) -
     bits: list[str] = [family]
     main = params.get("main", {}) if isinstance(params.get("main"), dict) else {}
     rung = params.get("rung", {}) if isinstance(params.get("rung"), dict) else {}
+    # serpentine / manifold main + rung axes
     if "depth_um" in main:
         bits.append(f"D{int(main['depth_um'])}")
     if "width_um" in main:
@@ -102,6 +103,17 @@ def _label_for(family: str, params: dict[str, Any], operating: dict[str, Any]) -
         bits.append(f"U{int(rung['upstream_width_um'])}")
     if "N" in rung:
         bits.append(f"N{int(rung['N'])}")
+    # manifold axes (arms count + rungs per arm)
+    arms = params.get("arms", {}) if isinstance(params.get("arms"), dict) else {}
+    if "count" in arms:
+        bits.append(f"M{int(arms['count'])}")
+    if "rungs_per_arm" in params:
+        bits.append(f"n{int(params['rungs_per_arm'])}")
+    # radial axes (radius + upstream channel width)
+    if "radius_mm" in params:
+        bits.append(f"R{params['radius_mm']:g}")
+    if "upstream_width_um" in params:
+        bits.append(f"U{int(params['upstream_width_um'])}")
     if "target_droplet_um" in params:
         bits.append(f"d{params['target_droplet_um']:g}um")
     bits.append(f"Po{int(operating.get('Po_mbar', 0))}")

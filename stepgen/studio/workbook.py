@@ -42,6 +42,7 @@ _COLUMNS: list[tuple[str, str]] = [
     ("uniformity_pct", "ΔP flatness (%)"),
     ("operating_Po_mbar", "Po (mbar)"),
     ("regime_Ca", "Exit Ca"),
+    ("hub_budget_pct", "Hub ΔP (%)"),
     ("area_used_cm2", "Area (cm²)"),
 ]
 
@@ -77,7 +78,35 @@ def _fig_to_uri(fig) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def _scatter(scored, xattr, yattr, xlabel, ylabel, title, highlight=None):
+# reference-series marker styling by kind
+_REF_STYLE = {
+    "modelled":     dict(marker="X", s=130, c="#0d1117", edgecolors="white", linewidths=1.2),
+    "experimental": dict(marker="D", s=60,  c="none",    edgecolors="#8250df", linewidths=1.6),
+    "chapter":      dict(marker="s", s=70,  c="none",    edgecolors="#0969da", linewidths=1.6),
+}
+
+
+def _draw_refs(ax, refs, xattr, yattr) -> bool:
+    """Overlay each reference series' points where both x and y are known."""
+    drew = False
+    seen: set[str] = set()
+    for rs in refs or []:
+        if rs.error:
+            continue
+        style = dict(_REF_STYLE.get(rs.kind, _REF_STYLE["chapter"]))
+        for p in rs.points:
+            x = getattr(p, xattr, None)
+            y = getattr(p, yattr, None)
+            if x is None or y is None:
+                continue
+            lbl = rs.label if rs.label not in seen else None
+            seen.add(rs.label)
+            ax.scatter(x, y, zorder=5, label=lbl, **style)
+            drew = True
+    return drew
+
+
+def _scatter(scored, xattr, yattr, xlabel, ylabel, title, highlight=None, refs=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -98,54 +127,94 @@ def _scatter(scored, xattr, yattr, xlabel, ylabel, title, highlight=None):
         if i in highlight:
             ax.annotate(sr.metrics.label, (x, y), fontsize=7,
                         xytext=(4, 4), textcoords="offset points")
+    drew_refs = _draw_refs(ax, refs, xattr, yattr)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title, fontsize=11)
     ax.grid(True, alpha=0.25)
-    if not plotted:
+    if drew_refs:
+        ax.legend(fontsize=7.5, framealpha=0.85, loc="best")
+    if not plotted and not drew_refs:
         ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
     return _fig_to_uri(fig)
 
 
-def _build_plots(scored: list[ScoredRow], goal: str) -> list[dict[str, str]]:
-    """Return the standard plot set as [{title, uri, uri_best, caption}]."""
-    best = _best_indices(scored, goal)
-    plots: list[dict[str, str]] = []
+def _variant_plot(scored, goal, refs, *, xattr, yattr, xlabel, ylabel, title,
+                  caption, with_best=False):
+    """
+    Build one plot with (best-3, references) toggle variants.
 
-    # 1) Tradeoff: throughput vs flatness (best-3 togglable)
-    plots.append({
-        "title": "Throughput vs flatness tradeoff",
-        "uri": _scatter(scored, "throughput_mlhr", "uniformity_pct",
-                        "Throughput (mL/hr)", "ΔP flatness (%) — lower is flatter",
-                        "All configs"),
-        "uri_best": _scatter(scored, "throughput_mlhr", "uniformity_pct",
-                             "Throughput (mL/hr)", "ΔP flatness (%) — lower is flatter",
-                             "Best 3 highlighted", highlight=best),
-        "caption": ("IRL: down-left is a flat, gentle device (every DFU works, but "
-                    "modest output); up-right pushes more oil but starves the far rungs. "
-                    "The green points are the ones that pass every gate."),
-    })
+    Returns {title, caption, has_best, has_ref, variants:{key->uri}} where key is
+    one of base / best / ref / bestref (only the reachable ones are rendered).
+    """
+    best = _best_indices(scored, goal) if with_best else []
+    has_ref = any((not rs.error) and _series_hits(rs, xattr, yattr) for rs in (refs or []))
 
-    # 2) Throughput vs drive pressure
-    plots.append({
-        "title": "Throughput vs drive pressure",
-        "uri": _scatter(scored, "operating_Po_mbar", "throughput_mlhr",
-                        "Drive pressure Po (mbar)", "Throughput (mL/hr)",
-                        "Throughput vs Po", highlight=best),
-        "caption": ("IRL: how hard you have to push to get the flow you want. "
-                    "Cheaper, more robust devices sit to the left."),
-    })
+    variants: dict[str, str] = {
+        "base": _scatter(scored, xattr, yattr, xlabel, ylabel, title),
+    }
+    if with_best:
+        variants["best"] = _scatter(scored, xattr, yattr, xlabel, ylabel,
+                                     title + " — best 3", highlight=best)
+    if has_ref:
+        variants["ref"] = _scatter(scored, xattr, yattr, xlabel, ylabel,
+                                    title, refs=refs)
+        if with_best:
+            variants["bestref"] = _scatter(scored, xattr, yattr, xlabel, ylabel,
+                                           title + " — best 3", highlight=best, refs=refs)
+    return {"title": title, "caption": caption, "variants": variants,
+            "has_best": with_best, "has_ref": has_ref}
 
-    # 3) Throughput vs DFU count
-    plots.append({
-        "title": "Throughput vs DFU count",
-        "uri": _scatter(scored, "N_dfu", "throughput_mlhr",
-                        "N DFU", "Throughput (mL/hr)",
-                        "Throughput vs N", highlight=best),
-        "caption": ("IRL: more parallel DFUs generally means more oil — until the far "
-                    "ones starve or reverse and extra DFUs stop paying their way."),
-    })
-    return plots
+
+def _series_hits(rs, xattr, yattr) -> bool:
+    return any(getattr(p, xattr, None) is not None and getattr(p, yattr, None) is not None
+               for p in rs.points)
+
+
+def _build_plots(scored: list[ScoredRow], goal: str, refs=None) -> list[dict[str, Any]]:
+    """Return the standard plot set, each with toggle variants + references."""
+    refs = refs or []
+    return [
+        _variant_plot(
+            scored, goal, refs,
+            xattr="throughput_mlhr", yattr="uniformity_pct",
+            xlabel="Throughput (mL/hr)", ylabel="ΔP flatness (%) — lower is flatter",
+            title="Throughput vs flatness tradeoff",
+            caption=("IRL: down-left is a flat, gentle device (every DFU works, but "
+                     "modest output); up-right pushes more oil but starves the far rungs. "
+                     "The green points pass every gate. Radial rows have automatic flatness "
+                     "(N-A) so they do not appear on this axis."),
+            with_best=True,
+        ),
+        _variant_plot(
+            scored, goal, refs,
+            xattr="operating_Po_mbar", yattr="throughput_mlhr",
+            xlabel="Drive pressure Po (mbar)", ylabel="Throughput (mL/hr)",
+            title="Throughput vs drive pressure",
+            caption=("IRL: how hard you have to push to get the flow you want. "
+                     "Cheaper, more robust devices sit to the left."),
+            with_best=True,
+        ),
+        _variant_plot(
+            scored, goal, refs,
+            xattr="N_dfu", yattr="throughput_mlhr",
+            xlabel="N DFU", ylabel="Throughput (mL/hr)",
+            title="Throughput vs DFU count",
+            caption=("IRL: more parallel DFUs generally means more oil — until the far "
+                     "ones starve or reverse and extra DFUs stop paying their way."),
+            with_best=True,
+        ),
+        _variant_plot(
+            scored, goal, refs,
+            xattr="operating_Po_mbar", yattr="droplet_um",
+            xlabel="Drive pressure Po (mbar)", ylabel="Droplet diameter (µm)",
+            title="Droplet size vs drive pressure",
+            caption=("IRL: the size you actually make vs how hard you drive. Click-in "
+                     "experimental / modelled references overlay here — the model line is "
+                     "regime-blind, so treat wide gaps to experiment as a size-model caveat."),
+            with_best=False,
+        ),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -228,33 +297,44 @@ def _drilldown_row(i: int, sr: ScoredRow, ncols: int) -> str:
             f'<td colspan="{ncols}">{body}</td></tr>')
 
 
-def _plots_html(plots: list[dict[str, str]]) -> str:
+def _plots_html(plots: list[dict[str, Any]]) -> str:
     blocks: list[str] = []
     for j, p in enumerate(plots):
-        toggle = ""
-        img = f'<img id="plotimg{j}" src="{p["uri"]}" alt="{html.escape(p["title"])}">'
-        if p.get("uri_best"):
-            toggle = (f'<label class="toggle"><input type="checkbox" '
-                      f'onchange="togglePlot({j}, this.checked)"> best-3 only</label>')
+        variants = p["variants"]
+        # data-* attributes carry every rendered variant for JS composition
+        data_attrs = " ".join(f'data-{k}="{uri}"' for k, uri in variants.items())
+        img = (f'<img id="plotimg{j}" src="{variants["base"]}" {data_attrs} '
+               f'alt="{html.escape(p["title"])}">')
+        toggles: list[str] = []
+        if p.get("has_best"):
+            toggles.append(f'<label class="toggle"><input type="checkbox" '
+                           f'onchange="composePlot({j})" data-role="best"> best-3</label>')
+        if p.get("has_ref"):
+            toggles.append(f'<label class="toggle"><input type="checkbox" '
+                           f'onchange="composePlot({j})" data-role="ref"> references</label>')
+        toggle_html = " ".join(toggles)
         blocks.append(
-            f'<figure class="plot">{img}'
-            f'<figcaption><b>{html.escape(p["title"])}</b> {toggle}'
+            f'<figure class="plot" id="plotfig{j}">{img}'
+            f'<figcaption><b>{html.escape(p["title"])}</b> {toggle_html}'
             f'<br>{html.escape(p["caption"])}</figcaption></figure>'
         )
     return '<div class="plots">' + "".join(blocks) + "</div>"
 
 
-def _provenance_html(result: StudyResult) -> str:
+def _provenance_html(result: StudyResult, refs=None) -> str:
     prov = result.provenance
     consts = resolved_constants(result.study)
     consts_txt = json.dumps(consts, indent=2, default=str)
     cfg = html.escape(prov.source_text or "(config text unavailable)")
-    refs = result.study.references
-    refs_html = "".join(
-        f"<li>{html.escape(r.get('label', str(r)))} "
-        f"<code>{html.escape(r.get('kind',''))}</code> — overlay pending (Phase 2)</li>"
-        for r in refs
-    ) or "<li>none declared</li>"
+    refs = refs or []
+    items = []
+    for rs in refs:
+        if rs.error:
+            status = f'<span style="color:#cf222e">could not resolve — {html.escape(rs.error)}</span>'
+        else:
+            status = f'{len(rs.points)} overlay point(s)'
+        items.append(f"<li>{html.escape(rs.label)} <code>{html.escape(rs.kind)}</code> — {status}</li>")
+    refs_html = "".join(items) or "<li>none declared</li>"
     return (
         f'<h2>Constants &amp; provenance</h2>'
         f'<p><b>Model commit:</b> <code>{html.escape(prov.git_hash)}</code> · '
@@ -290,11 +370,17 @@ function toggleDrill(i){
   var r=document.getElementById('drill'+i);
   r.style.display = r.style.display==='none' ? 'table-row' : 'none';
 }
-var _plotSrc={};
-function togglePlot(j,best){
+function composePlot(j){
+  var fig=document.getElementById('plotfig'+j);
   var img=document.getElementById('plotimg'+j);
-  if(!_plotSrc[j])_plotSrc[j]={all:img.getAttribute('data-all'),best:img.getAttribute('data-best')};
-  img.src = best ? _plotSrc[j].best : _plotSrc[j].all;
+  var best=false, ref=false;
+  fig.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+    if(cb.getAttribute('data-role')==='best') best=cb.checked;
+    if(cb.getAttribute('data-role')==='ref')  ref=cb.checked;
+  });
+  var key = best && ref ? 'bestref' : best ? 'best' : ref ? 'ref' : 'base';
+  var uri = img.getAttribute('data-'+key) || img.getAttribute('data-base');
+  img.src = uri;
 }
 """
 
@@ -337,16 +423,12 @@ def write_workbook(result: StudyResult, out_path: str | Path) -> Path:
     goal = result.study.goal
     best = set(_best_indices(scored, goal))
 
-    plots = _build_plots(scored, goal)
+    # resolve click-in reference overlays (modelled / experimental / chapter)
+    from stepgen.studio.references import resolve_references
+    refs = resolve_references(result.study)
+
+    plots = _build_plots(scored, goal, refs)
     plots_html = _plots_html(plots)
-    # embed all/best image sources as data-* so JS can toggle without re-render
-    for j, p in enumerate(plots):
-        if p.get("uri_best"):
-            plots_html = plots_html.replace(
-                f'<img id="plotimg{j}" src="{p["uri"]}"',
-                f'<img id="plotimg{j}" src="{p["uri"]}" '
-                f'data-all="{p["uri"]}" data-best="{p["uri_best"]}"',
-            )
 
     n_green = sum(1 for s in scored if s.overall == "green")
     n_orange = sum(1 for s in scored if s.overall == "orange")
@@ -377,7 +459,7 @@ Verdict is <b>worst-category-wins</b> across every applicable gate; grey = N-A f
 <h2>Standard plots</h2>
 {plots_html}
 
-{_provenance_html(result)}
+{_provenance_html(result, refs)}
 
 <script>{_JS}</script>
 </body></html>
@@ -413,6 +495,7 @@ def _chapter_json(result: StudyResult, scored: list[ScoredRow]) -> dict[str, Any
                     "uniformity_pct": sr.metrics.uniformity_pct,
                     "operating_Po_mbar": sr.metrics.operating_Po_mbar,
                     "regime_Ca": sr.metrics.regime_Ca,
+                    "hub_budget_pct": sr.metrics.hub_budget_pct,
                     "area_used_cm2": sr.metrics.area_used_cm2,
                     "fits_square": sr.metrics.fits_square,
                     "manufacturable": sr.metrics.manufacturable,
@@ -441,9 +524,11 @@ def write_book_index(book_dir: str | Path) -> Path:
     for html_name, data in chapters:
         rows = data.get("rows", [])
         greens = sum(1 for r in rows if r.get("overall") == "green")
+        fams = ", ".join(data.get("families", []) or [])
         items.append(
             f'<li><a href="{html.escape(html_name)}">{html.escape(data.get("title","(untitled)"))}</a>'
             f' — goal <b>{html.escape(str(data.get("goal","")))}</b>, '
+            f'families <i>{html.escape(fams)}</i>, '
             f'{len(rows)} configs, {greens} green '
             f'<span style="color:#8b949e">[{html.escape(str(data.get("git_hash",""))[:8])}]</span></li>'
         )

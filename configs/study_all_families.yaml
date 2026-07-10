@@ -1,0 +1,73 @@
+# study_all_families.yaml — three-topology compare (Phase 3)
+# ─────────────────────────────────────────────────────────────────────────────
+# Run with:   stepgen study configs/study_all_families.yaml
+#
+# Puts the current V5 serpentine style next to the analytic radial ("wheel")
+# array AND the new comb manifold in one scored table. Each family fills the
+# gates it can and leaves the rest grey / N-A:
+#   * serpentine — graded on ΔP flatness; hub-budget grey.
+#   * radial     — flatness AUTOMATIC (grey); graded on exit-Ca + hub budget.
+#   * manifold   — graded on ΔP flatness AND a real `no_crossing` build gate;
+#                  the arms axis sweeps the flatness V-curve so the scored table
+#                  finds the sweet spot (n ≈ λ_arm, pinned by the
+#                  comp_manifold_parametrization workspace).
+# ─────────────────────────────────────────────────────────────────────────────
+
+title: "Serpentine vs radial vs manifold — cross-topology compare"
+goal: flatness
+
+family: [serpentine, radial, manifold]
+
+fluids:
+  mu_dispersed:  0.06                # Pa·s — sunflower oil
+  mu_continuous: 0.00089             # Pa·s — 2% SDS water
+  gamma:         0.005               # N/m  — 5 mN/m
+  emulsion_ratio: 0.10
+  phase_system:  o/w
+
+footprint:
+  square_side_mm: 100.0
+
+manufacturing:
+  max_main_depth_um: 200.0
+  max_main_width_um: 1000.0
+  min_wall_um: 5.0
+
+operating:
+  Po_mbar: 500.0
+  Qw_mlhr: 5.0
+
+# ── serpentine (current V5) ──────────────────────────────────────────────────
+serpentine:
+  main:  { depth_um: 200, width_um: 1000 }
+  rung:  { length_mm: 2, upstream_width_um: 15, N: 1000 }
+  junction: { exit_width_um: 30, exit_depth_um: 10, pitch_um: 60 }
+
+# ── radial ("wheel") ─────────────────────────────────────────────────────────
+radial:
+  radius_mm: [20, 30]
+  upstream_width_um: [10, 20]
+  exit: { width_um: 30, depth_um: 10, pitch_um: 60 }
+  inlet_radius_mm: 1.0
+
+# ── manifold (comb): sweep the arms axis to trace the flatness V-curve ────────
+# N_dfu = count × rungs_per_arm. Keep the primary deep+wide (the "free" lever).
+manifold:
+  main:  { depth_um: 200, width_um: 1000 }
+  arms:  { count: [1, 10, 50], spacing_um: 220, depth_um: 100, width_um: 200 }
+  rung:  { length_mm: 2, upstream_width_um: 30 }
+  rungs_per_arm: [80]                 # with count → N = 80 / 800 / 4000
+  junction: { exit_width_um: 30, exit_depth_um: 20, pitch_um: 120 }
+
+# ── scoring — worst-category-wins; grey cells are N-A for that family ─────────
+scoring:
+  throughput_mlhr:   { green: 1,    orange: 0.1, higher_better: true }
+  uniformity_pct:    { green: 20,   orange: 100 }        # serpentine/manifold; radial grey
+  operating_Po_mbar: { green: 300,  orange: 600 }
+  regime_Ca:         { green: 0.01, orange: 0.3 }
+  hub_budget_pct:    { green: 15,   orange: 50 }         # radial; others grey
+  build:             { from: manufacturing, fits_square: required, no_crossing: required }
+
+# ── click-in reference overlays (resolved + drawn; not an auto baseline) ──────
+reference:
+  - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }

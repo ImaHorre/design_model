@@ -22,6 +22,11 @@ from __future__ import annotations
 from stepgen.studio.study import Study, StudyPoint, expand_grid, load_study
 from stepgen.studio.run import StudyResult, run_study
 from stepgen.studio.scoring import ScoredRow, score_metrics, score_result
+from stepgen.studio.references import (
+    ReferencePoint,
+    ReferenceSeries,
+    resolve_references,
+)
 from stepgen.studio.workbook import write_book_index, write_workbook
 
 __all__ = [
@@ -29,11 +34,14 @@ __all__ = [
     "StudyPoint",
     "StudyResult",
     "ScoredRow",
+    "ReferencePoint",
+    "ReferenceSeries",
     "expand_grid",
     "load_study",
     "run_study",
     "score_metrics",
     "score_result",
+    "resolve_references",
     "write_workbook",
     "write_book_index",
 ]

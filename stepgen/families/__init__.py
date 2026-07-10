@@ -16,8 +16,8 @@ Public API
 
 Currently registered families:
     serpentine   — wraps the existing ladder solve + serpentine layout.
-
-(radial and manifold are planned; see the studio plan.)
+    radial       — analytic radial ("wheel") array with §11 L_eff/hub corrections.
+    manifold     — comb (tapped-ladder) array on a general sparse nodal solver.
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ from stepgen.families.base import (
 
 # Import concrete families for their registration side effects.
 from stepgen.families import serpentine as _serpentine  # noqa: F401
+from stepgen.families import radial as _radial  # noqa: F401
+from stepgen.families import manifold as _manifold  # noqa: F401
 
 __all__ = [
     "CommonMetrics",

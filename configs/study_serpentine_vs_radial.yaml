@@ -1,0 +1,77 @@
+# study_serpentine_vs_radial.yaml — first cross-topology compare (Phase 2)
+# ─────────────────────────────────────────────────────────────────────────────
+# Run with:   stepgen study configs/study_serpentine_vs_radial.yaml
+#
+# Puts the current V5 serpentine style next to the analytic radial ("wheel")
+# array in one scored table. The killer view: radial flatness is AUTOMATIC
+# (uniformity renders grey / N-A), but its own gates — exit-Ca regime and the
+# hub pressure budget — are populated, while serpentine is graded on ΔP flatness
+# and leaves hub-budget grey.
+#
+# Two click-in reference overlays are declared (NOT an auto baseline):
+#   * a modelled V5-30 device, and
+#   * real V5-8-1 experimental droplet sizes (via the stage_timings column
+#     adapter) — both land on the "Droplet size vs drive pressure" plot.
+# ─────────────────────────────────────────────────────────────────────────────
+
+title: "Serpentine vs radial — cross-topology compare"
+goal: flatness
+
+family: [serpentine, radial]
+
+fluids:
+  mu_dispersed:  0.06                # Pa·s — sunflower oil
+  mu_continuous: 0.00089             # Pa·s — 2% SDS water
+  gamma:         0.005               # N/m  — 5 mN/m (radial design-notes value)
+  emulsion_ratio: 0.10
+  phase_system:  o/w
+
+footprint:
+  square_side_mm: 100.0              # die square: holds a 30 mm-radius wheel, not a 63.5 mm one
+
+manufacturing:
+  max_main_depth_um: 200.0
+  max_main_width_um: 1000.0
+  min_wall_um: 5.0                   # also sets the radial hub wall t_min
+
+operating:
+  Po_mbar: 200.0                     # supply pressure (matches radial notes @ 200 mbar)
+  Qw_mlhr: 5.0
+
+# ── serpentine (current V5) ──────────────────────────────────────────────────
+serpentine:
+  main:
+    depth_um: 200
+    width_um: 1000
+  rung:
+    length_mm: [2, 4]
+    upstream_width_um: 15
+    N: 1000
+  junction:
+    exit_width_um: 30
+    exit_depth_um: 10
+    pitch_um: 60
+
+# ── radial ("wheel") — radius, channel width, central-inlet radius ────────────
+radial:
+  radius_mm: [20, 30, 63.5]          # 63.5 mm wheel is 127 mm wide → fails the 100 mm die
+  upstream_width_um: [10, 20, 30]    # wide channels blow the hub pressure budget
+  exit: { width_um: 30, depth_um: 10, pitch_um: 60 }
+  inlet_radius_mm: 1.0               # central point inlet (set ≈ r_hub for a ring inlet)
+
+# ── scoring — worst-category-wins; grey cells are N-A for that family ─────────
+scoring:
+  throughput_mlhr:   { green: 1,    orange: 0.1, higher_better: true }
+  uniformity_pct:    { green: 20,   orange: 100 }        # serpentine; radial = grey (automatic)
+  operating_Po_mbar: { green: 300,  orange: 600 }
+  regime_Ca:         { green: 0.01, orange: 0.3 }        # dripping / transitional / jetting
+  hub_budget_pct:    { green: 15,   orange: 50 }         # radial; serpentine = grey (N-A)
+  build:             { from: manufacturing, fits_square: required }
+
+# ── click-in reference overlays (resolved + drawn; not an auto baseline) ──────
+reference:
+  - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }
+  - { kind: experimental,
+      csv: ../experimental_workspaces/po_sweep/data/stage_timings.csv,
+      filter: { DeviceID: V5-8-1, ContPhase: SDS },
+      label: "V5-8-1 (experiment)" }

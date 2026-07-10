@@ -42,6 +42,7 @@ _METRIC_FIELDS: dict[str, tuple[str, str, str]] = {
     "uniformity_pct":    ("uniformity_pct",    "ΔP flatness", "%"),
     "operating_Po_mbar": ("operating_Po_mbar", "Drive pressure", "mbar"),
     "regime_Ca":         ("regime_Ca",         "Exit Ca", ""),
+    "hub_budget_pct":    ("hub_budget_pct",    "Hub ΔP budget", "%"),
 }
 
 

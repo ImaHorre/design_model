@@ -62,6 +62,11 @@ scoring:
   regime_Ca:         { green: 0.01, orange: 0.3 }       # dripping / transitional / jetting
   build:             { from: manufacturing, fits_square: required }
 
-# ── optional click-in reference overlays (Phase 2 — declared, not yet plotted)
+# ── optional click-in reference overlays (resolved + drawn on the plots) ──────
+# kinds: modelled (solve a config), experimental (adapt+filter a lab CSV),
+#        chapter (overlay another chapter's <chapter>.json rows).
+# These are click-in only — never an automatic baseline compare.
 reference:
   - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }
+  # - { kind: experimental, csv: ../experimental_workspaces/po_sweep/data/stage_timings.csv,
+  #     filter: { DeviceID: V5-8-1, ContPhase: SDS }, label: "V5-8-1 (experiment)" }

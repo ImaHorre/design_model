@@ -26,6 +26,7 @@ Fluid convention (see `CLAUDE.md`): dispersed phase in Peak Emulsions work is
 | `wo_w11.yaml` | device | W11, water-in-oil variant | w/o | reference |
 | `example_stage_wise.yaml` | device | example for the stage-wise model | o/w | example/docs |
 | `study_template.yaml` | **study** | unified design study (deep-DFU serpentine) | o/w | **canonical** — `stepgen study` template |
+| `study_serpentine_vs_radial.yaml` | **study** | cross-topology compare (serpentine vs radial) + click-in refs | o/w | canonical — `stepgen study` (Phase 2) |
 | `design_search_10um.yaml` | design-search | target droplet 10 µm | o/w | canonical (`stepgen design`) |
 | `design_search_5um.yaml` | design-search | target droplet 5 µm | o/w | canonical (`stepgen design`) |
 | `test_device.yaml` | device | small generic device | o/w | **test fixture** |

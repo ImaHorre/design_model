@@ -43,6 +43,7 @@ SCORING_KEYS: frozenset[str] = frozenset({
     "uniformity_pct",
     "operating_Po_mbar",
     "regime_Ca",
+    "hub_budget_pct",
     "build",
 })
 
@@ -70,6 +71,7 @@ class CommonMetrics:
     uniformity_pct: float | None = None     # ΔP spread across DFUs [%] (lower=flatter)
     operating_Po_mbar: float | None = None  # drive pressure [mbar]
     regime_Ca: float | None = None          # exit capillary number (diagnostic)
+    hub_budget_pct: float | None = None     # radial: hub ΔP as % of supply (lower=better; N-A elsewhere)
     area_used_cm2: float | None = None      # occupied chip area [cm²]
     fits_square: bool | None = None         # fits the die/wafer square?
     manufacturable: bool | None = None      # within fab caps (depth/width/wall)?
