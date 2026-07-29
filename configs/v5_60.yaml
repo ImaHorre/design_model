@@ -1,0 +1,80 @@
+# example_single.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Single-point simulation config.
+# Geometry matches the stepgen_seed reference implementation.
+#
+# Usage:
+#   stepgen simulate examples/example_single.yaml
+#   stepgen simulate examples/example_single.yaml --Po 300 --Qw 10
+#   stepgen simulate examples/example_single.yaml --Qo 1.7 --Qw 15  # Mode B
+#   stepgen report   examples/example_single.yaml --out-dir plots/
+#
+# WHAT YOU GET:
+#   simulate  → printed summary: Nmc, active/reverse %, Q_spread/dP_spread, D_pred, frequency
+#   report    → 6 PNGs in --out-dir: layout schematic + 5 simulation plots
+#   map       → heatmaps over a (Po, Qw) grid
+#   compare   → predicted vs measured scatter + spatial profiles
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+fluids:
+  mu_continuous: 0.001      
+  mu_dispersed:  0.06      
+  emulsion_ratio: 0.1         
+  gamma: 0.0
+  temperature_C: 25.0
+
+
+geometry:
+  
+  main:
+    Mcd: 200.0e-6    
+    Mcw: 1000.0e-6   
+    Mcl: 693e-3   
+
+  rung:
+    mcd: 20e-6     
+    mcw: 8e-6      
+    mcl: 4000.0e-6    
+    pitch: 60e-6    
+    constriction_ratio: 0.9
+
+  junction:
+    # Sets D_pred via D = k * exit_width^a * exit_depth^b
+    exit_width: 60e-6    
+    exit_depth: 20e-6    
+    junction_type: step
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+operating:
+  mode: A
+  Po_in_mbar: 200.0      
+  Qw_in_mlhr: 5.0        
+  P_out_mbar: 0.0
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0   # capillary threshold oil→water [mbar]
+  dP_cap_wo_mbar: 30.0   # capillary threshold water→oil [mbar]
+
+
+# ── OPTIONAL — needed for layout_schematic.png in 'stepgen report' ────────────
+footprint:
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.5
+  lane_spacing: 500.0e-6
+  turn_radius: 500.0e-6
+  reserve_border: 2.0e-3
+
+
+# ── OPTIONAL — only affects 'hard OK' flag, not the simulation ────────────────
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6

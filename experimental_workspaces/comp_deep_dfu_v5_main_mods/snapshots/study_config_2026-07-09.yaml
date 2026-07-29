@@ -1,0 +1,103 @@
+# Study configuration — Deep (20 µm) DFU V5 main-channel modification study (SIMPLE)
+#
+# All geometric values use _um / _mm / _cm suffixes. SI conversion happens ONLY in
+# analysis.py; never store SI values here.
+#
+# One question: at a FIXED inlet oil pressure, for each oil-main config, what
+# throughput and DFU ΔP flatness do you get, and how many DFUs fit in the area budget?
+#
+# Reframed premise: a DEEPER main is free (etched down, not out — no footprint cost) and
+# always helps (flatter ΔP + more throughput). A WIDER main costs in-plane area (fewer
+# DFUs) but flattens ΔP — a genuine tradeoff the model resolves.
+
+fluids:
+  # Same sunflower-oil / SDS-water O/W mix as po_sweep and comp_large_dfu_stage1_screen —
+  # inherited unchanged, not picked fresh.
+  mu_dispersed: 0.06        # Pa·s — sunflower oil (dispersed phase, driven by Po)
+  mu_continuous: 0.00089    # Pa·s — water (continuous phase)
+  gamma_eff: 0.015          # N/m  — back-calculated effective IFT (record only; no Ca analysis)
+  phase_system: "o/w"
+
+operating:
+  Po_in_mbar: 500.0         # single fixed inlet oil pressure (the operating point)
+  P_out_mbar: 0.0
+  emulsion_fraction: 0.10   # target emulsion (oil / total) = 10% → Qw_dilution = 9 × Qoil
+  carrier_Qw_mlhr: 5.0      # small nominal continuous-phase flow for the oil-side solve.
+                            # The oil-side ΔP / throughput are insensitive to it (low-R
+                            # water main); the 9× dilution water is a DOWNSTREAM number,
+                            # not injected through the device (that would choke the oil).
+
+# ---------------------------------------------------------------------------
+# Swept axes (itertools.product) — 3 × 3 × 3 × 2 = 54 configs
+# N_DFU is NOT swept — it comes from the area budget (footprint) below.
+# ---------------------------------------------------------------------------
+sweep_grid:
+  main_depth_um: [200.0, 300.0, 400.0]     # 200 = current fab cap; 300/400 relaxed by design
+  main_width_um: [1000.0, 1500.0, 2000.0]  # 1000 = current fab cap; 1500/2000 relaxed
+  DFU_length_mm: [1.0, 2.0, 4.0]           # rung length (gap between the two mains)
+  upstream_width_um: [15.0, 20.0]          # section-1 (upstream) DFU width; 15 = aspect floor
+
+# ---------------------------------------------------------------------------
+# Fixed DFU geometry (all configs) — the deep 20 µm design target
+# ---------------------------------------------------------------------------
+dfu_geometry:
+  depth_um: 20.0            # deep DFU (vs current 10 µm)
+  exit_width_um: 60.0       # exit / section-2 width (also the junction)
+  exit_depth_um: 20.0       # exit depth = DFU depth
+  pitch_um: 120.0           # DFU pitch along the mains (= 2 × exit_width)
+  section1_length_frac: 0.9 # 90:10 piecewise profile: upstream 90% at upstream_width
+  section2_length_frac: 0.1 # exit 10% at exit_width
+  min_upstream_width_um: 15.0  # aspect floor: 20 µm deep needs width >= ~13 µm
+
+# ---------------------------------------------------------------------------
+# Area budget (footprint) — replaces the serpentine geometry
+#   band = W_oil_main + L_rung + W_water_main   (transverse extent of one ladder pass)
+#   N_DFU = floor(area_budget / (band × pitch)) ("how many rungs fill the folded ladder")
+# Depth does NOT enter band → depth is free. Oil & water mains share one width for now.
+#
+# The area budget is CALIBRATED to the real V5-30 device (v5_30_actual below), NOT guessed:
+# V5-30 routes N=11550 DFUs with band = 2·Mcw + L_rung = 6000 µm at 60 µm pitch, so it
+# consumes band × (N·pitch) = 6000 µm × 693 mm ≈ 41.6 cm² of routing on its die. We use that
+# same consumed area as the budget for the deep-DFU configs (same die/process/packing),
+# which bakes in real packing efficiency (manifolds, serpentine turns, frame, dicing streets)
+# instead of an idealised die fill. A hard check asserts the model reproduces N=11550.
+# ---------------------------------------------------------------------------
+footprint:
+  calibrate_to_v5_30: true  # budget = band_v5_30 × (N_v5_30 · pitch_v5_30); computed at runtime
+  # area_budget_cm2:        # (optional override; if set, used instead of the calibration)
+
+# ---------------------------------------------------------------------------
+# Stage-1 cycle → drop frequency
+#   L_reset = sqrt(w_exit · h_exit)                 (meniscus retreat on snap)
+#   V_reset = L_reset · w_exit · h_exit             (dead volume refilled, no drop output)
+#   V_drop  = (π/6) · D_pred³   (D_pred from the regime-blind power law — SIZE NOT TRUSTED)
+#   f       = Q_rung / (V_reset + V_drop)
+#   v_exit  = Q_rung / (w_exit · h_exit)            (oil velocity at the junction)
+# ---------------------------------------------------------------------------
+# (no extra params — reset length is sqrt(w·h) of the exit by construction)
+
+# ---------------------------------------------------------------------------
+# Manufacturing feasibility (diagnostic — settings relaxed by design, rows never excluded)
+# ---------------------------------------------------------------------------
+manufacturing:
+  max_main_depth_um: 200.0
+  max_main_width_um: 1000.0
+
+# ---------------------------------------------------------------------------
+# Real current V5-30 device (user-provided) — the calibration + regression anchor.
+# NOTE: the source YAML's inline comments are stale; these are the actual VALUES.
+#   main: Mcd 200 µm, Mcw 1000 µm, Mcl 693 mm (routed)
+#   rung: mcl 4000 µm (length/transverse span), pitch 60 µm
+#   junction: exit 30 × 10 µm
+#   → N = floor(Mcl / pitch) = floor(693 mm / 60 µm) = 11550 DFUs
+# ---------------------------------------------------------------------------
+v5_30_actual:
+  main_depth_um: 200.0
+  main_width_um: 1000.0       # each of the two mains (oil, water)
+  rung_length_um: 4000.0      # mcl — transverse span between the mains (in the band)
+  pitch_um: 60.0
+  dfu_depth_um: 10.0
+  exit_width_um: 30.0
+  exit_depth_um: 10.0
+  upstream_width_um: 8.0
+  N_dfu: 11550                # real DFU count = floor(Mcl / pitch)

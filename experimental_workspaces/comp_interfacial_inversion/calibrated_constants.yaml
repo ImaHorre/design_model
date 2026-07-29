@@ -1,0 +1,70 @@
+# Calibrated interfacial constants -- SDS / silicone-oil, device V5-8-1
+# Generated: 2026-07-13 by comp_interfacial_inversion/analysis.py
+# Source data: experimental_workspaces/po_sweep/data/stage_timings.csv
+# Update the 'provisional' block when a pendant-drop gamma arrives.
+
+meniscus_radius_um: 15.0            # convention: exit_width/2
+
+capillary_entry_pressure:
+  # 'make droplets at all' threshold (Stage-2 oil entry). Anchored by
+  # observed production onset ~30 mbar. RECOMMENDED value for the
+  # model's droplet_model.dP_cap_ow_Pa (currently 5000).
+  P_entry_Pa: 1898
+  P_entry_lo_Pa: 1474
+  P_entry_hi_Pa: 2748
+  gamma_cos_theta_mNm: 14.2   # at 2% SDS
+  provisional: false
+
+stage1_refill_backpressure:
+  # Effective opposing pressure from the 2% Stage-1 Po-scaling steepening.
+  # EXCEEDS the capillary entry pressure -> lumps non-capillary
+  # (velocity-dependent contact-line/entrance) dissipation. NOT gamma*cos(theta).
+  P_backpressure_Pa: 6382
+  band_Pa: [5798, 6927]
+  provisional: false
+
+gamma_cos_theta_vs_sds:   # Po=200, Qw=5; anchored to onset at 2%
+  - sds_pc: 2
+    gamma_cos_theta_mNm: 14.2
+    ci_mNm: [11.2, 17.5]
+    regime_class: clean
+  - sds_pc: 1
+    gamma_cos_theta_mNm: 15.4
+    ci_mNm: [11.1, 19.5]
+    regime_class: clean
+  - sds_pc: 0.5
+    gamma_cos_theta_mNm: 25.6
+    ci_mNm: [16.7, 33.8]
+    regime_class: clean
+  - sds_pc: 0.25
+    gamma_cos_theta_mNm: 35.9
+    ci_mNm: [29.8, 41.4]
+    regime_class: heldout
+  - sds_pc: 0.125
+    gamma_cos_theta_mNm: 103.8
+    ci_mNm: [101.1, 106.0]
+    regime_class: heldout
+
+stage2_prefactor_beta:
+  # (S2_obs_ratio-1) = beta * (gamma_ratio-1), fit above CMC ([SDS]>=0.5%).
+  # beta ~ 0 => Stage-2 timing is gamma-INSENSITIVE in the dripping window
+  # (viscous neck dissipation), far below pure capillary scaling (beta=1).
+  beta: -0.167
+  ci: [-0.271, -0.049]
+  provisional: false
+
+provisional_gamma_theta_split:
+  # PROVISIONAL: requires a literature/pendant-drop gamma anchor. The two
+  # observed regime boundaries do NOT pin gamma (junction Ca ~1e-5 everywhere;
+  # jetting is pressure-driven, not a Ca transition). Replace gamma_lit_2pc_mNm
+  # with a measured pendant-drop value to finalize.
+  gamma_lit_2pc_mNm: 9.0
+  cos_theta_2pc: 1.000
+  theta_2pc_deg: 0.0
+  provisional: true
+
+capillary_number_note:
+  # Junction Ca = mu_c * (Q_rung/A_exit) / gamma stays O(1e-5) across the
+  # entire feasible Po range -- never approaches the ~0.3 jetting threshold.
+  Ca_continuous_at_600mbar: 6.0e-6
+  jetting_is_capillary_transition: false

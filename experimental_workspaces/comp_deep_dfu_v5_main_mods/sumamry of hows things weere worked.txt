@@ -1,0 +1,16 @@
+The arc
+
+1. Heavy upfront plan → full build. We started from a detailed, pre-approved plan and I implemented all of it at once: serpentine N-estimator, Ca/regime band, φ/clog analysis, 6 faceted figures, wiki grounding, provenance, report. A large deliverable built before any output was seen.
+2. You reacted to the built thing → hard prune. Only after seeing it did the "too much detail here, missing there" become visible. We cut ~half of it (Ca, φ, serpentine, most figures), added a simpler footprint model and a Stage-1 cycle, and locked the emulsion basis. I rebuilt simpler.
+3. Iterative correction against reality. Rework was then driven by things that only surfaced once numbers appeared: negative flows (the water-coupling had to be decoupled), then — critically — your real V5-30 geometry, which showed the area model was ~2× off and needed calibrating to a real anchor.
+4. Layered follow-on. With a trustworthy base, the manual-N / operating-range question slotted in cleanly as a second script.
+
+What actually caused the rework
+- Complexity was front-loaded from the plan before the core question was validated — most of the cut work was built, then discarded.
+- Simplification and scope decisions (which outputs, which figures, emulsion basis) came after building, not before.
+- The real-device calibration arrived last; it should have been the starting anchor.
+- Several reframes (depth is free; water chokes if injected; far rungs reverse) emerged mid-modeling and changed the questions.
+
+The pattern to design against next time: the informative, low-rework phase was the small, eyeballed, anchored loop (Part 2 and the calibration); the expensive phase was the big speculative build from a detailed plan. A streamlined flow would invert the order — anchor to a real device and one metric first, confirm scope, then layer — rather than build broad and prune.
+
+Want me to turn that last paragraph into a short reusable "workflow checklist" for these studies?

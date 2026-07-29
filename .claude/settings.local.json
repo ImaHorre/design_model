@@ -44,7 +44,15 @@
       "Bash(Select-Object Name, PSIsContainer)",
       "Bash(Get-ChildItem -Path \"C:\\\\LOCAL\\\\Projects\\\\test_database\\\\test_database\" -Recurse -Force)",
       "Bash(Select-Object FullName, Length, LastWriteTime)",
-      "PowerShell(Head *)"
+      "PowerShell(Head *)",
+      "Bash(Get-ChildItem \"C:\\\\LOCAL\\\\Projects\\\\PE\\\\design_model\\\\experimental_workspaces\\\\mfg050526_consistency\" -Recurse)",
+      "Bash(Select-Object FullName)",
+      "Bash(python3 *)",
+      "Bash(cmd *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Content *)",
+      "WebFetch(domain:gist.github.com)",
+      "PowerShell(python \"C:\\\\Users\\\\CONORO~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--LOCAL-Projects-PE-design-model\\\\f1b9658b-5712-429c-b381-613b2fef25a0\\\\scratchpad\\\\bench.py\")"
     ]
   }
 }
