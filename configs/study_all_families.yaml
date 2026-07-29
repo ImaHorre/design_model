@@ -71,7 +71,14 @@ scoring:
   throughput_mlhr:   { green: 1,    orange: 0.1, higher_better: true }
   uniformity_pct:    { green: 20,   orange: 100 }        # serpentine/manifold; radial grey
   operating_Po_mbar: { green: 300,  orange: 600 }
-  regime_Ca:         { green: 0.01, orange: 0.3 }
+  # Exit Ca vs the step-emulsification ceiling. green ≤ 0.0125 = below the
+  # rectangular-nozzle SE→jetting threshold (@montessori2020-step-emulsification,
+  # h/w = 1/5); orange ≤ 0.03 = below the axisymmetric SE→balloon ceiling
+  # (@chakraborty2017-step-emulsification, λ ≈ 1). Above 0.03 the device is out
+  # of SE and the geometry-set droplet size no longer holds.
+  # Caveat: both sources sit at λ ≈ 1; we run at λ ≈ 0.015, which *narrows* the
+  # SE window — see wiki open-questions/deep-dfu-se-regime.
+  regime_Ca:         { green: 0.0125, orange: 0.03 }
   hub_budget_pct:    { green: 15,   orange: 50 }         # radial; others grey
   build:             { from: manufacturing, fits_square: required, no_crossing: required }
 

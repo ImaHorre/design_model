@@ -1,6 +1,15 @@
 # Output files
 *.csv
 
+# Design Studio workbook — generated chapters. Ignored while the Studio is still
+# being built out; chapters get committed once we start recording real design
+# decisions in them (PRD_studio_v1.md §8 — the book as institutional memory).
+book/
+
+# `stepgen compare` / `stepgen report` artefacts written to the cwd
+compare_*.png
+spatial_comparison.png
+
 # Python
 __pycache__/
 *.py[cod]

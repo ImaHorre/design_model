@@ -64,7 +64,10 @@ scoring:
   throughput_mlhr:   { green: 1,    orange: 0.1, higher_better: true }
   uniformity_pct:    { green: 20,   orange: 100 }        # serpentine; radial = grey (automatic)
   operating_Po_mbar: { green: 300,  orange: 600 }
-  regime_Ca:         { green: 0.01, orange: 0.3 }        # dripping / transitional / jetting
+  # SE→jetting ceiling: green ≤ 0.0125 (@montessori2020-step-emulsification),
+  # orange ≤ 0.03 (@chakraborty2017-step-emulsification). Both at λ ≈ 1; we run
+  # at λ ≈ 0.015, which narrows the SE window further.
+  regime_Ca:         { green: 0.0125, orange: 0.03 }
   hub_budget_pct:    { green: 15,   orange: 50 }         # radial; serpentine = grey (N-A)
   build:             { from: manufacturing, fits_square: required }
 
