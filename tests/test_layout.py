@@ -121,15 +121,15 @@ class TestLaneGeometry:
         assert compute_layout(cfg).lane_length == pytest.approx(expected, rel=1e-10)
 
     def test_lane_pair_width_formula(self):
-        """lane_pair_width = 2*Mcw + lane_spacing."""
-        cfg = _make_config(Mcw=400e-6, lane_spacing=300e-6)
-        expected = 2.0 * 400e-6 + 300e-6
+        """lane_pair_width = 2*Mcw + mcl + lane_spacing (mcl = rung gap between mains)."""
+        cfg = _make_config(Mcw=400e-6, lane_spacing=300e-6)   # factory mcl = 200e-6
+        expected = 2.0 * 400e-6 + 200e-6 + 300e-6
         assert compute_layout(cfg).lane_pair_width == pytest.approx(expected, rel=1e-10)
 
     def test_lane_pitch_formula(self):
         """lane_pitch = lane_pair_width + 2*turn_radius."""
         cfg = _make_config(Mcw=400e-6, lane_spacing=300e-6, turn_radius=600e-6)
-        lane_pair_width = 2.0 * 400e-6 + 300e-6
+        lane_pair_width = 2.0 * 400e-6 + 200e-6 + 300e-6   # + factory mcl
         expected = lane_pair_width + 2.0 * 600e-6
         assert compute_layout(cfg).lane_pitch == pytest.approx(expected, rel=1e-10)
 

@@ -28,7 +28,14 @@ Usable routing extent (after subtracting border on both sides):
 Lane geometry:
 
     lane_length     = L_useful
-    lane_pair_width = 2 × Mcw + lane_spacing   (both channels side by side)
+    lane_pair_width = 2 × Mcw + mcl + lane_spacing
+                        oil main (Mcw) | rung array (mcl) | water main (Mcw),
+                        plus lane_spacing as the intra-lane wall allowance.
+                        The rung length ``mcl`` IS the physical gap between the
+                        oil and water mains (this is what the layout schematic
+                        draws) — the earlier ``2×Mcw + lane_spacing`` omitted it
+                        and overestimated how many lanes fit by using a 0.5 mm
+                        gap where the rungs need mcl (typ. 2 mm).
     lane_pitch      = lane_pair_width + 2 × turn_radius  (centre-to-centre)
 
 Serpentine result:
@@ -100,7 +107,11 @@ def compute_layout(config: "DeviceConfig") -> LayoutResult:
     H_useful = H - 2.0 * fp.reserve_border
 
     # ── Lane geometry ──────────────────────────────────────────────────────
-    lane_pair_width = 2.0 * geom.main.Mcw + fp.lane_spacing
+    # The rung array (length mcl) is the physical gap between the oil and water
+    # mains — matching the layout schematic (plots.plot_layout_schematic). Using
+    # lane_spacing alone (a fixed ~0.5 mm) instead of mcl (typ. 2 mm) overcounted
+    # lanes. lane_spacing is retained as the intra-lane wall allowance.
+    lane_pair_width = 2.0 * geom.main.Mcw + geom.rung.mcl + fp.lane_spacing
     lane_pitch      = lane_pair_width + 2.0 * fp.turn_radius
 
     if L_useful <= 0.0:

@@ -544,8 +544,9 @@ def plot_layout_schematic(
     chip_H   = math.sqrt(area_mm2 / AR)
     L_useful = max(chip_W - 2.0 * bd, 1.0)
 
-    # Serpentine geometry using mcl as the physical rung gap
-    pair_w  = 2.0 * Mcw + mcl           # cross-sectional height per lane
+    # Serpentine geometry using mcl as the physical rung gap (+ intra-lane wall)
+    ls      = fp.lane_spacing * 1e3     # intra-lane wall allowance [mm]
+    pair_w  = 2.0 * Mcw + mcl + ls      # cross-sectional height per lane
     pitch   = pair_w + 2.0 * tr         # centre-to-centre lane spacing
     n_lanes = math.ceil(geom.main.Mcl * 1e3 / L_useful)
     tot_h   = (n_lanes - 1) * pitch + pair_w

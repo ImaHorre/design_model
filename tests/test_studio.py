@@ -430,14 +430,19 @@ def test_cross_topology_study_runs(tmp_path):
 ALL_FAMILIES = REPO / "configs" / "study_all_families.yaml"
 
 
-def _manifold_params(M, n, *, spacing=220, arm_w=200):
-    return {
+def _manifold_params(M, n, *, arm_w=200, cont_phase=None, wall=None):
+    p = {
         "main": {"depth_um": 200, "width_um": 1000},
-        "arms": {"count": M, "spacing_um": spacing, "depth_um": 100, "width_um": arm_w},
+        "arms": {"count": M, "depth_um": 100, "width_um": arm_w},
         "rung": {"length_mm": 2, "upstream_width_um": 30},
         "rungs_per_arm": n,
         "junction": {"exit_width_um": 30, "exit_depth_um": 20, "pitch_um": 120},
     }
+    if cont_phase is not None:
+        p["cont_phase"] = cont_phase
+    if wall is not None:
+        p["wall"] = wall
+    return p
 
 
 _MF_FLUIDS = {"mu_dispersed": 0.06, "gamma": 0.015}
@@ -478,6 +483,33 @@ def test_nodal_solver_series_conserves_flow():
     assert net.edge_flow(e1, P) == pytest.approx(net.edge_flow(e2, P), rel=1e-12)
 
 
+def test_nodal_solver_current_injection_anchor():
+    """A flow Q injected at a node draining through R to ground gives P = Q·R."""
+    from stepgen.models.nodal_network import NodalNetwork
+    net = NodalNetwork()
+    a, gnd = net.add_node(), net.add_node()
+    net.fix(gnd, 0.0)
+    Q, R = 3.0e-9, 2.0e12
+    net.inject(a, Q)
+    e = net.add_edge(a, gnd, R)
+    P = net.solve()
+    assert P[a] == pytest.approx(Q * R, rel=1e-12)
+    assert net.edge_flow(e, P) == pytest.approx(Q, rel=1e-12)   # all injected flow drains
+
+
+def test_manifold_two_rail_has_local_water_pressure():
+    """The comb now solves a real water rail: P_water varies rung-to-rung and the
+    per-rung driving ΔP = P_oil − P_water is what sets the flow (not a fixed sink)."""
+    cm = _solve_manifold(20, 100)
+    assert cm.error is None
+    r = cm.raw
+    # water side is not a flat ground: it droops along the collection channel
+    assert r["P_water_max_mbar"] > r["P_water_min_mbar"]
+    # and the oil rail sits above the water rail everywhere (positive rung ΔP)
+    assert r["dP_rung_min_mbar"] > 0.0
+    assert r["r_water_Pa_s_m3"] > 0.0
+
+
 def test_manifold_registered_and_contract():
     fam = get_family("manifold")
     metrics = fam.applicable_metrics()
@@ -493,25 +525,31 @@ def test_manifold_dfu_count_is_arms_times_rungs():
 
 
 def test_manifold_comb_flattens_vs_single_main():
-    """The pinned result: splitting a single main into arms cuts ΔP spread by
-    1–2 orders of magnitude at equal N (V-curve interior optimum)."""
-    single = _solve_manifold(1, 4000)      # degenerate = one long serpentine main
-    comb = _solve_manifold(50, 80)         # N=4000 split into 50 arms
-    assert single.uniformity_pct > 1000    # single main starves the far end
-    assert comb.uniformity_pct < 100       # comb is flat
-    assert comb.uniformity_pct < single.uniformity_pct / 10
+    """The pinned V-curve: at equal N an intermediate arm split is flatter than
+    either extreme, and far flatter than a single long main.  Absolute flatness
+    now reflects the realistic arm-pitch spine length (not the old 220 µm segment,
+    which understated spine droop ~20x)."""
+    single = _solve_manifold(1, 4000).uniformity_pct    # one long serpentine main
+    few = _solve_manifold(5, 800).uniformity_pct        # too few arms → long arm droop
+    mid = _solve_manifold(20, 200).uniformity_pct       # V-curve interior optimum
+    many = _solve_manifold(80, 50).uniformity_pct       # too many arms → long spine droop
+    assert single > 1000                                # single main starves the far end
+    assert mid < few and mid < many                     # interior optimum (V-curve)
+    assert mid < single / 10                            # comb cuts ΔP spread >1 order
 
 
-def test_manifold_no_crossing_gate_flips_with_spacing():
-    ok = _solve_manifold(20, 80, spacing=300, arm_w=200)     # 100 µm drain gap
-    bad = _solve_manifold(20, 80, spacing=200, arm_w=200)    # no gap (≤ arm width)
+def test_manifold_no_crossing_gate_flips_with_wall():
+    # The loop stays open when the collection channel + separating wall are both
+    # manufacturable; it breaks when the cont-phase channel drops below min feature.
+    ok = _solve_manifold(20, 80)                                           # default 200 µm cont-phase
+    bad = _solve_manifold(20, 80, cont_phase={"width_um": 2, "flow_scaled": False})
     assert ok.no_crossing is True
     assert bad.no_crossing is False
 
 
 def test_manifold_no_crossing_scores_red_when_required():
-    """A study that requires no_crossing must force a gap-less comb to red."""
-    bad = _solve_manifold(20, 80, spacing=200, arm_w=200)
+    """A study that requires no_crossing must force a loop-less comb to red."""
+    bad = _solve_manifold(20, 80, cont_phase={"width_um": 2, "flow_scaled": False})
     scoring = {
         "uniformity_pct": {"green": 20, "orange": 100},
         "build": {"no_crossing": "required"},

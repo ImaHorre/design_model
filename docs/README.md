@@ -35,6 +35,13 @@ Recent analysis and cross-model documentation
 - `droplet_formation_analysis_plan.md` - Analysis methodology
 - `promt_2.typst` - Recent analysis document
 
+### **06_design_studio/**
+The interactive design-decision layer over the model (study configs, topology
+families, scoring, workbook, UI)
+- `PRD_studio_v1.md` - What the Studio is, its concepts, architecture and non-goals
+- `roadmap_studio_v1.md` - Phased plan, milestones and open questions
+- See also `design_studio_ui.md` (root of docs/) for how to run the current app
+
 ### **archive/**
 Early development docs (Feb 27, 2026) - archived for reference
 - Integration notes, capability summaries, early feature plans
@@ -59,3 +66,4 @@ Seed documents and initial requirements
 - **Time-state reference**: 02_time_state_model/ (still coded, for reference)
 - **Core hydraulic theory**: 01_linear_hydraulic_model/hydraulic_model_analysis.md
 - **Complete model overview**: 05_analysis_and_summaries/model_summary.md
+- **Design Studio (UI/decision layer)**: 06_design_studio/PRD_studio_v1.md

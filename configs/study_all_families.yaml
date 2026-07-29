@@ -27,6 +27,8 @@ fluids:
 
 footprint:
   square_side_mm: 100.0
+  feed_length_mm: 100.0        # manifold spine length available for arms (≤ side)
+  reserve_border_mm: 2.0
 
 manufacturing:
   max_main_depth_um: 200.0
@@ -51,13 +53,18 @@ radial:
   inlet_radius_mm: 1.0
 
 # ── manifold (comb): sweep the arms axis to trace the flatness V-curve ────────
-# N_dfu = count × rungs_per_arm. Keep the primary deep+wide (the "free" lever).
+# N_dfu = count × rungs_per_arm (rungs split n/2 per arm face). Arms are packed on
+# the realistic pitch = arm_width + 2·L_dfu + 2·cont_phase + wall (DFUs protrude
+# both faces into a looping continuous-phase channel; wall AR≤2 → width ≥ depth/2).
+# Keep the primary deep+wide (the "free" lever).
 manifold:
   main:  { depth_um: 200, width_um: 1000 }
-  arms:  { count: [1, 10, 50], spacing_um: 220, depth_um: 100, width_um: 200 }
+  arms:  { count: [1, 10, 50], depth_um: 100, width_um: 200 }
   rung:  { length_mm: 2, upstream_width_um: 30 }
   rungs_per_arm: [80]                 # with count → N = 80 / 800 / 4000
   junction: { exit_width_um: 30, exit_depth_um: 20, pitch_um: 120 }
+  cont_phase: { width_um: 200, flow_scaled: true, max_velocity_mps: 0.1 }
+  wall: { min_um: 100 }               # width defaults to max(min_um, main_depth/2)
 
 # ── scoring — worst-category-wins; grey cells are N-A for that family ─────────
 scoring:

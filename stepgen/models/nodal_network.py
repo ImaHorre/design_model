@@ -59,6 +59,7 @@ class NodalNetwork:
 
     _edges: list[tuple[int, int, float]] = field(default_factory=list)  # (i, j, g)
     _fixed: dict[int, float] = field(default_factory=dict)
+    _injections: dict[int, float] = field(default_factory=dict)          # node -> Q in [m³/s]
     _n: int = 0
 
     # -- construction ------------------------------------------------------
@@ -86,6 +87,18 @@ class NodalNetwork:
             raise ValueError(f"unknown node {node}")
         self._fixed[node] = float(pressure)
 
+    def inject(self, node: int, Q: float) -> None:
+        """Inject a fixed volumetric flow ``Q`` at ``node`` (Neumann boundary).
+
+        Positive ``Q`` is flow **into** the node (a source, e.g. a flow-controlled
+        inlet); it appears on the RHS of that node's KCL row.  Injection on a
+        fixed (Dirichlet) node is ignored — a pinned pressure overrides it.
+        Repeated calls accumulate.
+        """
+        if not (0 <= node < self._n):
+            raise ValueError(f"unknown node {node}")
+        self._injections[node] = self._injections.get(node, 0.0) + float(Q)
+
     # -- solve -------------------------------------------------------------
     def solve(self) -> np.ndarray:
         """Solve KCL for the pressure at every node → ndarray shape (n_nodes,)."""
@@ -106,6 +119,11 @@ class NodalNetwork:
             if j not in self._fixed:
                 A[j, j] += g
                 A[j, i] -= g
+
+        # Neumann injections: fixed inflow on a free node's KCL row (RHS)
+        for node, Q in self._injections.items():
+            if node not in self._fixed:
+                b[node] += Q
 
         # Dirichlet rows overwrite whatever was accumulated
         for node, value in self._fixed.items():
