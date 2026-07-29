@@ -7,6 +7,14 @@ sequenced "how", and it changes as phases land.*
 Studio — and come out with a short-list we trust. Phases 0–3 exist to make that session
 worth having. Everything after it makes the result durable.
 
+**Where this stands after Phase 2 (2026-07-29).** The deep-DFU question is no longer open in
+the way it was when this roadmap was written. Exit Ca — not the etch-depth cap — is what binds
+large-droplet designs; in-regime designs *do* exist, in the opposite direction to the standing
+hypothesis (many slow DFUs, not few fast ones); and the Ca threshold that decides all of it has
+never been approached within 9× on a Peak device. So M1 is now a *selection* session over a
+space whose shape we know, and its most valuable output is the shortlist that feeds the Phase 5
+wafer. Phase 5 is promoted to run alongside it. Details in Phase 2's "What actually landed".
+
 ---
 
 ## Status
@@ -14,12 +22,12 @@ worth having. Everything after it makes the result durable.
 | Phase | Scope | Size | Status |
 |---|---|---|---|
 | 0 | Housekeeping + threshold correction | S | **done** (`e390764`) |
-| 1 | Decide layer — value axes, margin, confidence, validity | M | **done** |
-| 2 | Intent layer + constraint diagnosis | M | **done** |
-| 3 | Design visualiser (to-scale SVG) | M | not started |
-| **M1** | **Deep-DFU sweep session** | — | **gated on 0–3** |
+| 1 | Decide layer — value axes, margin, confidence, validity | M | **done** (`f47df07`) |
+| 2 | Intent layer + constraint diagnosis | M | **done** (`7b7649f` + Ca-audit follow-up) |
+| 3 | Design visualiser (to-scale SVG) | M | **next** |
+| **M1** | **Deep-DFU sweep session** | — | **gated on 3** |
+| 5 | Boundary-probe studies + calibration loop | M | **promoted — run with M1** |
 | 4 | Workbook as memory | M | not started |
-| 5 | Boundary-probe studies + calibration loop | M | not started |
 | 6 | Form-driven UI | M | not started |
 | 7 | GDS handoff | S | not started |
 | 8 | Consolidation & archive | S | not started |
@@ -27,6 +35,16 @@ worth having. Everything after it makes the result durable.
 Sizes are relative: **S** = a sitting, **M** = a focused block of work, **L** = multi-session.
 
 Everything lives in `design_model/`. No new repos.
+
+### Open items carried out of Phase 2
+
+Neither blocks Phase 3, both must be settled before the Phase 5 wafer is interpreted:
+
+1. **Dispersed phase of the anchor experiment is disputed** — sunflower vs silicone oil
+   (`experimental_workspaces/po_sweep/BRIEF.md`, wiki `@ws-2026-07-13-po-sweep-v5-8-1`, both
+   now flagged). µ differs up to 10× and Ca scales with µ. **Needs a human answer.**
+2. **Interfacial tension is not pinned** — configs in this repo use γ = 5, 15 or 0 mN/m. A 3×
+   spread in γ is a 3× spread in every Ca number here.
 
 ---
 
@@ -241,34 +259,96 @@ Four decisions worth recording:
    step-emulsification ceiling. `Diagnosis.binding_is_physics` reports that explicitly
    rather than offering a process change that would not help.
 
-**The headline result, already in hand.** Running `study_intent_deep_dfu.yaml` (140 µm at
-5 mL/hr under 300 mbar, all three families, 138 points): **0 green, 7 orange, 131 red**, and
-exit Ca is the sole cause of 107 of those reds. The blocker for large droplets is **not**
-the 200 µm main-depth cap — relaxing it to 300 µm changes nothing, and the pricing says so
-in as many words. It is that a deep DFU carries so much oil (`R_rung ∝ 1/h³`; the sizing
-estimate drops from ~1000 rungs to ~11) that the exit velocity leaves step-emulsification
-entirely. This sharpens M1's standing hypothesis rather than confirming it: fewer DFUs is
-right, but the constraint that bites is the SE ceiling, not the etch depth — and that
-ceiling is itself borrowed from literature at λ ≈ 1 while we run at λ ≈ 0.015. Phase 5's
-boundary probe is now the load-bearing piece of work, not a nice-to-have.
+**The headline result.** Running `study_intent_deep_dfu.yaml` (140 µm at 5 mL/hr under
+300 mbar, all three families, 216 points): **0 green, 33 orange, 183 red** — but **87 of
+those reds are red on exit Ca alone**, and the low-Ca corner does contain in-regime designs.
+The blocker for large droplets is **not** the 200 µm main-depth cap: relaxing it to 300 µm
+clears 2 rows out of 183, and the pricing says so in as many words. What binds is that a
+deep DFU carries so much oil (`R_rung ∝ 1/h³`) that the exit velocity leaves
+step-emulsification — unless you deliberately run many DFUs slowly.
 
-*Checked against the wiki before writing this down.* Two qualifications, neither of which
-rescues the result:
+This sharpens M1's standing hypothesis rather than confirming it. *Fewer DFUs* was the wrong
+half: the Ca-compliant answer is the opposite direction — **more** DFUs, each throttled, at
+low drive pressure:
 
-* Our `regime_Ca` is the **nominal** exit Ca, but the threshold it is compared against is
-  stated for the **local pinch** Ca: `Ca_in ≈ (w/h)·Ca_nominal`
+| Design | Exit Ca | Throughput | ΔP spread |
+|---|---|---|---|
+| `radial_R29.75_U76_Po45` | **0.0018** | 2.6 mL/hr | automatic |
+| `serpentine_…_N344_Po45` | **0.0021** | 1.67 mL/hr | 34% |
+| `serpentine_…_N11_Po300` | 0.71 | 18.2 mL/hr | 2.6% |
+
+Those top rows sit *at* the measured envelope (0.0017), so their regime risk is nearly nil.
+They are orange rather than green only because a 51 µm exit is outside the range the droplet
+*size* power-law was fitted over — a different, narrower uncertainty. The real trade the
+decide layer now has to rank is **Ca against flatness**: low Ca wants a long slow ladder, and
+a long ladder droops.
+
+#### Correction — the first version of this grid was Ca-blind
+
+As first shipped, `rungs_for_throughput` sized N to hit the throughput target *at the pressure
+ceiling*, which maximises per-DFU velocity — precisely the wrong direction when Ca is what
+binds. The grid swept N ≤ 44 at Po ≥ 120 mbar and reported **0 green / 131 red**, which was
+honest about the space it searched but was searching the wrong corner. Fixed by
+`rungs_for_ca_ceiling()` + `dfu_count_ladder()`, which span both sizing answers (they differ
+by ~15× here: 23 rungs for throughput, 172 for Ca), and by extending the pressure sweep down
+to 0.15× the ceiling. Recorded rather than quietly amended, because the failure mode is
+general: **a generated grid inherits the bias of whatever it was sized against.**
+
+#### The Ca audit — why "we don't understand Ca" is an understatement
+
+Computed 2026-07-29 from `experimental_workspaces/po_sweep/data/stage_timings.csv`
+(V5-8-1, 30×10 µm exit, `@ws-2026-07-13-po-sweep-v5-8-1`) `[experimental]` — per-DFU flow
+from droplet volume over measured cycle time:
+
+| Po (mbar) | Droplet (µm) | CV | Exit Ca |
+|---|---|---|---|
+| 200 | 25.0 | 12% | 0.00035 |
+| 400 | 25.0 | 3.0% | 0.00077 |
+| 600 | 25.6 | 2.8% | **0.00137** |
+
+**Every Ca Peak has ever measured is ≤ 0.0017** — 7× below our own 0.0125 green bound and
+18× below the 0.03 red bound. At γ = 15 mN/m instead of 5 it drops to 0.0005 (27× below); if
+the dispersed phase were a low-viscosity silicone oil it would be 164× below. **On every
+assumption we have never operated within an order of magnitude of the threshold we design
+against.** Droplet size was flat across the whole sweep, so this is a *lower bound* on the
+ceiling and nothing more. Recorded as `families.base.CA_MEASURED_MAX`.
+
+Consequences taken:
+* `metric_confidence()` now grades `regime_Ca` on the **measured envelope**, not the SE
+  ceiling. Below the ceiling but above 0.0017 is an extrapolation, because it is.
+* `diagnosis.EVIDENCE_THIN_GATES` + `theory_limited_rows()` name the designs that are **green
+  on everything except Ca**. The verdict stays red — quietly downgrading an unmeasured risk
+  would be worse than no verdict — but the chapter, the UI and the CLI now call them
+  *build-and-see candidates* and say why. Whether they work is a question the model cannot
+  settle, and the user is better placed than the scorer to decide whether to try.
+
+*Checked against the wiki.* Two qualifications, neither of which rescues the picture:
+
+* Our `regime_Ca` is the **nominal** exit Ca; the threshold is stated for the **local pinch**
+  Ca, `Ca_in ≈ (w/h)·Ca_nominal`
   ([[equations/step-emulsification-generalized-capillary]], `@montessori2020-step-emulsification`)
-  `[theory]`. The intent designs run at w/h = 3, so the true comparison is ~3× *worse* than
-  the number in the table, not better. The 0.0125 bound in the study configs is also quoted
-  at h/w = 1/5, which is not the aspect ratio intent generates.
-* The generalised criterion adds a Weber term, `K = Ca_in + We_in`. At these geometries
-  `We_in ≈ 1e-3` (ρu²/2 ≈ 0.1 Pa against σ/λ ≈ 100 Pa), so it is negligible here — the
-  transition is Ca-driven, as the dripping-regime branch of that criterion says it should be.
+  `[theory]`. At w/h = 3 the true comparison is ~3× *worse*. The 0.0125 bound is also quoted
+  at h/w = 1/5, not the 1/3 intent generates.
+* The generalised criterion adds a Weber term, `K = Ca_in + We_in`. Here `We_in ≈ 1e-3`
+  (ρu²/2 ≈ 0.1 Pa against σ/λ ≈ 100 Pa) — negligible, so the transition is Ca-driven exactly
+  as the dripping branch of that criterion predicts.
 
-So the finding is robust in sign and roughly an order of magnitude in size. What it is *not*
-is validated: both sources sit at λ ≈ 1 and we run at λ ≈ 0.015
-([[claims/step-emulsification-viscosity-insensitive]] is "supported" but on 2 sources, neither
-in our λ range). The `validity` gate already flags every row for exactly this.
+#### Two provenance discrepancies found, flagged not fixed
+
+1. **Dispersed phase.** `wiki/experiments/@ws-2026-07-13-po-sweep-v5-8-1` and
+   `experimental_workspaces/po_sweep/BRIEF.md` both say *silicone oil*; the raw data column
+   is `DispPhase = SO`, which per `CLAUDE.md` means **sunflower oil, never silicone**. µ
+   differs by up to 10× between them and Ca scales linearly with µ, so every Ca derived from
+   that experiment depends on which is right. **Needs a human answer before the wiki is
+   edited** — CLAUDE.md's own rule is to flag a fluid mismatch rather than proceed.
+2. **Interfacial tension.** Configs disagree: `study_all_families.yaml` uses γ = 5 mN/m,
+   `study_template.yaml` and the `wo_*` configs use 15, and `v5_30.yaml` uses 0 (Ca disabled).
+   The wiki's `deep-dfu-se-regime` page computed its Ca estimate at 15. A 3× spread in γ is a
+   3× spread in every Ca number in this repo.
+
+Both belong in Phase 5's scope: the probe measures `Ca_crit` with γ and µ folded in, which is
+the right unit for *design*, but exporting the result to another fluid system needs both
+pinned independently.
 
 ---
 
@@ -319,14 +399,23 @@ and the reasoning happens out loud.
 
 **Expected to come out with:**
 - The best deep-DFU design on each axis, the Pareto set, and the all-round and safest picks.
-- The binding constraint named and its relaxation priced — the standing hypothesis, from
-  `comp_large_dfu_stage1_screen`, is that the 200 µm main-depth cap binds for long ladders
-  and that the escape is fewer DFUs (a 50 µm DFU carries ~166× the oil of a V5-30 droplet)
-  or a comb manifold. The session either confirms that with numbers or overturns it.
+- The binding constraint named and its relaxation priced.
 - An explicit read on the SE-regime risk — flagged by the validity gate rather than
   discovered afterwards in prose.
 - A short-list for v1, with the reasoning visible.
 - A chapter in the book recording all of it.
+
+**Two of these are now answered in advance** by the Phase 2 run (see "What actually landed"
+above), which changes what the session is *for*:
+
+- The depth-cap hypothesis is **settled and priced at roughly zero** — relaxing 200 → 300 µm
+  clears 2 rows of 183. Do not spend the session arguing about etch depth.
+- The binding constraint is **exit Ca**, and it is a design lever rather than a purchasable
+  one. The live trade is **Ca against ΔP flatness**: in-regime designs need many DFUs run
+  slowly, and long ladders droop.
+
+So M1 becomes a *selection* session over a space we already know the shape of, and its most
+valuable output is the shortlist that feeds Phase 5's wafer — not a feasibility verdict.
 
 **This session also tests the tool.** Whatever we reach for and cannot find becomes the
 backlog for Phases 4–6.
@@ -358,31 +447,87 @@ backlog for Phases 4–6.
 
 ## Phase 5 — Boundary-probe studies and the calibration loop
 
+**Promoted to the critical path (2026-07-29).** Phase 2 established that exit Ca is the
+binding constraint on every large-droplet design, and that the threshold we score it against
+has never been approached within 7× on a Peak device. Every deep-DFU decision now rests on a
+number we have not measured. This is no longer a follow-up phase; it is the load-bearing
+piece of work, and it should run *alongside* M1 rather than after it — M1's shortlist is the
+natural input to the wafer.
+
 **Goal:** deliberately design experiments that tell us where the model breaks — starting
 with the step-emulsification ceiling.
 
 ### Deliverables
 - **Probe mode**: given a model-predicted boundary, select the design points that most
   sharply discriminate across it. Output is a **build set / wafer manifest**, not a ranking.
-- **The SE-ceiling probe**: one DFU geometry walked across the predicted SE→jetting
-  boundary. Where does droplet size stay geometry-set and Ca-independent, and where does it
-  start tracking flow rate?
+- **The SE-ceiling probe** — designed below.
 - **Calibration handoff**: structure results so the measured boundary constrains effective
   interfacial tension and contact angle, and feed that back into the model constants and the
   wiki.
 
+### The SE-ceiling probe — design
+
+**What makes it discriminating** (rather than "build a few and see"):
+
+1. **The readout is `dD/dQ`, not pass/fail.** SE's signature is Ca-*independent* droplet size
+   ([[claims/step-emulsification-ca-independent-size]], `@chakraborty2017` + `@montessori2020`
+   `[theory]`). Below the ceiling `D` is flat and frequency carries the flow; above it `D`
+   starts tracking flow and CV rises. **We have already run this readout once** — the V5-8-1
+   Po sweep gave flat 24.8–25.6 µm at CV ~3% (`@ws-2026-07-13-po-sweep-v5-8-1`
+   `[experimental]`). The method is proven on a Peak device; the probe extends its reach.
+
+2. **Pressure sweeps Ca for free — spend the mask on geometry.** You cannot reach the ceiling
+   on a 30×10 exit by pressure alone: 800 mbar only reached Ca = 0.0017 and you would need
+   roughly 6000 mbar. But per-DFU flow is set by how many DFUs share the supply, so a **deep
+   exit in a short array** crosses the ceiling comfortably inside the normal Po range (the
+   model puts a 51 µm exit at Ca 0.0125 → 0.31 across Po 50–300 at N = 44).
+
+3. **Cross two geometry lines, to learn *which* Ca matters.** The threshold is stated for the
+   local pinch Ca, `Ca_in ≈ (w/h)·Ca_nom` (`@montessori2020` `[theory]`), and one geometry
+   cannot distinguish the two. Fix `w/h = 3` and vary `h ∈ {10, 25, 50} µm`; fix `h = 25` and
+   vary `w/h ∈ {2, 3, 5}`. The lines share a point — that is the internal consistency check.
+   If `Ca_crit` is constant across the set, nominal Ca is the right variable; if it scales as
+   `h/w`, the local-pinch conversion holds.
+
+4. **Anchor on the known-good.** Include a 30×10 exit as control. If the probe says V5-30 is
+   above the ceiling, the probe is wrong.
+
+5. **Short arrays, not production ladders.** At N = 600, Po = 300 the model puts ΔP spread at
+   433% — every DFU would see a different Ca and the knee would smear out. **20–50 DFUs at
+   matched ΔP** keeps the per-DFU Ca well defined, which is the whole measurement.
+
+**Stated hypothesis per design, and what each outcome means:**
+
+| Observation | Reading |
+|---|---|
+| `D` flat across the full Po sweep | that geometry never left SE; `Ca_crit` is above the highest Ca reached — record as a new lower bound |
+| `D` flat, then rising past some Po | **the measurement**: `Ca_crit` is at the knee |
+| `D` rising from the lowest Po | that geometry is above the ceiling everywhere tested; `Ca_crit` is below the lowest Ca reached |
+| `Ca_crit` constant across all geometries | nominal Ca is the controlling variable; keep `regime_Ca` as scored |
+| `Ca_crit ∝ h/w` | the local-pinch conversion holds; `regime_Ca` should be multiplied by `w/h` before comparison |
+| CV rises before `D` moves | pinch is destabilising ahead of the regime change — a separate and useful failure mode |
+
+**Known confounds to design around** (both surfaced in Phase 2):
+- **γ is not pinned.** Configs in this repo disagree by 3× (5 vs 15 mN/m), and Ca scales
+  inversely. The probe measures `Ca_crit` with γ folded in — the right unit for *design*,
+  since Po and geometry are what you control — but γ must be measured independently before
+  the result can be exported to another surfactant system.
+- **The dispersed phase of the anchor experiment is disputed** (sunflower vs silicone; see
+  the provenance note above). Resolve before the probe's control device is interpreted.
+
 ### Why it matters
 Our SE ceiling is currently borrowed from literature at λ ≈ 1 while we operate at
 λ ≈ 0.015 — far outside the validated envelope, in the direction that *narrows* the SE
-window. Every deep-DFU prediction inherits that uncertainty. One well-designed wafer
-converts the largest open risk into a measured number, and the constants it pins improve
-every prediction afterwards.
+window. Every deep-DFU prediction inherits that uncertainty, and Phase 2 showed it is the
+only thing standing between us and 87 otherwise-green large-droplet designs. One
+well-designed wafer converts the largest open risk into a measured number.
 
 ### Acceptance
 - A probe study emits a build set with a stated hypothesis per design and what each outcome
   would mean.
-- Measured results ingest back into a comparison chapter and update the constants with
-  provenance intact.
+- The build set spans the predicted ceiling on both geometry lines, with the 30×10 control.
+- Measured results ingest back into a comparison chapter and update `CA_MEASURED_MAX` and the
+  scoring thresholds with provenance intact.
 
 ---
 
@@ -439,9 +584,14 @@ Per **DR-1** in the PRD:
 Phase 1 improves every existing study; Phase 2 removes the hand-written grid; Phase 3 makes
 results checkable by eye.
 
-**4 → 5** convert the tool from per-session to compounding: the book remembers, and probe
-studies feed the model. Phase 4 is deliberately after M1 — the book is nearly empty now, and
-M1 is what starts filling it.
+**Phase 5 was promoted ahead of Phase 4 on 2026-07-29.** The original ordering assumed the
+model's weakest assumption was a background risk. Phase 2 showed it is *the* constraint: 87
+large-droplet designs are green on everything except a Ca threshold no Peak device has come
+within 7× of. Until that number is measured, every deep-DFU verdict is an opinion with a
+decimal point. Phase 5 now runs alongside M1, taking M1's shortlist as its build set.
+
+**Phase 4** still converts the tool from per-session to compounding, and is still deliberately
+after M1 — the book is nearly empty now, and M1 plus the probe are what start filling it.
 
 **6 → 7 → 8** are adoption and closing the loop: they matter most once the underlying
 decisions are trustworthy.
@@ -461,4 +611,17 @@ surrogate model; multi-user infrastructure. All are v2+ per the PRD non-goals.
 3. **Confidence tiers** — who assigns them, and where do they live? Family code is the
    natural home, but the judgement is physics, so it may belong beside the physics plan.
 4. **Probe-set selection** — a principled information-gain criterion, or a pragmatic
-   "straddle the boundary at 3 points" heuristic? Start pragmatic.
+   "straddle the boundary at 3 points" heuristic? Start pragmatic. *Resolved in the Phase 5
+   design above: pragmatic, with two crossed geometry lines so the set discriminates between
+   nominal and local-pinch Ca rather than merely bracketing a number.*
+
+5. **Should an evidence-thin gate be allowed to red a row at all?** Phase 2 answered "yes,
+   but name it" — the verdict stays red and `theory_limited_rows()` surfaces the build-and-see
+   set separately. The alternative, a fourth verdict colour for "buildable but unproven",
+   was rejected as premature: it is a real distinction, but one worth making only if the
+   build-and-see set turns out to be something people act on repeatedly. Revisit after M1.
+
+6. **What else is evidence-thin?** `EVIDENCE_THIN_GATES` currently holds only `regime_Ca`,
+   because that is the one where the gap between what we score and what we have measured was
+   actually computed. `uniformity_pct` is asserted to be `validated` on the strength of the
+   po_sweep work — worth auditing the same way before trusting it as much as the tier claims.

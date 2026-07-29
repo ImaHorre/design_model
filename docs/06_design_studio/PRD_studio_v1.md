@@ -218,7 +218,16 @@ layer exists to prevent. Each metric carries a confidence tier:
 |---|---|---|
 | `validated` | Compared against experiment, agreement established | Stage-1 refill hydraulics, ΔP distribution |
 | `calibrated` | Empirical fit, in-range | Droplet size `D = k·w^a·h^b` within fitted geometry |
-| `extrapolation` | Model runs, but outside where it has been checked | Stage-2 frequency for deep exits; Ca beyond the SE ceiling |
+| `extrapolation` | Model runs, but outside where it has been checked | Stage-2 frequency for deep exits; **any Ca above the measured envelope** |
+
+**The tier follows what we have measured, not what we have read.** *Added 2026-07-29.* The
+obvious implementation grades `regime_Ca` as `calibrated` below the SE ceiling and
+`extrapolation` above it. That is wrong, because the ceiling is itself borrowed: computing the
+exit Ca actually reached in the only Peak dataset that measures it gives **≤ 0.0017**, nine
+times below the 0.0125 green bound. Everything between those two numbers is a region we score
+confidently and have never visited. `families.base.CA_MEASURED_MAX` records the boundary and
+the tier follows it. The general rule: **a confidence tier must be pinned to a measurement,
+and if nobody can name the measurement the tier is decoration.**
 
 Margin is discounted by tier. A generous margin on an `extrapolation` metric is not
 reassurance. Where a design's verdict depends on an extrapolated quantity, the chapter
@@ -243,6 +252,38 @@ validated here" chip.
 magnitude too permissive — the scorer will return green deep-DFU designs that are outside
 step-emulsification entirely, which is precisely the regime where the droplet-size
 prediction stops holding.
+
+### Evidence-thin gates — "green apart from Ca"
+
+*Added 2026-07-29, after Phase 2 found this was the common case, not an edge case.*
+
+A row can fail for two very different reasons, and collapsing them loses the thing the user
+most needs to know:
+
+- **It does not fit the die.** Computable, certain, and no amount of trying will change it.
+- **Our weakest theory says the exit Ca is too high.** A threshold borrowed from literature at
+  λ ≈ 1 while we run at λ ≈ 0.015, and one no Peak device has come within 9× of.
+
+The second is not a failure. It is a design sitting somewhere we have never looked.
+
+**The rule the Studio follows:**
+
+1. **The verdict does not soften.** Worst-category-wins still reds the row. Quietly
+   downgrading an unmeasured risk to green would be worse than having no verdict, because it
+   would launder ignorance as confidence — exactly the failure §6 exists to prevent.
+2. **The distinction is named.** `diagnosis.EVIDENCE_THIN_GATES` lists the gates that rest on
+   thin evidence (today: `regime_Ca` alone). A row red *only* on those is reported in the
+   chapter, the UI and the CLI as a **build-and-see candidate**, with the reason stated.
+3. **The call is the user's.** Whether an unmeasured threshold is worth respecting is a
+   judgement about appetite for risk and cost of a wafer. The scorer is not the right place to
+   make it, and the honest output is "this passes everything we can check, and here is the one
+   thing we cannot" — not a verdict that pretends to more than it knows.
+4. **Membership of the list is a claim, and must be earned.** A gate goes in only when the gap
+   between what we score and what we have measured has actually been computed. `regime_Ca` is
+   there because that computation was done and written down; nothing else is there yet.
+
+This is the mechanism by which an unmeasured boundary stops being a wall and becomes an
+experiment — which is what §7 is for.
 
 ---
 
@@ -271,6 +312,21 @@ output is a wafer manifest, not a ranking.
 
 This closes the design → experiment → model loop that `vision.md` describes and the current
 tooling does not implement.
+
+**Priority raised, 2026-07-29.** This section was written as "the immediate case" among
+several. Phase 2 established it is the *only* case that currently matters: exit Ca is the
+binding constraint on every large-droplet design, 87 of 216 generated deep-DFU designs are red
+on it alone, and the highest Ca ever measured on a Peak device is nine times below the
+threshold those verdicts turn on. Until that boundary is measured, every deep-DFU decision is
+an opinion with a decimal point on it. The concrete probe — two crossed geometry lines, `dD/dQ`
+readout, short arrays, a 30×10 control — is designed in the roadmap's Phase 5.
+
+Two inputs must be pinned alongside it, both surfaced by the same audit: **interfacial
+tension** (configs in this repo disagree 3×, and Ca scales inversely with γ) and the
+**dispersed-phase identity** of the anchor experiment (disputed between sunflower and silicone
+oil; µ differs up to 10×, and Ca scales with µ). The probe measures `Ca_crit` with both folded
+in, which is the right unit for *design* — Po and geometry are what you control — but not for
+exporting the result to another fluid system.
 
 ---
 

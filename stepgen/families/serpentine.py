@@ -32,9 +32,10 @@ from stepgen.families.base import CommonMetrics, Family, register_family
 from stepgen.families.intent import (
     Constraints,
     Intent,
+    dfu_count_ladder,
     junction_for_droplet,
-    ladder,
     plan_junction,
+    rungs_for_ca_ceiling,
     rungs_for_throughput,
 )
 
@@ -98,18 +99,29 @@ class SerpentineFamily(Family):
           whether a deeper one would be worth buying.
         * **rung** — length and upstream width swept over the small ladders the
           junction plan implies.
-        * **N** — bracketed four-fold either side of the analytic sizing
-          estimate.  The estimate ignores the distribution network; the sweep is
-          wide precisely because the nodal solve is what settles it.
+        * **N** — swept across *both* sizing answers: the fewest rungs that
+          deliver the throughput at the pressure ceiling, and the fewest that
+          keep every exit under the Ca ceiling.  For deep DFUs those differ by
+          more than an order of magnitude and pull in opposite directions, so a
+          ladder anchored on either alone searches the wrong corner.
         """
         plan = plan_junction(intent, constraints, rung_length_mm=(1.0, 2.0))
-        n_est = rungs_for_throughput(
+        mu = float(fluids.get("mu_dispersed", 0.06))
+        n_flow = rungs_for_throughput(
             throughput_mlhr=intent.throughput_mlhr,
             Po_mbar=constraints.max_Po_mbar,
             rung_length_m=plan.mid_rung_length_m,
             upstream_width_m=plan.mid_upstream_m,
             exit_depth_m=plan.exit_depth_um * 1e-6,
-            mu_dispersed=float(fluids.get("mu_dispersed", 0.06)),
+            mu_dispersed=mu,
+        )
+        n_ca = rungs_for_ca_ceiling(
+            throughput_mlhr=intent.throughput_mlhr,
+            exit_width_m=plan.exit_width_um * 1e-6,
+            exit_depth_m=plan.exit_depth_um * 1e-6,
+            mu_dispersed=mu,
+            gamma=float(fluids.get("gamma", 0.0)),
+            max_exit_Ca=constraints.max_exit_Ca,
         )
         # a lane can hold at most (usable side / pitch) rungs before folding, and
         # the fold itself is what the fits_square gate then judges
@@ -123,7 +135,7 @@ class SerpentineFamily(Family):
             "rung": {
                 "length_mm": plan.rung_length_mm,
                 "upstream_width_um": plan.upstream_width_um,
-                "N": [int(v) for v in ladder(n_est, minimum=4, maximum=n_cap)],
+                "N": dfu_count_ladder(n_flow, n_ca, minimum=4, maximum=n_cap),
             },
             "junction": {
                 "exit_width_um": plan.exit_width_um,

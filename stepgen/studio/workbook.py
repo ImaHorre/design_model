@@ -460,10 +460,34 @@ def _diagnosis_html(diag: Diagnosis | None) -> str:
     """
     if diag is None or diag.n_rows == 0:
         return ""
-    if diag.n_green and not diag.prices:
+    if diag.n_green and not diag.prices and not diag.theory_limited:
         return ""
 
     head = f'<p class="dhead">{html.escape(diag.headline())}</p>'
+
+    # ── buildable, blocked only by our weakest theory ───────────────────────
+    # These rows deserve to be named, not buried in a red table. Every gate
+    # resting on something measurable passes; the only objection comes from a
+    # threshold no Peak device has been within an order of magnitude of.
+    if diag.theory_limited:
+        items = "".join(
+            f"<li><code>{html.escape(lbl)}</code></li>"
+            for lbl in diag.theory_limited_labels[:12]
+        )
+        more = (f'<li class="muted">…and {len(diag.theory_limited_labels) - 12} '
+                f'more</li>' if len(diag.theory_limited_labels) > 12 else "")
+        head += (
+            '<h3>Build-and-see candidates — green on everything except exit Ca</h3>'
+            '<p class="muted">These pass every gate that rests on geometry, '
+            'fabrication limits or hydraulics. The only thing standing against '
+            'them is the step-emulsification ceiling, which is borrowed from '
+            'literature at λ ≈ 1 while we run at λ ≈ 0.015, and which no Peak '
+            'device has operated within 7× of. The verdict stays red — an '
+            'unmeasured risk must not be quietly downgraded — but whether these '
+            'work is a question the model cannot settle. Building one is how the '
+            'gate stops being a guess.</p>'
+            f'<ul class="candidates">{items}{more}</ul>'
+        )
 
     # ── which gate is in the way ────────────────────────────────────────────
     shown = [f for f in diag.failures if f.n_red or f.n_sole_cause][:8]
@@ -738,6 +762,8 @@ pre{white-space:pre-wrap;}
 table.pareto{font-size:12px;width:auto;}
 .diagnosis{border-left:4px solid #bf8700;}
 .dhead{font-size:14px;font-weight:600;margin:.2rem 0 .8rem;}
+ul.candidates{font-size:12px;columns:2;margin:.4rem 0;padding-left:1.1rem;}
+ul.candidates code{font-size:11px;}
 .decnotes{font-size:12px;margin:.8rem 0 0;padding-left:1.1rem;}
 .decnotes li{margin:.25rem 0;}
 .muted{font-size:12px;color:#57606a;}

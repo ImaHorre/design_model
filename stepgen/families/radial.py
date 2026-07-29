@@ -54,7 +54,7 @@ from stepgen.families.intent import (
     Intent,
     ladder,
     plan_junction,
-    rungs_for_throughput,
+    rungs_for_ca_ceiling,
 )
 
 # throughput unit factor: m³/s -> mL/hr  (1 m³ = 1e6 mL, 1 hr = 3600 s)
@@ -136,18 +136,22 @@ class RadialFamily(Family):
         plan = plan_junction(intent, constraints)
         r_max_mm = max(2.0, constraints.usable_side_mm / 2.0)
 
-        # reported for the note only — see the docstring on why it is not a
-        # sizing input here
-        _ = rungs_for_throughput(
+        # The Ca ceiling *does* set a radius floor, even though throughput does
+        # not: exit velocity is capped, so each DFU carries at most
+        # q_max = v_max·w·h and the array needs at least N_ca of them, which at
+        # a fixed pitch means at least R = N_ca·pitch/2π.
+        n_ca = rungs_for_ca_ceiling(
             throughput_mlhr=intent.throughput_mlhr,
-            Po_mbar=constraints.max_Po_mbar,
-            rung_length_m=r_max_mm * 1e-3,
-            upstream_width_m=plan.mid_upstream_m,
+            exit_width_m=plan.exit_width_um * 1e-6,
             exit_depth_m=plan.exit_depth_um * 1e-6,
             mu_dispersed=float(fluids.get("mu_dispersed", 0.06)),
+            gamma=float(fluids.get("gamma", 0.0)),
+            max_exit_Ca=constraints.max_exit_Ca,
         )
+        r_ca_mm = n_ca * plan.pitch_um * 1e-3 / (2.0 * math.pi)
 
-        radii = ladder(r_max_mm, factors=(0.25, 0.5, 1.0), minimum=2.0,
+        radii = ladder(r_max_mm, factors=(0.25, 0.5, 1.0),
+                       minimum=max(2.0, min(r_ca_mm, r_max_mm)),
                        maximum=r_max_mm, integer=False)
         return {
             "radius_mm": radii,

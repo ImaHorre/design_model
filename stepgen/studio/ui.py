@@ -465,6 +465,33 @@ def _render_diagnosis(st, study: Study, scored: list[ScoredRow]) -> None:
     st.markdown("#### Verdict")
     (st.success if diag.n_green else st.warning)(diag.headline())
 
+    # ── buildable, blocked only by our weakest theory ───────────────────────
+    if diag.theory_limited:
+        st.markdown("#### Build-and-see candidates")
+        st.info(
+            f"**{len(diag.theory_limited)} designs are green on everything "
+            f"except exit Ca.** They pass every gate that rests on geometry, "
+            f"fabrication limits or hydraulics. The only objection is the "
+            f"step-emulsification ceiling — borrowed from literature at λ ≈ 1 "
+            f"while we run at λ ≈ 0.015, and never approached within 7× on a "
+            f"Peak device. The verdict stays red because an unmeasured risk "
+            f"should not be quietly downgraded, but whether these work is a "
+            f"question the model cannot settle. Building one is how the gate "
+            f"stops being a guess.")
+        st.dataframe(
+            pd.DataFrame([
+                {"Config": scored[i].metrics.label,
+                 "Family": scored[i].metrics.family,
+                 "Exit Ca": scored[i].metrics.regime_Ca,
+                 "Throughput mL/hr": scored[i].metrics.throughput_mlhr,
+                 "ΔP spread %": scored[i].metrics.uniformity_pct}
+                for i in sorted(diag.theory_limited,
+                                key=lambda j: scored[j].metrics.regime_Ca or 0)
+            ]),
+            width="stretch", hide_index=True,
+            height=min(70 + 35 * len(diag.theory_limited), 400),
+        )
+
     # ── which gate is in the way ────────────────────────────────────────────
     shown = [f for f in diag.failures if f.n_red or f.n_sole_cause]
     if shown:

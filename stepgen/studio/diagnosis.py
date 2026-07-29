@@ -257,6 +257,48 @@ def knobs_for_gate(gate: str) -> list[Knob]:
     return [k for k in KNOBS if gate in k.gates]
 
 
+# ---------------------------------------------------------------------------
+# Gates that rest on thin evidence
+# ---------------------------------------------------------------------------
+
+#: Gates whose red is a *theory* red — the model says no, but the model has
+#: barely been checked where it is saying it.
+#:
+#: `regime_Ca` is the case that matters. The SE ceiling we score against
+#: (0.0125 green / 0.03 red) is borrowed from literature at λ ≈ 1
+#: (@montessori2020-step-emulsification, @chakraborty2017-step-emulsification)
+#: while we run at λ ≈ 0.015, and the highest Ca Peak has ever *measured* is
+#: 0.0017 — 7x below the green bound (see families.base.CA_MEASURED_MAX). A
+#: design red only on Ca has not been shown to fail; it has been shown to sit
+#: somewhere we have never looked.
+#:
+#: This does not soften the gate. Worst-category-wins still makes the row red,
+#: because a verdict that quietly downgraded an unmeasured risk would be worse
+#: than no verdict. What it does is name the distinction so the decision is the
+#: user's: a row red only on Ca is a **build-and-see candidate**, and a row red
+#: because it does not fit the die is not.
+EVIDENCE_THIN_GATES: frozenset[str] = frozenset({"regime_Ca"})
+
+
+def theory_limited_rows(rows: Sequence[ScoredRow]) -> list[int]:
+    """
+    Indices of rows that are red **only** on evidence-thin gates.
+
+    These are the designs that pass every gate resting on something we have
+    measured or can compute exactly — geometry, fabrication limits, hydraulics —
+    and fail only where the model is guessing. They are the honest shortlist for
+    an experiment: building one is how the gate stops being a guess.
+    """
+    out: list[int] = []
+    for i, row in enumerate(rows):
+        if row.overall != RED or row.metrics.error:
+            continue
+        reds = set(row_failures(row, RED))
+        if reds and reds <= EVIDENCE_THIN_GATES:
+            out.append(i)
+    return out
+
+
 def active_knobs(
     raw: dict[str, Any],
     failures: Sequence[GateFailure],
@@ -395,6 +437,11 @@ class Diagnosis:
     failures: list[GateFailure] = field(default_factory=list)
     prices: list[RelaxationPrice] = field(default_factory=list)
     priced: bool = False
+    #: rows red *only* on an evidence-thin gate — buildable, and only our
+    #: weakest theory says no (see EVIDENCE_THIN_GATES)
+    theory_limited: list[int] = field(default_factory=list)
+    #: labels for those rows, so the summary survives without the row list
+    theory_limited_labels: list[str] = field(default_factory=list)
 
     @property
     def infeasible(self) -> bool:
@@ -431,13 +478,30 @@ class Diagnosis:
         b = self.binding
         return b is not None and not knobs_for_gate(b.key)
 
+    def _theory_limited_sentence(self) -> str:
+        from stepgen.families.base import CA_MEASURED_MAX
+
+        n = len(self.theory_limited)
+        return (
+            f"{n} design{'s' if n != 1 else ''} pass every gate except exit Ca "
+            f"— buildable, and blocked only by the threshold resting on the "
+            f"thinnest evidence we have (the highest Ca ever measured on a Peak "
+            f"device is {CA_MEASURED_MAX:g}, against a 0.0125 green bound). "
+            f"Whether they work is a question the model cannot settle: they are "
+            f"build-and-see candidates, not failures."
+        )
+
     def headline(self) -> str:
         """The answer to 'why can't I have what I asked for?'"""
         if self.n_rows == 0:
             return "The study generated no design points."
+
         if not self.infeasible and self.n_green:
-            return (f"{self.n_green} of {self.n_rows} designs scored green — "
-                    f"this is a ranking problem, not a feasibility one.")
+            parts = [f"{self.n_green} of {self.n_rows} designs scored green — "
+                     f"this is a ranking problem, not a feasibility one."]
+            if self.theory_limited:
+                parts.append(self._theory_limited_sentence())
+            return " ".join(parts)
 
         parts = ["Every design scored red." if self.infeasible
                  else f"{self.n_red} of {self.n_rows} designs scored red."]
@@ -446,11 +510,19 @@ class Diagnosis:
             d = b.describe()
             parts.append(f"{d[0].upper()}{d[1:]}.")
 
+        # The most useful thing to say when the only thing wrong is our weakest
+        # theory: these designs are buildable, and whether they work is a
+        # question the model cannot settle.
+        if self.theory_limited:
+            parts.append(self._theory_limited_sentence())
+
         if self.binding_is_physics:
             parts.append(
-                f"No process constraint relaxes {b.label} — it is set by the "
-                f"physics of the design, not by a cap that could be bought past. "
-                f"Changing the answer means changing what is being asked for."
+                f"No process constraint relaxes {b.label} — no etch depth, die "
+                f"size or pressure ceiling moves it. It is a design lever, not a "
+                f"purchasable one: it falls when each DFU runs slower, which "
+                f"means more of them at lower drive pressure, paid for in ΔP "
+                f"flatness. That trade is in the table above."
             )
         elif (p := self.best_price) is not None:
             d = p.describe()
@@ -468,6 +540,7 @@ class Diagnosis:
             "n_red": self.n_red,
             "infeasible": self.infeasible,
             "binding_is_physics": self.binding_is_physics,
+            "theory_limited": self.theory_limited_labels,
             "headline": self.headline(),
             "binding": (None if self.binding is None else {
                 "gate": self.binding.key,
@@ -514,9 +587,12 @@ def diagnose(
     n_orange = sum(1 for r in scored if r.overall == ORANGE)
     n_red = sum(1 for r in scored if r.overall == RED)
 
+    theory_limited = theory_limited_rows(scored)
     diag = Diagnosis(
         n_rows=len(scored), n_green=n_green, n_orange=n_orange, n_red=n_red,
         failures=failures,
+        theory_limited=theory_limited,
+        theory_limited_labels=[scored[i].metrics.label for i in theory_limited],
     )
 
     wants_price = (price == "always") or (price == "auto" and n_green == 0 and scored)

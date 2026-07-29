@@ -27,13 +27,16 @@ from stepgen.families.intent import (
     Intent,
     IntentNotSupported,
     depth_for_droplet,
+    dfu_count_ladder,
     droplet_for_junction,
     junction_for_droplet,
     ladder,
     pressure_sweep,
+    rungs_for_ca_ceiling,
     rungs_for_throughput,
 )
 from stepgen.studio.diagnosis import (
+    EVIDENCE_THIN_GATES,
     KNOBS,
     active_knobs,
     binding_gates,
@@ -41,6 +44,7 @@ from stepgen.studio.diagnosis import (
     knobs_for_gate,
     price_relaxations,
     row_failures,
+    theory_limited_rows,
 )
 from stepgen.studio.intent import (
     expand_intent,
@@ -140,6 +144,52 @@ def test_design_search_delegates_to_the_same_inverse_solve():
         )
 
 
+def test_ca_ceiling_sizing_disagrees_with_throughput_sizing_for_deep_dfus():
+    """
+    The defect the Ca-aware ladder exists to close.
+
+    Throughput sizing asks "how few DFUs deliver this at the pressure ceiling?"
+    and answers by making each run fast — which is what drives Ca up. For a deep
+    exit the two answers differ by more than an order of magnitude, and a grid
+    generated from the throughput answer alone never visits the corner where the
+    design works.
+    """
+    w, h = junction_for_droplet(140.0, 3.0)
+    n_flow = rungs_for_throughput(
+        throughput_mlhr=5.0, Po_mbar=300.0, rung_length_m=2e-3,
+        upstream_width_m=1.5 * h, exit_depth_m=h, mu_dispersed=0.06)
+    n_ca = rungs_for_ca_ceiling(
+        throughput_mlhr=5.0, exit_width_m=w, exit_depth_m=h,
+        mu_dispersed=0.06, gamma=0.005, max_exit_Ca=0.0125)
+
+    assert n_flow < 30 and n_ca > 100
+    assert n_ca > 5 * n_flow
+    # the ladder must span both, not anchor on either
+    rungs = dfu_count_ladder(n_flow, n_ca)
+    assert min(rungs) <= n_flow and max(rungs) >= n_ca
+
+
+def test_ca_ceiling_sizing_is_geometry_independent_in_velocity():
+    """v_max = Ca·γ/µ is the same for every exit; only the area differs."""
+    kw = dict(throughput_mlhr=5.0, mu_dispersed=0.06, gamma=0.005,
+              max_exit_Ca=0.0125)
+    shallow = rungs_for_ca_ceiling(exit_width_m=30e-6, exit_depth_m=10e-6, **kw)
+    deep = rungs_for_ca_ceiling(exit_width_m=150e-6, exit_depth_m=50e-6, **kw)
+    # area ratio is 25x, so the count ratio must be too (to rounding)
+    assert shallow / deep == pytest.approx(25.0, rel=0.02)
+
+
+def test_ca_sizing_declines_to_constrain_without_an_interfacial_tension():
+    assert rungs_for_ca_ceiling(
+        throughput_mlhr=5.0, exit_width_m=30e-6, exit_depth_m=10e-6,
+        mu_dispersed=0.06, gamma=0.0, max_exit_Ca=0.0125) == 1
+
+
+def test_the_pressure_sweep_reaches_low_enough_to_find_the_low_Ca_corner():
+    """Deep-DFU designs that stay in SE live at the bottom of the range."""
+    assert min(pressure_sweep(300.0)) <= 50.0
+
+
 def test_rungs_for_throughput_falls_with_exit_depth():
     """R_rung ∝ 1/h³ — a deeper DFU carries more oil, so the ladder gets shorter."""
     kw = dict(throughput_mlhr=5.0, Po_mbar=300.0, rung_length_m=2e-3,
@@ -154,7 +204,7 @@ def test_rungs_for_throughput_falls_with_exit_depth():
 def test_ladder_and_pressure_sweep_are_bounded_and_unique():
     assert ladder(11, minimum=4, maximum=44) == [6.0, 11.0, 22.0, 44.0]
     assert ladder(1, minimum=4) == [4.0]          # clamped and de-duplicated
-    assert pressure_sweep(300.0) == [120.0, 210.0, 300.0]
+    assert pressure_sweep(300.0) == [45.0, 120.0, 210.0, 300.0]
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +480,94 @@ def test_pricing_an_inert_constraint_reports_that_it_changes_nothing():
     assert "not what is binding" in prices[0].describe()
 
 
+# ---------------------------------------------------------------------------
+# Green apart from Ca — the build-and-see shortlist
+# ---------------------------------------------------------------------------
+
+_CA_SCORING = dict(_SCORING, regime_Ca={"green": 0.0125, "orange": 0.03})
+_CA_APPLICABLE = _APPLICABLE | {"regime_Ca"}
+
+
+def _ca_row(**kw) -> ScoredRow:
+    base = dict(family="serpentine", label="x", throughput_mlhr=10,
+                uniformity_pct=5, regime_Ca=0.005, fits_square=True,
+                manufacturable=True, no_crossing=True)
+    base.update(kw)
+    return score_metrics(CommonMetrics(**base), _CA_SCORING, _CA_APPLICABLE)
+
+
+def test_a_row_red_only_on_Ca_is_a_build_and_see_candidate():
+    rows = [
+        _ca_row(regime_Ca=0.20),                      # red on Ca alone
+        _ca_row(regime_Ca=0.20, fits_square=False),   # also unbuildable
+        _ca_row(fits_square=False),                   # unbuildable, Ca fine
+        _ca_row(),                                    # green
+    ]
+    assert theory_limited_rows(rows) == [0]
+
+
+def test_the_gate_is_not_softened_only_named():
+    """
+    The verdict must stay red. An unmeasured risk quietly downgraded to green
+    would be worse than no verdict at all — the point is to name the distinction
+    so the call is the user's, not to make it for them.
+    """
+    row = _ca_row(regime_Ca=0.20)
+    assert row.overall == "red"
+    assert row.cells["regime_Ca"].category == "red"
+    assert theory_limited_rows([row]) == [0]
+
+
+def test_only_regime_Ca_counts_as_evidence_thin():
+    """Widening this set is a claim about evidence — it should be deliberate."""
+    assert EVIDENCE_THIN_GATES == frozenset({"regime_Ca"})
+
+
+def test_ca_confidence_tracks_the_measured_envelope_not_the_se_ceiling():
+    """
+    Below the SE ceiling but above anything measured is still an extrapolation.
+
+    The ceiling is borrowed from λ ≈ 1 literature; the measured envelope is what
+    Peak has actually operated in. They differ by 7x and the tier follows the
+    second, not the first.
+    """
+    from stepgen.families.base import CA_MEASURED_MAX, SE_CEILING_CA
+
+    fam = get_family("serpentine")
+    inside = fam.metric_confidence(CommonMetrics(
+        family="serpentine", label="a", regime_Ca=CA_MEASURED_MAX * 0.5))
+    between = fam.metric_confidence(CommonMetrics(
+        family="serpentine", label="b", regime_Ca=SE_CEILING_CA * 0.3))
+
+    assert CA_MEASURED_MAX < SE_CEILING_CA * 0.3 < SE_CEILING_CA
+    assert inside["regime_Ca"] == "calibrated"
+    assert between["regime_Ca"] == "extrapolation"
+
+
+def test_the_intent_grid_now_reaches_the_low_Ca_corner():
+    """
+    Regression on the Ca-blind sizing defect.
+
+    The first Phase 2 grid sized N for throughput at the pressure ceiling and
+    found nothing under the Ca bound. With both sizings on the ladder, in-regime
+    deep-DFU designs must appear.
+    """
+    _, scored = _run(INTENT_RAW)
+    in_regime = [s for s in scored if s.cells["regime_Ca"].category == "green"]
+    assert in_regime, "no design sits under the Ca green bound"
+    # and they must be real designs, not degenerate no-flow points
+    assert max(s.metrics.throughput_mlhr or 0 for s in in_regime) > 1.0
+
+
+def test_the_deep_dfu_study_reports_a_build_and_see_shortlist():
+    study, scored = _run(INTENT_RAW)
+    diag = diagnose(study, scored, price="never")
+    assert diag.theory_limited
+    assert len(diag.theory_limited_labels) == len(diag.theory_limited)
+    assert "build-and-see" in diag.headline()
+    assert diag.to_json()["theory_limited"] == diag.theory_limited_labels
+
+
 def test_the_deep_dfu_intent_is_blocked_by_physics_not_by_a_cap():
     """
     The M1 question, answered honestly.
@@ -443,7 +581,8 @@ def test_the_deep_dfu_intent_is_blocked_by_physics_not_by_a_cap():
 
     assert diag.binding.key == "regime_Ca"
     assert diag.binding_is_physics
-    assert "physics of the design" in diag.headline()
+    assert not knobs_for_gate("regime_Ca")
+    assert "No process constraint relaxes" in diag.headline()
 
 
 def test_auto_pricing_stays_out_of_the_way_when_the_study_is_feasible():
@@ -512,7 +651,7 @@ def test_chapter_renders_the_intent_and_diagnosis_panels(tmp_path):
     doc = path.read_text(encoding="utf-8")
     assert "<h2>Intent</h2>" in doc
     assert "<h2>Diagnosis</h2>" in doc
-    assert "physics of the design" in doc     # exit Ca has no process knob
+    assert "Build-and-see candidates" in doc  # exit Ca has no process knob
 
     sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
     assert sidecar["intent"]["droplet_um"] == 140.0

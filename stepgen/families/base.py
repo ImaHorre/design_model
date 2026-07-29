@@ -83,6 +83,26 @@ DROPLET_FIT_DEPTH_UM = 12.0
 #: threshold is lower still, ~0.0125 (@montessori2020-step-emulsification).
 SE_CEILING_CA = 0.03
 
+#: The highest exit Ca **Peak has ever measured** on its own devices.
+#:
+#: Computed 2026-07-29 from the V5-8-1 Po sweep (@ws-2026-07-13-po-sweep-v5-8-1,
+#: `experimental_workspaces/po_sweep/data/stage_timings.csv`): per-DFU flow from
+#: droplet volume over measured cycle time, through the 30x10 µm exit, at
+#: µ = 0.06 Pa·s and γ = 5 mN/m.  Droplet size was flat (24.8-25.6 µm, CV ~3%)
+#: across the whole sweep, so this is a *lower bound* on the SE ceiling: we know
+#: SE holds up to here and have no measurement above it.
+#:
+#: The number matters because of how far it is from the thresholds we score
+#: against: 0.0017 is **7x below** the 0.0125 green bound and 18x below the 0.03
+#: red bound.  Taking γ = 15 mN/m instead drops it to 0.0005 (27x below).  On
+#: every assumption, Peak has never operated within an order of magnitude of its
+#: own SE ceiling — the ceiling is entirely borrowed from literature at λ ≈ 1
+#: while we run at λ ≈ 0.015.  See wiki open-questions/deep-dfu-se-regime.
+#:
+#: Consequence for scoring: a Ca *below* the SE ceiling but *above* this is not
+#: "calibrated", it is unmeasured. metric_confidence() grades it accordingly.
+CA_MEASURED_MAX = 0.0017
+
 
 @dataclass
 class CommonMetrics:
@@ -168,7 +188,11 @@ class Family(ABC):
         families override to sharpen it for their own topology.
         """
         deep = (cm.exit_depth_um or 0.0) > DROPLET_FIT_DEPTH_UM
-        out_of_se = (cm.regime_Ca or 0.0) > SE_CEILING_CA
+        ca = cm.regime_Ca or 0.0
+        # Two different questions. "Is this still step-emulsification?" is the
+        # SE ceiling. "Have we ever *been* here?" is the measured envelope, and
+        # it is the one that governs how much a number deserves to be trusted.
+        measured = ca <= CA_MEASURED_MAX
 
         return {
             # Stage-1 refill hydraulics and the ΔP distribution across the
@@ -178,9 +202,13 @@ class Family(ABC):
             # Oil delivery is Stage-1 (solid), but it only converts to
             # throughput if the DFU keeps up — unmodelled for deep exits.
             "throughput_mlhr": EXTRAPOLATION if deep else VALIDATED,
-            # Ca is an analytic diagnostic; above the SE ceiling the regime it
-            # is reporting on is itself outside the validated envelope.
-            "regime_Ca": EXTRAPOLATION if out_of_se else CALIBRATED,
+            # Ca is an analytic diagnostic. It is only CALIBRATED inside the
+            # band Peak has actually operated in (Ca <= CA_MEASURED_MAX, where
+            # the Po sweep showed flat droplet size). Above that it is an
+            # extrapolation *whether or not* it is under the SE ceiling — the
+            # ceiling itself is borrowed from λ ≈ 1 literature and has never
+            # been approached on a Peak device.
+            "regime_Ca": CALIBRATED if measured else EXTRAPOLATION,
             # Analytic Hele-Shaw hub drop — never checked against experiment.
             "hub_budget_pct": CALIBRATED,
         }

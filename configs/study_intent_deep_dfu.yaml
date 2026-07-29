@@ -16,13 +16,25 @@
 #     python -c "import yaml,sys; from stepgen.studio.intent import generated_yaml; \
 #                print(generated_yaml(yaml.safe_load(open('configs/study_intent_deep_dfu.yaml'))))"
 #
-# What to expect: a 140 µm droplet needs a ~51 µm exit depth, which is ~4x
-# beyond the range the droplet power-law was fitted over (h = 1/5/10 µm). Every
-# row will therefore carry a `validity` flag, and the study-wide caveat about
-# λ ≈ 0.015 sitting outside the SE literature's envelope (which is at λ ≈ 1)
-# applies to all of them. That is the honest state of the question — the model
-# will answer it, and the answer is an extrapolation until the boundary probe
-# in Phase 5 pins it down.
+# What to expect (2026-07-29 run: 216 points, 0 green / 33 orange / 183 red):
+#
+#   * A 140 µm droplet needs a ~51 µm exit depth — ~4x beyond the range the
+#     droplet power-law was fitted over (h = 1/5/10 µm). Every row therefore
+#     carries a `validity` flag and NO row can score green. That is honest, not
+#     a bug: the droplet SIZE prediction is extrapolated even where the regime
+#     is fine.
+#   * 87 rows are red on exit Ca ALONE — buildable, and blocked only by the
+#     threshold resting on the least evidence we have. The highest Ca Peak has
+#     ever measured is 0.0017 against a 0.0125 green bound (see
+#     families.base.CA_MEASURED_MAX). The Diagnosis panel lists them as
+#     build-and-see candidates. Whether they work is not something the model
+#     can settle.
+#   * The best in-regime designs sit at Ca ~0.0018-0.0021 (radial R=29.75 at
+#     45 mbar; serpentine N=344 at 45 mbar), delivering 1.7-2.6 mL/hr. The real
+#     trade is Ca against DP flatness: low Ca wants many DFUs run slowly, and a
+#     long ladder droops.
+#   * Relaxing the 200 µm depth cap to 300 µm clears 2 rows of 183. The depth
+#     cap is NOT what binds here, and --diagnose says so.
 # ─────────────────────────────────────────────────────────────────────────────
 
 title: "Deep DFUs for large droplets — three topologies, one intent"

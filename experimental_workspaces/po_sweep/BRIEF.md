@@ -1,11 +1,31 @@
 ---
 study-type: experimental
 device: V5-30 (ID A)
-emulsion: Silicone oil / 2% SDS-water
+emulsion: "DISPUTED — see 'Fluid identity' below / 2% SDS-water"
 date: 2026-04
 parameter-varied: Po (200–500 mbar)
 fixed: Qw=5 mL/hr, [SDS]=2%
 ---
+
+## Fluid identity — unresolved discrepancy (flagged 2026-07-29)
+
+This frontmatter previously read **"Silicone oil / 2% SDS-water"**, and the wiki page
+`@ws-2026-07-13-po-sweep-v5-8-1` inherited that reading. The raw data disagrees:
+
+| Source | Says |
+|---|---|
+| this BRIEF (as originally written) | Silicone oil |
+| `data/stage_timings.csv`, column `DispPhase` | `SO` |
+| `CLAUDE.md` (project convention) | **SO = sunflower oil; never interpret SO as silicone oil** |
+
+Not cosmetic: sunflower oil is ~60 cP while silicone oils span ~5–100 cP. Exit Ca scales
+linearly with µ, and this dataset is the **only** measurement of exit Ca Peak has
+(0.00035–0.00137 at µ = 60 cP, γ = 5 mN/m — see the wiki page's derived-Ca section). Every
+regime verdict in the design model that anchors on this device moves with the answer.
+
+**Needs a human answer.** Per CLAUDE.md, a fluid mismatch is flagged rather than resolved by
+inference. Once settled, correct this frontmatter, the wiki setup table, and the derived Ca
+table together.
 
 ## Research question
 

@@ -92,7 +92,9 @@ from stepgen.families.base import CommonMetrics, Family, register_family
 from stepgen.families.intent import (
     Constraints,
     Intent,
+    dfu_count_ladder,
     plan_junction,
+    rungs_for_ca_ceiling,
     rungs_for_throughput,
 )
 from stepgen.models.nodal_network import NodalNetwork
@@ -189,25 +191,38 @@ class ManifoldFamily(Family):
         The DFU count ``N = M · n`` is split two ways, and the split is the whole
         point of the family: flatness is a **V-curve in M** (one long droop vs
         two short ones), so intent sweeps arm counts across the minimum rather
-        than guessing where it sits.  ``rungs_per_arm`` is generated as
-        ``ceil(N_est / M)`` for each swept ``M``, so the paired combinations hold
-        the total count roughly constant and isolate the split — the other
-        combinations in the Cartesian product then show the count dependence too.
+        than guessing where it sits.  ``rungs_per_arm`` is generated so that
+        ``M · n`` lands on each rung of the total-count ladder, which spans both
+        the throughput sizing and the Ca-ceiling sizing — those differ by more
+        than an order of magnitude for deep DFUs and pull opposite ways.
 
         The primary spine is pinned deep and wide at the fab caps: depth costs no
         in-plane area, which is the free lever the manifold parametrisation work
         identified.
         """
         plan = plan_junction(intent, constraints, rung_length_mm=(1.0, 2.0))
-        n_est = rungs_for_throughput(
+        mu = float(fluids.get("mu_dispersed", 0.06))
+        n_flow = rungs_for_throughput(
             throughput_mlhr=intent.throughput_mlhr,
             Po_mbar=constraints.max_Po_mbar,
             rung_length_m=plan.mid_rung_length_m,
             upstream_width_m=plan.mid_upstream_m,
             exit_depth_m=plan.exit_depth_um * 1e-6,
-            mu_dispersed=float(fluids.get("mu_dispersed", 0.06)),
+            mu_dispersed=mu,
         )
-        per_arm = sorted({max(2, math.ceil(n_est / M)) for M in self.INTENT_ARM_COUNTS})
+        n_ca = rungs_for_ca_ceiling(
+            throughput_mlhr=intent.throughput_mlhr,
+            exit_width_m=plan.exit_width_um * 1e-6,
+            exit_depth_m=plan.exit_depth_um * 1e-6,
+            mu_dispersed=mu,
+            gamma=float(fluids.get("gamma", 0.0)),
+            max_exit_Ca=constraints.max_exit_Ca,
+        )
+        totals = dfu_count_ladder(n_flow, n_ca, minimum=4)
+        # n per arm for the mid arm count, one entry per total on the ladder, so
+        # M x n covers the ladder without exploding the Cartesian product
+        mid_M = self.INTENT_ARM_COUNTS[len(self.INTENT_ARM_COUNTS) // 2]
+        per_arm = sorted({max(2, math.ceil(N / mid_M)) for N in totals})
 
         # arms are shallower than the spine and must stay wider than they are
         # deep for the rectangular resistance to hold

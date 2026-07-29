@@ -111,6 +111,13 @@ class Constraints:
     min_wall_um: float = 5.0
     square_side_mm: float = 63.5
     reserve_border_mm: float = 2.0
+    #: exit Ca the generated grid aims to stay under.  Defaults to the green
+    #: bound of the step-emulsification ceiling — borrowed from literature at
+    #: λ ≈ 1 (@montessori2020-step-emulsification) and, at time of writing, 7x
+    #: above anything Peak has measured (see ``families.base.CA_MEASURED_MAX``).
+    #: It bounds the sweep because Ca is what actually binds for deep DFUs, not
+    #: because we are confident in the number.
+    max_exit_Ca: float = 0.0125
     #: name of the :data:`FAB_PRESETS` entry the caps came from (provenance).
     fab: str = DEFAULT_FAB
 
@@ -130,6 +137,7 @@ class Constraints:
             "min_wall_um": self.min_wall_um,
             "square_side_mm": self.square_side_mm,
             "reserve_border_mm": self.reserve_border_mm,
+            "max_exit_Ca": self.max_exit_Ca,
             "fab": self.fab,
         }
 
@@ -242,6 +250,78 @@ def rungs_for_throughput(
     return max(1, int(math.ceil(mlhr_to_m3s(float(throughput_mlhr)) / q_rung)))
 
 
+def rungs_for_ca_ceiling(
+    *,
+    throughput_mlhr: float,
+    exit_width_m: float,
+    exit_depth_m: float,
+    mu_dispersed: float,
+    gamma: float,
+    max_exit_Ca: float,
+) -> int:
+    """
+    How many DFUs the throughput needs if none may exceed *max_exit_Ca*.
+
+    The Ca ceiling caps the **exit velocity**, and it caps it at the same value
+    for every geometry: ``v_max = Ca_max·γ/µ``.  Only the exit *area* differs, so
+    the flow one DFU may carry is ``q_max = v_max · w · h`` and the count is
+    ``Q_target / q_max``.
+
+    This is the sizing that :func:`rungs_for_throughput` cannot see, and the two
+    pull in opposite directions.  Throughput sizing asks "how few DFUs can
+    deliver this at the pressure ceiling?" and answers by making each one run
+    fast — which is exactly what drives Ca up.  For deep DFUs the gap is large:
+    at a 140 µm droplet target the throughput answer is ~11 rungs and the Ca
+    answer is ~172.  A grid generated from the first alone never visits the
+    corner where the design actually works, which is the defect this function
+    exists to close.
+
+    Returns 1 when Ca cannot be evaluated (no interfacial tension given), so the
+    caller falls back to throughput sizing rather than inventing a constraint.
+    """
+    from stepgen.config import mlhr_to_m3s
+
+    if gamma <= 0 or max_exit_Ca <= 0 or mu_dispersed <= 0:
+        return 1
+    v_max = max_exit_Ca * gamma / mu_dispersed          # m/s, geometry-independent
+    q_max = v_max * exit_width_m * exit_depth_m         # m³/s per DFU
+    if q_max <= 0:
+        return 1
+    return max(1, int(math.ceil(mlhr_to_m3s(float(throughput_mlhr)) / q_max)))
+
+
+def dfu_count_ladder(
+    n_flow: int, n_ca: int, *, minimum: int = 4, maximum: float | None = None
+) -> list[int]:
+    """
+    A count sweep spanning **both** sizing answers, not just one.
+
+    ``n_flow`` is the fewest DFUs that deliver the throughput at the pressure
+    ceiling; ``n_ca`` is the fewest that keep every exit under the Ca ceiling.
+    The design space worth searching runs between them and a little past the
+    larger, because that is where the flatness cost of a long ladder starts to
+    trade against the Ca cost of a short one — a real conflict for the decide
+    layer to rank, and one that a ladder anchored on either end alone hides.
+
+    Geometric spacing, because the two ends can differ by more than an order of
+    magnitude.
+    """
+    lo = max(minimum, min(n_flow, n_ca))
+    hi = max(lo, max(n_flow, n_ca) * 2)
+    if maximum is not None:
+        hi = min(hi, max(float(lo), float(maximum)))
+    if hi <= lo:
+        return [int(lo)]
+    steps = 4
+    ratio = (hi / lo) ** (1.0 / (steps - 1))
+    out: list[int] = []
+    for k in range(steps):
+        v = int(round(lo * ratio ** k))
+        if v not in out:
+            out.append(v)
+    return sorted(out)
+
+
 def ladder(
     centre: float,
     factors: Sequence[float] = (0.5, 1.0, 2.0, 4.0),
@@ -271,8 +351,17 @@ def ladder(
     return sorted(out)
 
 
-def pressure_sweep(max_Po_mbar: float, fractions: Sequence[float] = (0.4, 0.7, 1.0)) -> list[float]:
-    """The ``operating.Po_mbar`` sweep implied by a pressure ceiling."""
+def pressure_sweep(
+    max_Po_mbar: float, fractions: Sequence[float] = (0.15, 0.4, 0.7, 1.0)
+) -> list[float]:
+    """
+    The ``operating.Po_mbar`` sweep implied by a pressure ceiling.
+
+    The low fraction is not decoration.  Exit Ca scales with per-DFU flow and so
+    with drive pressure, so for deep DFUs the designs that stay inside
+    step-emulsification live at the *bottom* of the pressure range — a sweep
+    that only samples the top three-quarters of it misses them entirely.
+    """
     out: list[float] = []
     for f in fractions:
         v = float(f"{max_Po_mbar * f:.4g}")

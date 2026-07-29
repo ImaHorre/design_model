@@ -174,12 +174,27 @@ def test_family_marks_deep_exit_throughput_as_extrapolation():
     assert deep["operating_Po_mbar"] == VALIDATED
 
 
-def test_family_marks_out_of_se_ca_as_extrapolation():
+def test_ca_confidence_follows_the_measured_envelope_not_the_se_ceiling():
+    """
+    Revised 2026-07-29 (Phase 2 Ca audit).
+
+    This test previously asserted that Ca = 0.005 is ``calibrated`` because it
+    sits under the SE ceiling. That was the wrong boundary: the ceiling is
+    itself borrowed from λ ≈ 1 literature, and the highest Ca ever measured on a
+    Peak device is 0.0017 (``CA_MEASURED_MAX``, computed from the V5-8-1 Po
+    sweep). Everything between the two is a region we were scoring confidently
+    and had never visited, so the tier now follows what has been measured.
+    """
+    from stepgen.families.base import CA_MEASURED_MAX
+
     fam = get_family("serpentine")
-    inside = fam.metric_confidence(_healthy(regime_Ca=0.005))
-    outside = fam.metric_confidence(_healthy(regime_Ca=0.085))
-    assert inside["regime_Ca"] == CALIBRATED
-    assert outside["regime_Ca"] == EXTRAPOLATION
+    measured = fam.metric_confidence(_healthy(regime_Ca=CA_MEASURED_MAX * 0.5))
+    unmeasured_but_in_se = fam.metric_confidence(_healthy(regime_Ca=0.005))
+    out_of_se = fam.metric_confidence(_healthy(regime_Ca=0.085))
+
+    assert measured["regime_Ca"] == CALIBRATED
+    assert unmeasured_but_in_se["regime_Ca"] == EXTRAPOLATION
+    assert out_of_se["regime_Ca"] == EXTRAPOLATION
 
 
 def test_extrapolated_keys_reported_in_plain_language():

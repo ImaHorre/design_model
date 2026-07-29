@@ -514,6 +514,15 @@ def _cmd_study(args: argparse.Namespace) -> int:
         print(f"  {line}")
     for p in diag.prices:
         print(f"    · {p.describe()}")
+    if diag.theory_limited:
+        print()
+        print(f"  Build-and-see candidates (green except exit Ca): "
+              f"{len(diag.theory_limited)}")
+        for lbl in diag.theory_limited_labels[:5]:
+            print(f"    · {lbl}")
+        if len(diag.theory_limited_labels) > 5:
+            print(f"    · …and {len(diag.theory_limited_labels) - 5} more "
+                  f"(full list in the chapter)")
     print()
     print(f"  -> chapter : {chapter}")
     print(f"  -> sidecar : {chapter.with_suffix('.json')}")
