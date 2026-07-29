@@ -29,6 +29,14 @@ import math
 from typing import Any
 
 from stepgen.families.base import CommonMetrics, Family, register_family
+from stepgen.families.intent import (
+    Constraints,
+    Intent,
+    junction_for_droplet,
+    ladder,
+    plan_junction,
+    rungs_for_throughput,
+)
 
 # throughput unit factor: m³/s -> mL/hr  (1 m³ = 1e6 mL, 1 hr = 3600 s)
 _M3S_TO_MLHR = 1e6 * 3600.0
@@ -49,19 +57,14 @@ def _derive_junction_from_droplet(
 ) -> tuple[float, float]:
     """
     Derive junction (exit_width, exit_depth) in metres from a target droplet
-    diameter, mirroring ``design_search._derive_mcd_from_ar`` /
-    ``_derive_junction_geometry``.
+    diameter.
 
-    With exit_depth = mcd and exit_width = ar·mcd:
-        D = k · (ar·mcd)^a · mcd^b = k · ar^a · mcd^(a+b)
-        mcd = (D / (k · ar^a))^(1/(a+b))
+    Thin wrapper kept for readability at the call site; the closed form lives in
+    :func:`stepgen.families.intent.junction_for_droplet`, which
+    ``design_search._derive_mcd_from_ar`` also delegates to, so there is one
+    implementation of the inverse solve.
     """
-    k, a, b = droplet_model.k, droplet_model.a, droplet_model.b
-    D = D_um * 1e-6
-    mcd = (D / (k * aspect_ratio ** a)) ** (1.0 / (a + b))
-    exit_depth = mcd
-    exit_width = aspect_ratio * mcd
-    return exit_width, exit_depth
+    return junction_for_droplet(D_um, aspect_ratio, droplet_model)
 
 
 @register_family
@@ -73,6 +76,61 @@ class SerpentineFamily(Family):
         # an interfacial tension is given; otherwise the value is None -> grey.
         return {"throughput_mlhr", "uniformity_pct", "operating_Po_mbar",
                 "regime_Ca", "build", "validity"}
+
+    # -- intent ------------------------------------------------------------
+    def grid_from_intent(
+        self,
+        intent: Intent,
+        constraints: Constraints,
+        *,
+        fluids: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Serpentine geometry for a droplet + throughput target.
+
+        Free variables and how they are bounded:
+
+        * **junction** — fully determined by the droplet target (shared inverse
+          solve), so every family in the study gets the same exit.
+        * **main** — pinned at the fab caps.  Depth costs no in-plane area, so
+          the deepest permitted main is always the right starting point; the
+          relaxation pricing in :mod:`stepgen.studio.diagnosis` is what asks
+          whether a deeper one would be worth buying.
+        * **rung** — length and upstream width swept over the small ladders the
+          junction plan implies.
+        * **N** — bracketed four-fold either side of the analytic sizing
+          estimate.  The estimate ignores the distribution network; the sweep is
+          wide precisely because the nodal solve is what settles it.
+        """
+        plan = plan_junction(intent, constraints, rung_length_mm=(1.0, 2.0))
+        n_est = rungs_for_throughput(
+            throughput_mlhr=intent.throughput_mlhr,
+            Po_mbar=constraints.max_Po_mbar,
+            rung_length_m=plan.mid_rung_length_m,
+            upstream_width_m=plan.mid_upstream_m,
+            exit_depth_m=plan.exit_depth_um * 1e-6,
+            mu_dispersed=float(fluids.get("mu_dispersed", 0.06)),
+        )
+        # a lane can hold at most (usable side / pitch) rungs before folding, and
+        # the fold itself is what the fits_square gate then judges
+        n_cap = max(4.0, constraints.usable_side_mm * 1e3 / plan.pitch_um * 20.0)
+
+        return {
+            "main": {
+                "depth_um": constraints.max_main_depth_um,
+                "width_um": constraints.max_main_width_um,
+            },
+            "rung": {
+                "length_mm": plan.rung_length_mm,
+                "upstream_width_um": plan.upstream_width_um,
+                "N": [int(v) for v in ladder(n_est, minimum=4, maximum=n_cap)],
+            },
+            "junction": {
+                "exit_width_um": plan.exit_width_um,
+                "exit_depth_um": plan.exit_depth_um,
+                "pitch_um": plan.pitch_um,
+            },
+        }
 
     # -- compile -----------------------------------------------------------
     def compile(

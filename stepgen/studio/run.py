@@ -100,12 +100,22 @@ def run_study(study: Study, *, progress: bool = False) -> StudyResult:
 
 
 def resolved_constants(study: Study) -> dict[str, Any]:
-    """The reference block of every constant used — for the provenance panel."""
+    """
+    The reference block of every constant used — for the provenance panel.
+
+    For an intent study most of these were *generated* rather than written, which
+    is exactly why they have to be recorded: the audit trail is worthless if the
+    values that produced a chapter only ever existed inside a fab preset.
+    """
     raw = study.raw
-    return {
+    out = {
         "fluids": raw.get("fluids", {}),
         "footprint": raw.get("footprint", {}),
         "manufacturing": raw.get("manufacturing", {}),
         "operating": raw.get("operating", {}),
         "scoring": raw.get("scoring", {}),
     }
+    if study.from_intent:
+        out["intent"] = raw.get("intent", {})
+        out["constraints"] = raw.get("constraints", {})   # preset spelled out
+    return out

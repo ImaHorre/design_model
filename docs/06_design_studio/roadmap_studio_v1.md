@@ -15,7 +15,7 @@ worth having. Everything after it makes the result durable.
 |---|---|---|---|
 | 0 | Housekeeping + threshold correction | S | **done** (`e390764`) |
 | 1 | Decide layer — value axes, margin, confidence, validity | M | **done** |
-| 2 | Intent layer + constraint diagnosis | M | not started |
+| 2 | Intent layer + constraint diagnosis | M | **done** |
 | 3 | Design visualiser (to-scale SVG) | M | not started |
 | **M1** | **Deep-DFU sweep session** | — | **gated on 0–3** |
 | 4 | Workbook as memory | M | not started |
@@ -190,6 +190,85 @@ slow — measure first.
   empty table.
 - Tests: intent → grid for each family; diagnosis identifies a deliberately-planted single
   binding constraint.
+
+### What actually landed
+
+`stepgen/families/intent.py` (new) — the intent vocabulary in the *family* layer:
+`Intent`, `Constraints`, `FAB_PRESETS` (`current` / `relaxed_300um` / `relaxed_500um`),
+the junction inverse solve, the analytic DFU-count sizing, and `plan_junction()` which
+every family starts from. `families/base.py` — `grid_from_intent()` on the contract,
+raising `IntentNotSupported` by default. All three families implement it.
+`design_search._derive_mcd_from_ar` now delegates to `intent.depth_for_droplet`, so the
+design search and the Studio cannot drift apart on what a droplet target means.
+
+`stepgen/studio/intent.py` (new) — YAML parsing and study generation; `expand_intent()`
+returns an ordinary study dict plus an `IntentPlan` recording what was generated, what
+the user wrote, and which families were skipped. `study.py` — `build_study(raw)` split
+out of `load_study_text` so relaxation pricing can rebuild from a mutated dict without
+round-tripping through YAML; `Study.from_intent` / `.intent_plan` / `.intent_raw`.
+
+`stepgen/studio/diagnosis.py` (new) — `binding_gates()` (free, always runs),
+`KNOBS` + `active_knobs()`, `price_relaxations()`, and `diagnose()`.
+`scoring.py` — the `build` cell now records *which* sub-gate failed in `.detail`.
+CLI: `stepgen study --diagnose auto|always|never`, with the diagnosis printed.
+Workbook: Intent and Diagnosis panels + both in the JSON sidecar. UI: a Diagnosis tab,
+with pricing behind a button and the generated YAML shown in an expander.
+Tests: `tests/test_studio_intent.py` (40).
+
+Four decisions worth recording:
+
+1. **Intent generates, it does not refuse.** A 140 µm droplet needs a ~51 µm exit —
+   5× beyond the range the droplet power-law was fitted over. Intent draws it anyway
+   and lets the `validity` gate flag every row. Refusing to generate would have hidden
+   the question; the honest division is *intent decides what to try, scoring decides
+   what to trust*.
+
+2. **Knobs write to `constraints:`, not just `manufacturing:`.** For an intent study the
+   constraints block generates *both* the manufacturing caps and the geometry grid.
+   Stepping only the fab block would have loosened the gate while leaving the generated
+   main depth pinned at the old cap — the price would have come back as zero for the
+   wrong reason. Relaxation therefore regenerates the whole grid, and
+   `Constraints.as_block()` writes the resolved preset back into the recorded question
+   so a cap hiding inside a preset is still visible to pricing.
+
+3. **"Sole cause" is the ranking signal, not raw failure count.** A gate that reds half
+   the study but never alone is a symptom. Only a gate that is the *only* red on a row
+   would change that row's verdict if relaxed, so that is what orders the table and
+   selects which knobs are worth a re-run.
+
+4. **Some gates have no knob, and saying so is the finding.** `regime_Ca` is deliberately
+   absent from `KNOBS`: no etch depth, die size or pressure ceiling moves the
+   step-emulsification ceiling. `Diagnosis.binding_is_physics` reports that explicitly
+   rather than offering a process change that would not help.
+
+**The headline result, already in hand.** Running `study_intent_deep_dfu.yaml` (140 µm at
+5 mL/hr under 300 mbar, all three families, 138 points): **0 green, 7 orange, 131 red**, and
+exit Ca is the sole cause of 107 of those reds. The blocker for large droplets is **not**
+the 200 µm main-depth cap — relaxing it to 300 µm changes nothing, and the pricing says so
+in as many words. It is that a deep DFU carries so much oil (`R_rung ∝ 1/h³`; the sizing
+estimate drops from ~1000 rungs to ~11) that the exit velocity leaves step-emulsification
+entirely. This sharpens M1's standing hypothesis rather than confirming it: fewer DFUs is
+right, but the constraint that bites is the SE ceiling, not the etch depth — and that
+ceiling is itself borrowed from literature at λ ≈ 1 while we run at λ ≈ 0.015. Phase 5's
+boundary probe is now the load-bearing piece of work, not a nice-to-have.
+
+*Checked against the wiki before writing this down.* Two qualifications, neither of which
+rescues the result:
+
+* Our `regime_Ca` is the **nominal** exit Ca, but the threshold it is compared against is
+  stated for the **local pinch** Ca: `Ca_in ≈ (w/h)·Ca_nominal`
+  ([[equations/step-emulsification-generalized-capillary]], `@montessori2020-step-emulsification`)
+  `[theory]`. The intent designs run at w/h = 3, so the true comparison is ~3× *worse* than
+  the number in the table, not better. The 0.0125 bound in the study configs is also quoted
+  at h/w = 1/5, which is not the aspect ratio intent generates.
+* The generalised criterion adds a Weber term, `K = Ca_in + We_in`. At these geometries
+  `We_in ≈ 1e-3` (ρu²/2 ≈ 0.1 Pa against σ/λ ≈ 100 Pa), so it is negligible here — the
+  transition is Ca-driven, as the dripping-regime branch of that criterion says it should be.
+
+So the finding is robust in sign and roughly an order of magnitude in size. What it is *not*
+is validated: both sources sit at λ ≈ 1 and we run at λ ≈ 0.015
+([[claims/step-emulsification-viscosity-insensitive]] is "supported" but on 2 sources, neither
+in our λ range). The `validity` gate already flags every row for exactly this.
 
 ---
 

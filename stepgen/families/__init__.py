@@ -29,6 +29,13 @@ from stepgen.families.base import (
     list_families,
     register_family,
 )
+from stepgen.families.intent import (
+    FAB_PRESETS,
+    Constraints,
+    Intent,
+    IntentNotSupported,
+    junction_for_droplet,
+)
 
 # Import concrete families for their registration side effects.
 from stepgen.families import serpentine as _serpentine  # noqa: F401
@@ -37,8 +44,13 @@ from stepgen.families import manifold as _manifold  # noqa: F401
 
 __all__ = [
     "CommonMetrics",
+    "Constraints",
     "Family",
+    "FAB_PRESETS",
+    "Intent",
+    "IntentNotSupported",
     "get_family",
+    "junction_for_droplet",
     "list_families",
     "register_family",
 ]

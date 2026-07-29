@@ -89,6 +89,12 @@ from typing import Any
 import numpy as np
 
 from stepgen.families.base import CommonMetrics, Family, register_family
+from stepgen.families.intent import (
+    Constraints,
+    Intent,
+    plan_junction,
+    rungs_for_throughput,
+)
 from stepgen.models.nodal_network import NodalNetwork
 
 _M3S_TO_MLHR = 1e6 * 3600.0
@@ -164,6 +170,79 @@ class ManifoldFamily(Family):
         # Same comparable gates as serpentine, plus a real no_crossing build gate.
         return {"throughput_mlhr", "uniformity_pct", "operating_Po_mbar",
                 "regime_Ca", "build", "validity"}
+
+    # -- intent ------------------------------------------------------------
+    #: arm counts intent sweeps.  The comb's flatness is a V-curve in M, so the
+    #: sweep has to straddle the minimum rather than pick a point on it.
+    INTENT_ARM_COUNTS: tuple[int, ...] = (2, 4, 8, 16)
+
+    def grid_from_intent(
+        self,
+        intent: Intent,
+        constraints: Constraints,
+        *,
+        fluids: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Comb-manifold geometry for a droplet + throughput target.
+
+        The DFU count ``N = M · n`` is split two ways, and the split is the whole
+        point of the family: flatness is a **V-curve in M** (one long droop vs
+        two short ones), so intent sweeps arm counts across the minimum rather
+        than guessing where it sits.  ``rungs_per_arm`` is generated as
+        ``ceil(N_est / M)`` for each swept ``M``, so the paired combinations hold
+        the total count roughly constant and isolate the split — the other
+        combinations in the Cartesian product then show the count dependence too.
+
+        The primary spine is pinned deep and wide at the fab caps: depth costs no
+        in-plane area, which is the free lever the manifold parametrisation work
+        identified.
+        """
+        plan = plan_junction(intent, constraints, rung_length_mm=(1.0, 2.0))
+        n_est = rungs_for_throughput(
+            throughput_mlhr=intent.throughput_mlhr,
+            Po_mbar=constraints.max_Po_mbar,
+            rung_length_m=plan.mid_rung_length_m,
+            upstream_width_m=plan.mid_upstream_m,
+            exit_depth_m=plan.exit_depth_um * 1e-6,
+            mu_dispersed=float(fluids.get("mu_dispersed", 0.06)),
+        )
+        per_arm = sorted({max(2, math.ceil(n_est / M)) for M in self.INTENT_ARM_COUNTS})
+
+        # arms are shallower than the spine and must stay wider than they are
+        # deep for the rectangular resistance to hold
+        arm_depth = min(100.0, constraints.max_main_depth_um)
+        arm_width = max(200.0, 2.0 * arm_depth)
+
+        return {
+            "main": {
+                "depth_um": constraints.max_main_depth_um,
+                "width_um": constraints.max_main_width_um,
+            },
+            "arms": {
+                "count": list(self.INTENT_ARM_COUNTS),
+                "depth_um": arm_depth,
+                "width_um": arm_width,
+            },
+            "rung": {
+                "length_mm": plan.mid_rung_length_m * 1e3,
+                "upstream_width_um": plan.upstream_width_um,
+            },
+            "rungs_per_arm": per_arm,
+            "junction": {
+                "exit_width_um": plan.exit_width_um,
+                "exit_depth_um": plan.exit_depth_um,
+                "pitch_um": plan.pitch_um,
+            },
+            "cont_phase": {
+                "width_um": 200.0,
+                "flow_scaled": True,
+                "max_velocity_mps": 0.1,
+            },
+            # the wall between the out/return continuous legs; the family widens
+            # it to main_depth/2 to hold its aspect ratio at 2
+            "wall": {"min_um": 100.0},
+        }
 
     # -- compile -----------------------------------------------------------
     def compile(

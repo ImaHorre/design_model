@@ -16,6 +16,8 @@ Interface (`Family`)
     solve(compiled, op)   family-native config -> CommonMetrics
     applicable_metrics()  which scoring gates apply to this family
     metric_confidence(cm) how far each metric of a row can be trusted
+    grid_from_intent(...) a droplet/throughput target -> this family's geometry
+                          block (leaves may be lists = swept axes)
 
 `evaluate()` is a convenience that chains compile + solve.
 
@@ -31,6 +33,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import Any
+
+from stepgen.families.intent import Constraints, Intent, IntentNotSupported
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +184,31 @@ class Family(ABC):
             # Analytic Hele-Shaw hub drop — never checked against experiment.
             "hub_budget_pct": CALIBRATED,
         }
+
+    def grid_from_intent(
+        self,
+        intent: Intent,
+        constraints: Constraints,
+        *,
+        fluids: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Generate this family's geometry block from a target, not a grid.
+
+        Returns the same dict shape the family's YAML sub-block has, except that
+        any leaf may be a **list** — which the study expander then treats as a
+        swept axis.  The family is the only thing that knows how to lay itself
+        out for a given droplet size and pressure ceiling, so the inverse solve
+        lives behind this contract rather than in the studio layer.
+
+        Raise :class:`IntentNotSupported` if the family has no sensible answer;
+        the intent layer reports which families it had to skip rather than
+        inventing geometry on their behalf.
+        """
+        raise IntentNotSupported(
+            f"family '{self.name}' cannot generate a grid from an intent; "
+            f"write its geometry block explicitly"
+        )
 
     @abstractmethod
     def compile(

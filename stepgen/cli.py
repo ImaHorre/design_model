@@ -14,7 +14,7 @@ Commands
     stepgen design   <design_search.yaml>  [--out design_results.csv]
     stepgen compare  <config.yaml>  <experiments.csv>
                                     [--out compare.csv] [--calibrate]
-    stepgen study    <study.yaml>   [--book DIR]
+    stepgen study    <study.yaml>   [--book DIR] [--diagnose auto|always|never]
     stepgen studio-ui [study.yaml]  [--port N]   (interactive Design Studio; needs .[ui])
 
 Experimental Testing Commands
@@ -472,31 +472,59 @@ def _cmd_study(args: argparse.Namespace) -> int:
     import matplotlib
     matplotlib.use("Agg")
 
-    from stepgen.studio import load_study, run_study, write_workbook, write_book_index
+    from stepgen.studio import (
+        diagnose, load_study, run_study, score_result, write_book_index, write_workbook,
+    )
 
     study = load_study(args.study)
     print("=== study ===")
     print(f"  Study     : {args.study}")
     print(f"  Title     : {study.title}")
+    if study.from_intent:
+        s = study.intent_plan.summary()
+        print(f"  Intent    : {s['droplet_um']:g} µm droplets at "
+              f"{s['throughput_mlhr']:g} mL/hr under {s['max_Po_mbar']:g} mbar "
+              f"(fab: {s['fab']})")
+        if study.intent_plan.skipped:
+            for name, why in study.intent_plan.skipped.items():
+                print(f"  ! skipped : {name} — {why}")
     print(f"  Families  : {', '.join(study.families)}")
     print(f"  Points    : {len(study.points)}")
 
     result = run_study(study, progress=True)
+    scored = score_result(result, study.scoring)
+
+    diag = diagnose(study, scored, price=getattr(args, "diagnose", "auto"),
+                    progress=False)
 
     book_dir = Path(args.book)
     chapter = book_dir / (Path(args.study).stem + ".html")
-    write_workbook(result, chapter)
+    write_workbook(result, chapter, diagnosis=diag)
     index = write_book_index(book_dir)
 
     n_err = sum(1 for m in result.metrics if m.error)
     print(f"  Solved    : {len(result.metrics) - n_err}/{len(result.metrics)} "
           f"({n_err} errors)")
+    print(f"  Verdicts  : {diag.n_green} green / {diag.n_orange} orange / "
+          f"{diag.n_red} red")
     print(f"  Model     : {result.provenance.git_hash}")
+    print()
+    print("  === diagnosis ===")
+    for line in _wrap(diag.headline(), 74):
+        print(f"  {line}")
+    for p in diag.prices:
+        print(f"    · {p.describe()}")
+    print()
     print(f"  -> chapter : {chapter}")
     print(f"  -> sidecar : {chapter.with_suffix('.json')}")
     print(f"  -> book    : {index}")
 
     return 0
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    import textwrap
+    return textwrap.wrap(text, width) or [""]
 
 
 def _cmd_studio_ui(args: argparse.Namespace) -> int:
@@ -845,6 +873,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_study.add_argument("study", help="Path to a study YAML (see configs/study_template.yaml).")
     p_study.add_argument("--book", type=str, default="book",
                          metavar="DIR", help="Book directory for the chapter + index (default: book).")
+    p_study.add_argument("--diagnose", choices=["auto", "always", "never"], default="auto",
+                         help="Price what relaxing each active constraint would buy. "
+                              "Costs one full re-run per constraint, so the default "
+                              "`auto` only prices when nothing scored green.")
 
     # ── studio-ui ─────────────────────────────────────────────────────────
     p_ui = sub.add_parser(

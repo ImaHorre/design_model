@@ -12,10 +12,16 @@ read for a given point.
 
 Meta keys (``title``, ``goal``, ``scoring``, ``reference``) are pulled out
 before expansion — they are never swept.
+
+An ``intent:`` block short-circuits the front of this: the study is *generated*
+from a droplet/throughput target and its constraints
+(:mod:`stepgen.studio.intent`) and the generated dict then goes through exactly
+this expansion.  There is one pipeline, not two.
 """
 
 from __future__ import annotations
 
+import copy
 import itertools
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,7 +30,8 @@ from typing import Any
 import yaml
 
 # keys that carry study-level metadata and must not be treated as swept axes
-_META_KEYS = frozenset({"title", "goal", "family", "scoring", "reference"})
+_META_KEYS = frozenset({"title", "goal", "family", "scoring", "reference",
+                        "decide", "intent", "constraints", "explore"})
 
 # per-family geometry blocks are named after the family; these shared blocks are
 # expanded together with the selected family's geometry
@@ -82,6 +89,16 @@ class Study:
     raw: dict[str, Any] = field(default_factory=dict)
     source_path: str | None = None
     source_text: str | None = None
+    #: what the intent layer generated, or ``None`` for a hand-written study.
+    #: ``raw`` is the *expanded* dict either way, so everything downstream sees
+    #: one shape; ``intent_raw`` keeps the question the user actually asked.
+    intent_plan: Any = None
+    intent_raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def from_intent(self) -> bool:
+        """True when this study was generated from an ``intent:`` block."""
+        return self.intent_plan is not None
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -148,6 +165,49 @@ def build_points(raw: dict[str, Any]) -> list[StudyPoint]:
     return points
 
 
+def build_study(
+    raw: dict[str, Any],
+    *,
+    source_path: str | Path | None = None,
+    source_text: str | None = None,
+) -> Study:
+    """
+    Build a :class:`Study` from an already-parsed study *dict*.
+
+    The intent layer runs first, so a study written as ``intent:`` +
+    ``constraints:`` + ``explore:`` and one written out longhand converge on the
+    same expanded dict before a single point is generated.
+
+    Exposed separately from :func:`load_study_text` because relaxation pricing
+    (:mod:`stepgen.studio.diagnosis`) rebuilds a study from a *mutated* raw dict
+    — it has no text to re-parse, and round-tripping through YAML just to change
+    one number would be a way to introduce differences.
+    """
+    from stepgen.studio.intent import expand_intent
+
+    intent_raw = copy.deepcopy(raw)
+    expanded, plan = expand_intent(raw)
+    if plan is not None:
+        # keep the recorded question complete: the resolved caps, not just the
+        # preset name they came from (see Constraints.as_block)
+        intent_raw["constraints"] = plan.constraints.as_block()
+
+    return Study(
+        title=str(expanded.get("title", "Untitled study")),
+        goal=str(expanded.get("goal", "")),
+        families=_as_list(expanded.get("family", "serpentine")),
+        scoring=expanded.get("scoring", {}) or {},
+        references=list(expanded.get("reference", []) or []),
+        points=build_points(expanded),
+        decide=expanded.get("decide", {}) or {},
+        raw=expanded,
+        source_path=None if source_path is None else str(source_path),
+        source_text=source_text,
+        intent_plan=plan,
+        intent_raw=intent_raw if plan is not None else {},
+    )
+
+
 def load_study_text(text: str, source_path: str | Path | None = None) -> Study:
     """
     Expand a study YAML *string* into a :class:`Study`.
@@ -157,20 +217,7 @@ def load_study_text(text: str, source_path: str | Path | None = None) -> Study:
     exactly the same expansion and metadata handling.
     """
     raw: dict[str, Any] = yaml.safe_load(text) or {}
-
-    points = build_points(raw)
-    return Study(
-        title=str(raw.get("title", "Untitled study")),
-        goal=str(raw.get("goal", "")),
-        families=_as_list(raw.get("family", "serpentine")),
-        scoring=raw.get("scoring", {}) or {},
-        references=list(raw.get("reference", []) or []),
-        points=points,
-        decide=raw.get("decide", {}) or {},
-        raw=raw,
-        source_path=None if source_path is None else str(source_path),
-        source_text=text,
-    )
+    return build_study(raw, source_path=source_path, source_text=text)
 
 
 def load_study(path: str | Path) -> Study:

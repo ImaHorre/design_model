@@ -49,6 +49,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from stepgen.families.base import CommonMetrics, Family, register_family
+from stepgen.families.intent import (
+    Constraints,
+    Intent,
+    ladder,
+    plan_junction,
+    rungs_for_throughput,
+)
 
 # throughput unit factor: m³/s -> mL/hr  (1 m³ = 1e6 mL, 1 hr = 3600 s)
 _M3S_TO_MLHR = 1e6 * 3600.0
@@ -102,6 +109,58 @@ class RadialFamily(Family):
         # Ca regime and the hub pressure budget.
         return {"throughput_mlhr", "operating_Po_mbar", "regime_Ca",
                 "hub_budget_pct", "build", "validity"}
+
+    # -- intent ------------------------------------------------------------
+    def grid_from_intent(
+        self,
+        intent: Intent,
+        constraints: Constraints,
+        *,
+        fluids: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Radial geometry for a droplet + throughput target.
+
+        The radius is **not** a throughput lever, and intent must not pretend
+        otherwise.  Per §11.2, ``N_DFU = 2πR/pitch`` and ``L_eff ∝ R`` both scale
+        with the radius, so they cancel::
+
+            Q_total = N·ΔP/R_ch ∝ (R/pitch) · (1/R) = 1/pitch
+
+        A bigger wheel is more DFUs each carrying proportionally less oil.  The
+        levers that *do* move throughput are the upstream width, the exit depth
+        (fixed here by the droplet target) and the drive pressure — so those are
+        what get swept.  The radius sweep exists to trade **area and hub budget**
+        against each other, which is a real trade the decide layer can rank.
+        """
+        plan = plan_junction(intent, constraints)
+        r_max_mm = max(2.0, constraints.usable_side_mm / 2.0)
+
+        # reported for the note only — see the docstring on why it is not a
+        # sizing input here
+        _ = rungs_for_throughput(
+            throughput_mlhr=intent.throughput_mlhr,
+            Po_mbar=constraints.max_Po_mbar,
+            rung_length_m=r_max_mm * 1e-3,
+            upstream_width_m=plan.mid_upstream_m,
+            exit_depth_m=plan.exit_depth_um * 1e-6,
+            mu_dispersed=float(fluids.get("mu_dispersed", 0.06)),
+        )
+
+        radii = ladder(r_max_mm, factors=(0.25, 0.5, 1.0), minimum=2.0,
+                       maximum=r_max_mm, integer=False)
+        return {
+            "radius_mm": radii,
+            "upstream_width_um": plan.upstream_width_um,
+            "exit": {
+                "width_um": plan.exit_width_um,
+                "depth_um": plan.exit_depth_um,
+                "pitch_um": plan.pitch_um,
+            },
+            # a central point inlet; where r_hub falls below this the family
+            # already treats the hub drop as zero (ring / wide port)
+            "inlet_radius_mm": 1.0,
+        }
 
     # -- compile -----------------------------------------------------------
     def compile(

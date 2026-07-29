@@ -1,0 +1,52 @@
+# study_intent_deep_dfu.yaml — the intent layer (Phase 2)
+# ─────────────────────────────────────────────────────────────────────────────
+# Run with:   stepgen study configs/study_intent_deep_dfu.yaml --diagnose always
+#
+# This is the whole study. There is no geometry block below, because none is
+# written by hand: the junction exit is derived from the droplet target through
+# the shared inverse solve (D = k·w^a·h^b at a fixed aspect ratio), the sweep is
+# bounded by the constraints, and each family lays itself out behind
+# `Family.grid_from_intent`.
+#
+# Anything you *do* write wins. Adding an explicit `serpentine:` block here pins
+# that family and lets the other two be generated — a supported way to hold one
+# topology fixed while exploring the alternatives.
+#
+# To see what this turns into:
+#     python -c "import yaml,sys; from stepgen.studio.intent import generated_yaml; \
+#                print(generated_yaml(yaml.safe_load(open('configs/study_intent_deep_dfu.yaml'))))"
+#
+# What to expect: a 140 µm droplet needs a ~51 µm exit depth, which is ~4x
+# beyond the range the droplet power-law was fitted over (h = 1/5/10 µm). Every
+# row will therefore carry a `validity` flag, and the study-wide caveat about
+# λ ≈ 0.015 sitting outside the SE literature's envelope (which is at λ ≈ 1)
+# applies to all of them. That is the honest state of the question — the model
+# will answer it, and the answer is an extrapolation until the boundary probe
+# in Phase 5 pins it down.
+# ─────────────────────────────────────────────────────────────────────────────
+
+title: "Deep DFUs for large droplets — three topologies, one intent"
+
+# ── what we want ─────────────────────────────────────────────────────────────
+intent:
+  droplet_um: 140            # large droplets → deep DFUs (the M1 question)
+  throughput_mlhr: 5         # sizes the DFU count; the sweep brackets it 4x either way
+  junction_aspect_ratio: 3.0 # exit_width / exit_depth
+
+# ── what we are allowed to spend getting it ──────────────────────────────────
+constraints:
+  max_Po_mbar: 300           # don't start production at 1000 mbar
+  fab: current               # or: relaxed_300um / relaxed_500um
+  square_side_mm: 63.5       # the real die square
+
+# ── which topologies to put in the ring ──────────────────────────────────────
+explore: [serpentine, radial, manifold]
+
+# ── what "best" means. Omit and intent supplies these four ───────────────────
+decide:
+  axes: [flatness, throughput, drive_pressure, margin]
+  weights: { flatness: 0.3, throughput: 0.3, drive_pressure: 0.2, margin: 0.2 }
+
+# ── click-in reference overlay: today's device, for scale ────────────────────
+reference:
+  - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }

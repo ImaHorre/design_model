@@ -13,6 +13,11 @@ edit a study YAML live, run it, browse the scored comparison table, drill into
 any point, view the standard plots (with the same best-3 / references toggles as
 the static workbook), and export the self-contained HTML chapter.
 
+Both study front doors work here: a hand-written grid, or an ``intent:`` block
+that generates one. The Diagnosis tab shows what an intent turned into, which
+gate is standing in the way, and — behind a button, because it costs a full
+re-run per constraint — what relaxing each active constraint would buy.
+
 Launch::
 
     stepgen studio-ui [study.yaml]          # via the CLI wrapper
@@ -281,11 +286,15 @@ def _render_results(st, data: dict[str, Any]) -> None:
     c3.metric("🟠 Orange", n_orange)
     c4.metric("🔴 Red", n_red)
 
-    tab_decide, tab_table, tab_plots, tab_prov = st.tabs(
-        ["Decision", "Scored comparison", "Plots", "Provenance & export"])
+    tab_decide, tab_diag, tab_table, tab_plots, tab_prov = st.tabs(
+        ["Decision", "Diagnosis", "Scored comparison", "Plots",
+         "Provenance & export"])
 
     with tab_decide:
         _render_decision(st, scored, study)
+
+    with tab_diag:
+        _render_diagnosis(st, study, scored)
 
     with tab_table:
         _render_table(st, scored, df, cats)
@@ -411,6 +420,118 @@ def _render_decision(st, scored: list[ScoredRow], study: Study) -> None:
 
     for caveat in dec.caveats:
         st.warning(f"Applies to **every** design in this study: {caveat}")
+
+
+def _render_diagnosis(st, study: Study, scored: list[ScoredRow]) -> None:
+    """
+    Why the study came back the way it did — and what would change it.
+
+    Binding-constraint analysis is free (it reads the already-scored rows) so it
+    always renders.  Relaxation pricing costs a full re-run of the study per
+    constraint, so it sits behind a button: the user decides when that is worth
+    waiting for, rather than paying for it on every edit.
+    """
+    from stepgen.studio.diagnosis import (
+        active_knobs, binding_gates, diagnose, knobs_for_gate, price_relaxations,
+    )
+
+    if not scored:
+        st.info("No rows to diagnose.")
+        return
+
+    if study.from_intent:
+        s = study.intent_plan.summary()
+        st.markdown("#### The question, as asked")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Droplet target", f"{s['droplet_um']:g} µm")
+        c2.metric("Throughput target", f"{s['throughput_mlhr']:g} mL/hr")
+        c3.metric("Pressure ceiling", f"{s['max_Po_mbar']:g} mbar")
+        st.caption(
+            f"Fab **{s['fab']}** — depth ≤ {s['max_main_depth_um']:g} µm, "
+            f"width ≤ {s['max_main_width_um']:g} µm, min wall {s['min_wall_um']:g} µm "
+            f"· die {s['square_side_mm']:g} mm · exploring "
+            f"{', '.join(s['explore'])}. Generated blocks: "
+            f"{', '.join(s['generated_blocks'])}.")
+        for name, why in (s["skipped_families"] or {}).items():
+            st.warning(f"**{name}** was skipped — no geometry was invented for "
+                       f"it: {why}")
+        with st.expander("Show the study this intent generated"):
+            from stepgen.studio.intent import generated_yaml
+            st.code(generated_yaml(study.intent_raw or study.raw), language="yaml")
+            st.caption("Intent is a front door, not a lock-in — copy this into "
+                       "the editor to take manual control of any of it.")
+
+    diag = diagnose(study, scored, price="never")
+    st.markdown("#### Verdict")
+    (st.success if diag.n_green else st.warning)(diag.headline())
+
+    # ── which gate is in the way ────────────────────────────────────────────
+    shown = [f for f in diag.failures if f.n_red or f.n_sole_cause]
+    if shown:
+        st.markdown("#### What is in the way")
+        st.dataframe(
+            pd.DataFrame([
+                {"Gate": f.label,
+                 "Sole cause of red": f.n_sole_cause,
+                 "Red": f.n_red,
+                 "Non-green": f.n_non_green,
+                 "Relaxable by": ", ".join(k.label for k in knobs_for_gate(f.key))
+                                 or "physics — no process knob"}
+                for f in shown
+            ]),
+            width="stretch", hide_index=True,
+        )
+        st.caption("“Sole cause” counts rows where this gate is the *only* red "
+                   "one — relaxing it alone would change those verdicts. A gate "
+                   "that reds many rows but is never the sole cause is a "
+                   "symptom, not the constraint.")
+    else:
+        st.caption("No gate is failing on any row.")
+
+    # ── relaxation pricing (opt-in: one full re-run per constraint) ─────────
+    st.markdown("#### What relaxing a constraint would buy")
+    raw = study.intent_raw or study.raw
+    knobs = active_knobs(raw, diag.failures)
+    if not knobs:
+        st.caption("No constraint in this study owns a gate that is failing — "
+                   "there is nothing to price.")
+        return
+
+    st.caption("Each constraint below is re-run as a full study with that one "
+               "value stepped a notch. For an intent study the whole grid is "
+               "regenerated from the relaxed constraint, so a deeper permitted "
+               "etch changes the geometry that gets tried — not merely the gate "
+               "that judges it.")
+    pick = st.multiselect(
+        "Constraints to price",
+        [k.key for k in knobs],
+        default=[k.key for k in knobs],
+        format_func=lambda key: next(
+            f"{k.label} ({k.current(raw):g} {k.unit})" for k in knobs if k.key == key),
+    )
+    if not st.button(f"Price {len(pick)} relaxation"
+                     f"{'s' if len(pick) != 1 else ''} "
+                     f"({len(pick)} full re-run{'s' if len(pick) != 1 else ''})"):
+        return
+
+    chosen = [k for k in knobs if k.key in pick]
+    with st.spinner("Re-running the study once per constraint…"):
+        prices = price_relaxations(study, scored, chosen)
+
+    if not prices:
+        st.caption("Nothing could be stepped.")
+        return
+    st.dataframe(
+        pd.DataFrame([
+            {"Constraint": p.label,
+             "One notch": f"{p.before:g} → {p.after:g} {p.unit}",
+             "Red": f"{p.red_before} → {p.red_after}",
+             "Green": f"{p.green_before} → {p.green_after}",
+             "Verdict": p.error or p.describe()}
+            for p in prices
+        ]),
+        width="stretch", hide_index=True,
+    )
 
 
 def _render_table(st, scored, df, cats) -> None:
@@ -560,6 +681,22 @@ def _families_hint(st) -> None:
 
 _TEMPLATE_HINT = """\
 title: "My study"
+
+# ── Path A: say what you want, and let the families derive the geometry ──────
+# Uncomment this block and delete everything below it. The junction exit is
+# derived from the droplet target, the sweep is bounded by the constraints, and
+# each family lays itself out. The Diagnosis tab then shows what was generated,
+# what is standing in the way, and what relaxing a constraint would buy.
+#
+# intent:
+#   droplet_um: 140
+#   throughput_mlhr: 5
+# constraints:
+#   max_Po_mbar: 300
+#   fab: current            # or: relaxed_300um / relaxed_500um
+# explore: [serpentine, radial, manifold]
+
+# ── Path B: write the grid yourself ─────────────────────────────────────────
 family: serpentine        # or a list, e.g. [serpentine, radial, manifold]
 
 # What "best" means. Several axes, not one goal — the Decision tab reports a
@@ -569,7 +706,8 @@ decide:
   weights: { flatness: 0.4, throughput: 0.3, drive_pressure: 0.2, margin: 0.1 }
 
 # `goal: throughput` still works as a one-axis shorthand.
-# See configs/study_template.yaml for the full annotated schema.
+# See configs/study_template.yaml for the full annotated schema, and
+# configs/study_intent_deep_dfu.yaml for a worked intent study.
 """
 
 

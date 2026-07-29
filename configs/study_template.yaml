@@ -11,6 +11,11 @@
 #
 # This template reproduces the deep-20µm-DFU main-channel study on the current
 # V5 serpentine family. Edit freely.
+#
+# The other front door: if you know what you want but not what geometry gives it
+# to you, write an `intent:` block instead of the geometry blocks and let the
+# families derive their own — see configs/study_intent_deep_dfu.yaml. Both paths
+# run the same pipeline; intent just generates the grid you would have written.
 # ─────────────────────────────────────────────────────────────────────────────
 
 title: "Deep-DFU serpentine main-channel study"

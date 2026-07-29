@@ -5,6 +5,10 @@ Render a scored :class:`StudyResult` into one **self-contained HTML chapter**
 (the "book" is a directory of such chapters).
 
 A chapter has:
+  * a decision panel — per-axis winners, the Pareto set, the all-round and
+    safest picks, and the weights they rest on;
+  * a diagnosis panel when the study is not simply feasible — which gate is
+    binding, and what relaxing each active constraint would buy;
   * an overview scored table — traffic-light cells (worst-category-wins) with
     reason chips, sortable, click a row to drill into its params + raw metrics;
   * standard plots (base64 PNG), each with a plain-English "what this means IRL"
@@ -28,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from stepgen.studio.diagnosis import Diagnosis, diagnose
 from stepgen.studio.ranking import Decision, ValueAxis, axis_value, decide
 from stepgen.studio.run import StudyResult, resolved_constants
 from stepgen.studio.scoring import ScoredRow, score_result
@@ -401,6 +406,130 @@ def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Diagnosis panel
+# ---------------------------------------------------------------------------
+
+def _intent_html(study) -> str:
+    """What the user asked for, when they asked for a target instead of a grid."""
+    plan = study.intent_plan
+    if plan is None:
+        return ""
+    s = plan.summary()
+    facts = [
+        ("Droplet target", f"{s['droplet_um']:g} µm"),
+        ("Throughput target", f"{s['throughput_mlhr']:g} mL/hr"),
+        ("Pressure ceiling", f"{s['max_Po_mbar']:g} mbar"),
+        ("Fab preset", f"{s['fab']} — depth ≤ {s['max_main_depth_um']:g} µm, "
+                       f"width ≤ {s['max_main_width_um']:g} µm, "
+                       f"min wall {s['min_wall_um']:g} µm"),
+        ("Die square", f"{s['square_side_mm']:g} mm"),
+        ("Explored", ", ".join(s["explore"])),
+    ]
+    rows = "".join(f"<tr><td>{html.escape(k)}</td><td>{html.escape(v)}</td></tr>"
+                   for k, v in facts)
+
+    gen = ", ".join(s["generated_blocks"]) or "none"
+    user = ", ".join(s["user_supplied_blocks"]) or "none"
+    notes = (f'<p class="muted">Blocks generated from this intent: '
+             f'<b>{html.escape(gen)}</b>. Written by hand and left untouched: '
+             f'<b>{html.escape(user)}</b>.</p>')
+    if s["skipped_families"]:
+        skipped = "; ".join(f"{k}: {v}" for k, v in s["skipped_families"].items())
+        notes += (f'<p class="muted">⚠ Families skipped — no geometry was '
+                  f'invented on their behalf: {html.escape(skipped)}</p>')
+
+    return (
+        '<section class="decision">'
+        '<h2>Intent</h2>'
+        '<p class="muted">This study was generated from a target, not written as '
+        'a grid. The junction exit is derived from the droplet target through the '
+        'shared inverse solve, so every family below is answering the same '
+        'question with the same exit.</p>'
+        f'<table class="pareto"><tbody>{rows}</tbody></table>{notes}'
+        '</section>'
+    )
+
+
+def _diagnosis_html(diag: Diagnosis | None) -> str:
+    """
+    Why the study came back the way it did — rendered only when it is a finding.
+
+    A study where most designs are green does not need this panel: the question
+    there is which one to pick, and the decision panel above already answers it.
+    """
+    if diag is None or diag.n_rows == 0:
+        return ""
+    if diag.n_green and not diag.prices:
+        return ""
+
+    head = f'<p class="dhead">{html.escape(diag.headline())}</p>'
+
+    # ── which gate is in the way ────────────────────────────────────────────
+    shown = [f for f in diag.failures if f.n_red or f.n_sole_cause][:8]
+    if shown:
+        body = "".join(
+            f"<tr><td><b>{html.escape(f.label)}</b></td>"
+            f"<td>{f.n_sole_cause}</td><td>{f.n_red}</td><td>{f.n_non_green}</td>"
+            f"<td>{'physics — no process knob' if not _knobs_for(f.key) else html.escape(', '.join(_knobs_for(f.key)))}</td></tr>"
+            for f in shown
+        )
+        gates_html = (
+            '<h3>What is in the way</h3>'
+            '<table class="pareto"><thead><tr><th>Gate</th><th>Sole cause of red</th>'
+            '<th>Red</th><th>Non-green</th><th>Relaxable by</th></tr></thead>'
+            f'<tbody>{body}</tbody></table>'
+            '<p class="muted">“Sole cause” counts the rows where this gate is the '
+            '<i>only</i> red one — relaxing it alone would change those verdicts. '
+            'A gate that reds many rows but is never the sole cause is a symptom, '
+            'not the constraint.</p>'
+        )
+    else:
+        gates_html = ""
+
+    # ── what relaxing would buy ─────────────────────────────────────────────
+    if diag.prices:
+        rows = []
+        for p in diag.prices:
+            if p.error:
+                delta = f'<td colspan="2">{html.escape(p.error)}</td>'
+            else:
+                sign = "+" if p.greens_gained >= 0 else ""
+                delta = (f'<td>{p.red_before} → {p.red_after} '
+                         f'({-p.reds_cleared:+d})</td>'
+                         f'<td>{p.green_before} → {p.green_after} '
+                         f'({sign}{p.greens_gained})</td>')
+            rows.append(
+                f'<tr><td><b>{html.escape(p.label)}</b></td>'
+                f'<td>{p.before:g} → {p.after:g} {html.escape(p.unit)}</td>{delta}</tr>'
+            )
+        prices_html = (
+            '<h3>What relaxing each constraint would buy</h3>'
+            '<table class="pareto"><thead><tr><th>Constraint</th><th>One notch</th>'
+            '<th>Red</th><th>Green</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>'
+            '<p class="muted">Each row is a full re-run of the study with that one '
+            'constraint stepped. For an intent study the whole grid is regenerated '
+            'from the relaxed constraint, so a deeper permitted etch changes the '
+            'geometry that gets tried — not merely the gate that judges it. This is '
+            'what a process decision costs, in designs.</p>'
+        )
+    elif diag.priced:
+        prices_html = ('<h3>What relaxing each constraint would buy</h3>'
+                       '<p class="muted">No constraint in this study owns a gate '
+                       'that is failing — there was nothing to price.</p>')
+    else:
+        prices_html = ""
+
+    return (f'<section class="decision diagnosis"><h2>Diagnosis</h2>'
+            f'{head}{gates_html}{prices_html}</section>')
+
+
+def _knobs_for(gate: str) -> list[str]:
+    from stepgen.studio.diagnosis import knobs_for_gate
+    return [k.label for k in knobs_for_gate(gate)]
+
+
 def _margin_cell(sr: ScoredRow) -> str:
     """Weakest-link margin, with the metric that sets it and its trust tier."""
     m = sr.min_margin_discounted
@@ -607,6 +736,8 @@ pre{white-space:pre-wrap;}
 .pickname{font-size:13px;font-weight:600;word-break:break-word;}
 .pickwhy{font-size:11px;color:#57606a;margin-top:.25rem;}
 table.pareto{font-size:12px;width:auto;}
+.diagnosis{border-left:4px solid #bf8700;}
+.dhead{font-size:14px;font-weight:600;margin:.2rem 0 .8rem;}
 .decnotes{font-size:12px;margin:.8rem 0 0;padding-left:1.1rem;}
 .decnotes li{margin:.25rem 0;}
 .muted{font-size:12px;color:#57606a;}
@@ -618,8 +749,20 @@ table.pareto{font-size:12px;width:auto;}
 """
 
 
-def write_workbook(result: StudyResult, out_path: str | Path) -> Path:
-    """Render *result* to a self-contained HTML chapter and emit its JSON sidecar."""
+def write_workbook(
+    result: StudyResult,
+    out_path: str | Path,
+    *,
+    diagnosis: Diagnosis | None = None,
+    price: str = "auto",
+) -> Path:
+    """
+    Render *result* to a self-contained HTML chapter and emit its JSON sidecar.
+
+    Pass an already-computed *diagnosis* to avoid re-running the analysis (the
+    UI does); otherwise one is computed here, with *price* controlling whether
+    relaxation pricing runs (``auto`` = only when nothing scored green).
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -627,6 +770,8 @@ def write_workbook(result: StudyResult, out_path: str | Path) -> Path:
     goal = result.study.goal
     dec = decide(scored, result.study.decide, goal)
     best = set(_best_indices(scored, goal, spec=result.study.decide))
+    if diagnosis is None:
+        diagnosis = diagnose(result.study, scored, price=price)
 
     # resolve click-in reference overlays (modelled / experimental / chapter)
     from stepgen.studio.references import resolve_references
@@ -656,7 +801,11 @@ def write_workbook(result: StudyResult, out_path: str | Path) -> Path:
   <span>★ = best {len(best)} all-round</span>
 </p>
 
+{_intent_html(result.study)}
+
 {_decision_html(scored, dec)}
+
+{_diagnosis_html(diagnosis)}
 
 <h2>Overview — scored comparison</h2>
 <p style="font-size:12px;color:#57606a">Click a header to sort; click a row to drill in.
@@ -679,8 +828,9 @@ been checked in — never green there, and never red on those grounds alone.</p>
 
     # JSON sidecar for cross-chapter reference
     sidecar = out_path.with_suffix(".json")
-    sidecar.write_text(json.dumps(_chapter_json(result, scored, dec), indent=2, default=str),
-                       encoding="utf-8")
+    sidecar.write_text(
+        json.dumps(_chapter_json(result, scored, dec, diagnosis), indent=2, default=str),
+        encoding="utf-8")
     return out_path
 
 
@@ -688,14 +838,20 @@ def _chapter_json(
     result: StudyResult,
     scored: list[ScoredRow],
     dec: Decision | None = None,
+    diagnosis: Diagnosis | None = None,
 ) -> dict[str, Any]:
     dec = dec or decide(scored, result.study.decide, result.study.goal)
+    plan = result.study.intent_plan
     return {
         "title": result.study.title,
         "goal": result.study.goal,
         "families": result.study.families,
         "git_hash": result.provenance.git_hash,
         "timestamp": result.provenance.timestamp,
+        # the question as asked, when it was asked as a target rather than a grid
+        "intent": None if plan is None else plan.summary(),
+        # why the answer came out this way, and what would change it
+        "diagnosis": None if diagnosis is None else diagnosis.to_json(),
         # the decide layer, recorded so the verdict can be audited later — most
         # of all the weights, which are meaningless if they are not written down
         "decision": {

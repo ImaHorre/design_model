@@ -305,6 +305,10 @@ def score_metrics(
             "manufacturable": (cm.manufacturable, "within fab caps"),
             "no_crossing": (cm.no_crossing, "no phase crossing"),
         }
+        # which sub-gates actually failed, kept as structured detail rather than
+        # collapsed into "gate failed": binding-constraint diagnosis needs to
+        # know *which* one, and re-deriving it from chip text would be fragile.
+        failed: list[str] = []
         for gate_key, (val, human) in gate_map.items():
             required = build_spec.get(gate_key, None)
             # manufacturable is always evaluated when known; fits_square /
@@ -314,9 +318,11 @@ def score_metrics(
                 continue
             if val is False:
                 build_cat = RED
+                failed.append(gate_key)
                 chips.append(f"🔴 {human} — no")
         cells["build"] = CellScore("build", None, build_cat,
-                                   "" if build_cat == GREEN else "gate failed")
+                                   "" if build_cat == GREEN else "gate failed",
+                                   detail=failed)
     else:
         cells["build"] = CellScore("build", None, GREY, "N-A")
 

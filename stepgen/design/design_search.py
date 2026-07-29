@@ -56,10 +56,16 @@ def _derive_mcd_from_ar(spec: "DesignSearchSpec", ar: float) -> float:
         mcd = (D / (k * ar^a))^(1/(a+b))
 
     Returns mcd [m].
+
+    The closed form lives in ``stepgen.families.intent.depth_for_droplet``,
+    which the Studio's intent layer also calls, so the design search and the
+    Studio can never drift apart on what a droplet target means geometrically.
     """
-    dm  = spec.droplet_model
-    D   = spec.design_targets.target_droplet_um * 1e-6
-    return (D / (dm.k * ar ** dm.a)) ** (1.0 / (dm.a + dm.b))
+    from stepgen.families.intent import depth_for_droplet
+
+    return depth_for_droplet(
+        spec.design_targets.target_droplet_um, ar, spec.droplet_model
+    )
 
 
 def _derive_junction_geometry(
