@@ -28,10 +28,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from stepgen.studio.ranking import Decision, ValueAxis, axis_value, decide
 from stepgen.studio.run import StudyResult, resolved_constants
 from stepgen.studio.scoring import ScoredRow, score_result
 
 _CAT_COLOR = {"green": "#1a7f37", "orange": "#bf8700", "red": "#cf222e", "grey": "#8b949e"}
+_CONF_LABEL = {
+    "validated": ("validated", "#1a7f37", "compared against experiment"),
+    "calibrated": ("calibrated", "#bf8700", "empirical fit, evaluated in range"),
+    "extrapolation": ("extrapolated", "#cf222e", "model not checked in this regime"),
+}
 
 # columns shown in the overview table: (scoring/attr key, header, formatter)
 _COLUMNS: list[tuple[str, str]] = [
@@ -51,19 +57,21 @@ _COLUMNS: list[tuple[str, str]] = [
 # Ranking / best-3
 # ---------------------------------------------------------------------------
 
-def _rank_key(sr: ScoredRow, goal: str):
-    cat_rank = {"green": 0, "orange": 1, "red": 2}.get(sr.overall, 3)
-    m = sr.metrics
-    if goal == "flatness":
-        second = m.uniformity_pct if m.uniformity_pct is not None else float("inf")
-    else:  # default: prefer throughput
-        second = -(m.throughput_mlhr or 0.0)
-    return (cat_rank, second)
+def _best_indices(
+    scored: list[ScoredRow],
+    goal: str = "",
+    n: int = 3,
+    spec: dict[str, Any] | None = None,
+) -> list[int]:
+    """
+    The highlight set for plots: top *n* by the decide layer's composite.
 
+    Signature kept from the single-goal era so existing callers keep working;
+    ``goal`` is now a one-axis shorthand handled inside ``ranking.resolve_axes``.
+    """
+    from stepgen.studio.ranking import best_indices
 
-def _best_indices(scored: list[ScoredRow], goal: str, n: int = 3) -> list[int]:
-    order = sorted(range(len(scored)), key=lambda i: _rank_key(scored[i], goal))
-    return order[:n]
+    return best_indices(scored, spec, goal, n)
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +246,183 @@ def _light(cat: str) -> str:
             f'title="{cat}"></span>')
 
 
+# ---------------------------------------------------------------------------
+# Decision panel
+# ---------------------------------------------------------------------------
+
+def _pick_card(title: str, sub: str, row: ScoredRow | None, extra: str = "") -> str:
+    if row is None:
+        return (f'<div class="pick"><h4>{html.escape(title)}</h4>'
+                f'<div class="picksub">{html.escape(sub)}</div>'
+                f'<div class="pickname">—</div>'
+                f'<div class="pickwhy">no row can be compared on this</div></div>')
+    return (f'<div class="pick"><h4>{html.escape(title)}</h4>'
+            f'<div class="picksub">{html.escape(sub)}</div>'
+            f'<div class="pickname">{_light(row.overall)}'
+            f'{html.escape(row.metrics.label)}</div>'
+            f'<div class="pickwhy">{extra}</div></div>')
+
+
+def _axis_cell(row: ScoredRow, axis: ValueAxis) -> str:
+    value = axis_value(row, axis)
+    if value is None:
+        return "—"
+    if axis.key == "margin":
+        return f"{value * 100:.0f}%"
+    return f"{value:.4g}{axis.unit}"
+
+
+def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
+    """
+    The decide layer, rendered above the table.
+
+    Per-axis winners come first and always appear: that the flattest design is a
+    different device from the highest-throughput one *is* the finding, and a
+    composite that hid it would be worse than no composite (PRD §5).
+    """
+    if not scored:
+        return ""
+
+    # ── per-axis winners ────────────────────────────────────────────────────
+    cards = []
+    for axis in dec.axes:
+        i = dec.per_axis.get(axis.key)
+        row = scored[i] if i is not None else None
+        detail = _axis_cell(row, axis) if row is not None else ""
+        # never .lower() the label — it would turn "ΔP spread" into "δp spread"
+        cards.append(_pick_card(f"Best: {axis.label}", "per-axis winner",
+                                row, html.escape(detail)))
+    axis_cards = f'<div class="picks">{"".join(cards)}</div>'
+
+    # ── all-round + safest ──────────────────────────────────────────────────
+    wtxt = ", ".join(f"{k} {v:.2f}" for k, v in dec.weights.items())
+    all_round_row = scored[dec.all_round] if dec.all_round is not None else None
+    all_round_why = (f"composite {dec.composite.get(dec.all_round, 0):.3f} "
+                     f"&mdash; weights: {html.escape(wtxt)}"
+                     if all_round_row is not None else "")
+
+    safest_row = scored[dec.safest] if dec.safest is not None else None
+    safest_why = ""
+    if safest_row is not None:
+        m = safest_row.min_margin_discounted
+        weak = safest_row.weakest_metric or "—"
+        safest_why = (f"discounted margin {m * 100:.0f}% "
+                      f"&mdash; weakest link: {html.escape(weak)}")
+
+    summary_cards = (
+        '<div class="picks">'
+        + _pick_card("All-round", "weighted composite", all_round_row, all_round_why)
+        + _pick_card("Safest to build first", "confidence-discounted margin",
+                     safest_row, safest_why)
+        + '</div>'
+    )
+
+    # ── Pareto ──────────────────────────────────────────────────────────────
+    if dec.pareto:
+        head = "".join(f"<th>{html.escape(a.label)}</th>" for a in dec.axes)
+        body = "".join(
+            "<tr><td><b>" + html.escape(scored[i].metrics.label) + "</b></td>"
+            + "".join(f"<td>{_axis_cell(scored[i], a)}</td>" for a in dec.axes)
+            + "</tr>"
+            for i in dec.pareto
+        )
+        pareto_html = (
+            f'<h3>Pareto set — {len(dec.pareto)} design'
+            f'{"s" if len(dec.pareto) != 1 else ""} not beaten on everything</h3>'
+            f'<table class="pareto"><thead><tr><th>Config</th>{head}</tr></thead>'
+            f'<tbody>{body}</tbody></table>'
+        )
+    else:
+        pareto_html = ('<h3>Pareto set</h3><p class="muted">No design can be '
+                       'compared across all declared axes — some axis is N-A for '
+                       'every row.</p>')
+
+    # Rows that cannot be placed on every axis are left out rather than given a
+    # substituted value (DR-4). Say so — a silently short Pareto set is worse
+    # than a stated exclusion.
+    incomparable = [i for i in dec.candidates if i not in set(dec.pareto)
+                    and any(axis_value(scored[i], a) is None for a in dec.axes)]
+    if incomparable:
+        missing = sorted({a.label for i in incomparable for a in dec.axes
+                          if axis_value(scored[i], a) is None})
+        names = ", ".join(html.escape(scored[i].metrics.label) for i in incomparable[:6])
+        more = f" (+{len(incomparable) - 6} more)" if len(incomparable) > 6 else ""
+        pareto_html += (
+            f'<p class="muted">{len(incomparable)} design'
+            f'{"s" if len(incomparable) != 1 else ""} could not be placed on the '
+            f'Pareto front — N-A on {html.escape(", ".join(missing))}: '
+            f'{names}{more}. They are compared on the axes they do have, but a '
+            f'design that cannot be measured on an axis cannot be called '
+            f'non-dominated across all of them.</p>'
+        )
+
+    # ── honesty notes ───────────────────────────────────────────────────────
+    notes: list[str] = []
+    if dec.all_red:
+        notes.append("<b>Every design scored red.</b> Picks below are the least-bad "
+                     "of an unbuildable set, not recommendations.")
+    elif len(dec.candidates) < len(scored):
+        n_ex = len(scored) - len(dec.candidates)
+        notes.append(f"{n_ex} red row{'s' if n_ex != 1 else ''} excluded from "
+                     f"selection — a winner should be buildable.")
+    if dec.is_conflicted():
+        notes.append("The axes disagree: no single design wins on everything. "
+                     "The Pareto set is the honest answer here.")
+
+    # verdicts resting on extrapolated numbers
+    flagged = []
+    for name, i in (("all-round", dec.all_round), ("safest", dec.safest)):
+        if i is None:
+            continue
+        keys = [k for k in scored[i].extrapolated_keys if k != "validity"]
+        if keys:
+            flagged.append(f"the <b>{name}</b> pick rests on extrapolated "
+                           f"{html.escape(', '.join(keys))}")
+    if flagged:
+        notes.append("⚠ " + "; ".join(flagged)
+                     + " — the model has not been checked in that regime.")
+
+    # Breaches shared by every row are a property of the study — the fluid
+    # system's viscosity ratio, say — not a way to tell designs apart. Stating
+    # them once keeps them honest without making every row orange for the same
+    # reason and drowning the breaches that actually discriminate.
+    for c in dec.caveats:
+        notes.append("⚠ <b>Applies to every design in this study:</b> "
+                     + html.escape(c))
+
+    notes_html = ("".join(f'<li>{n}</li>' for n in notes))
+    notes_html = f'<ul class="decnotes">{notes_html}</ul>' if notes else ""
+
+    return (
+        '<section class="decision">'
+        '<h2>Decision</h2>'
+        f'{axis_cards}{summary_cards}{pareto_html}{notes_html}'
+        '</section>'
+    )
+
+
+def _margin_cell(sr: ScoredRow) -> str:
+    """Weakest-link margin, with the metric that sets it and its trust tier."""
+    m = sr.min_margin_discounted
+    if m is None:
+        return '<td data-v="-1e18">—</td>'
+    raw = sr.min_margin or 0.0
+    weak = sr.weakest_metric or ""
+    cell = sr.cells.get(weak)
+    tier = cell.confidence if cell else "validated"
+    label, colour, tip = _CONF_LABEL.get(tier, _CONF_LABEL["validated"])
+    # marginal = under a fifth of the green->red span left
+    style = ' style="color:#cf222e;font-weight:600"' if m < 0.2 else ""
+    return (f'<td data-v="{m}"{style} title="raw margin {raw*100:.0f}%, '
+            f'discounted to {m*100:.0f}% because {html.escape(weak)} is '
+            f'{html.escape(label)} ({html.escape(tip)})">'
+            f'{m*100:.0f}% <span class="tier" style="color:{colour}">'
+            f'{html.escape(weak)}&nbsp;·&nbsp;{html.escape(label)}</span></td>')
+
+
 def _table_html(scored: list[ScoredRow], best: set[int]) -> str:
-    head = ["#", "Config", "Family", "Verdict"] + [c[1] for c in _COLUMNS] + ["Build", "Reasons"]
+    head = (["#", "Config", "Family", "Verdict"] + [c[1] for c in _COLUMNS]
+            + ["Margin (weakest link)", "Build", "Valid", "Reasons"])
     thead = "".join(
         f'<th onclick="sortTable({i})">{html.escape(h)}</th>'
         for i, h in enumerate(head)
@@ -263,9 +446,15 @@ def _table_html(scored: list[ScoredRow], best: set[int]) -> str:
             sort_v = value if isinstance(value, (int, float)) and value == value else -1e18
             style = f' style="color:{color};font-weight:600"' if cell and cell.category in ("orange", "red") else ""
             cells.append(f'<td data-v="{sort_v}"{style}>{_fmt(value)}</td>')
+        cells.append(_margin_cell(sr))
         build_cell = sr.cells.get("build")
         bcat = build_cell.category if build_cell else "grey"
         cells.append(f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(bcat,3) }">{_light(bcat)}</td>')
+        val_cell = sr.cells.get("validity")
+        vcat = val_cell.category if val_cell else "grey"
+        vtip = val_cell.reason if val_cell and val_cell.reason else vcat
+        cells.append(f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(vcat,3) }" '
+                     f'title="{html.escape(vtip)}">{_light(vcat)}</td>')
         chips = " ".join(f'<span class="chip">{html.escape(c)}</span>' for c in sr.chips)
         cells.append(f'<td data-v="0">{chips}</td>')
 
@@ -408,8 +597,23 @@ figcaption{font-size:12px;color:#57606a;margin-top:.4rem;}
 .toggle{font-size:12px;margin-left:.5rem;}
 .legend span{margin-right:1rem;font-size:12px;}
 pre{white-space:pre-wrap;}
+.decision{border:1px solid #d0d7de;border-radius:10px;padding:1rem 1.2rem;margin:1.5rem 0;}
+.decision h2{margin-top:0;}
+.decision h3{font-size:14px;margin:1.2rem 0 .4rem;}
+.picks{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.8rem;margin-bottom:.8rem;}
+.pick{border:1px solid #d0d7de;border-radius:8px;padding:.6rem .7rem;}
+.pick h4{margin:0;font-size:13px;}
+.picksub{font-size:11px;color:#57606a;margin-bottom:.35rem;}
+.pickname{font-size:13px;font-weight:600;word-break:break-word;}
+.pickwhy{font-size:11px;color:#57606a;margin-top:.25rem;}
+table.pareto{font-size:12px;width:auto;}
+.decnotes{font-size:12px;margin:.8rem 0 0;padding-left:1.1rem;}
+.decnotes li{margin:.25rem 0;}
+.muted{font-size:12px;color:#57606a;}
+.tier{font-size:10px;display:block;font-weight:400;}
 @media (prefers-color-scheme:dark){
   th{background:#161b22;} th,td{border-color:#30363d;} .goal,figcaption{color:#8b949e;}
+  .decision,.pick{border-color:#30363d;} .picksub,.pickwhy,.muted{color:#8b949e;}
 }
 """
 
@@ -421,7 +625,8 @@ def write_workbook(result: StudyResult, out_path: str | Path) -> Path:
 
     scored = score_result(result, result.study.scoring)
     goal = result.study.goal
-    best = set(_best_indices(scored, goal))
+    dec = decide(scored, result.study.decide, goal)
+    best = set(_best_indices(scored, goal, spec=result.study.decide))
 
     # resolve click-in reference overlays (modelled / experimental / chapter)
     from stepgen.studio.references import resolve_references
@@ -441,19 +646,25 @@ def write_workbook(result: StudyResult, out_path: str | Path) -> Path:
 <style>{_css()}</style></head>
 <body>
 <h1>{html.escape(result.study.title)}</h1>
-<p class="goal">Goal: <b>{html.escape(goal or "—")}</b> ·
+<p class="goal">Deciding on: <b>{html.escape(", ".join(a.key for a in dec.axes))}</b> ·
   Families: {html.escape(", ".join(result.study.families))} ·
   {len(scored)} configs</p>
 <p class="legend">
   <span>{_light("green")}green {n_green}</span>
   <span>{_light("orange")}orange {n_orange}</span>
   <span>{_light("red")}red {n_red}</span>
-  <span>★ = best {len(best)} for the goal</span>
+  <span>★ = best {len(best)} all-round</span>
 </p>
+
+{_decision_html(scored, dec)}
 
 <h2>Overview — scored comparison</h2>
 <p style="font-size:12px;color:#57606a">Click a header to sort; click a row to drill in.
-Verdict is <b>worst-category-wins</b> across every applicable gate; grey = N-A for that family.</p>
+Verdict is <b>worst-category-wins</b> across every applicable gate; grey = N-A for that family.
+<b>Margin</b> is how far the weakest applicable metric sits from its red boundary, as a
+fraction of the green→red span, discounted by how much the model is trusted for that
+number. <b>Valid</b> is orange when the design sits outside the envelope the model has
+been checked in — never green there, and never red on those grounds alone.</p>
 {_table_html(scored, best)}
 
 <h2>Standard plots</h2>
@@ -468,18 +679,40 @@ Verdict is <b>worst-category-wins</b> across every applicable gate; grey = N-A f
 
     # JSON sidecar for cross-chapter reference
     sidecar = out_path.with_suffix(".json")
-    sidecar.write_text(json.dumps(_chapter_json(result, scored), indent=2, default=str),
+    sidecar.write_text(json.dumps(_chapter_json(result, scored, dec), indent=2, default=str),
                        encoding="utf-8")
     return out_path
 
 
-def _chapter_json(result: StudyResult, scored: list[ScoredRow]) -> dict[str, Any]:
+def _chapter_json(
+    result: StudyResult,
+    scored: list[ScoredRow],
+    dec: Decision | None = None,
+) -> dict[str, Any]:
+    dec = dec or decide(scored, result.study.decide, result.study.goal)
     return {
         "title": result.study.title,
         "goal": result.study.goal,
         "families": result.study.families,
         "git_hash": result.provenance.git_hash,
         "timestamp": result.provenance.timestamp,
+        # the decide layer, recorded so the verdict can be audited later — most
+        # of all the weights, which are meaningless if they are not written down
+        "decision": {
+            "axes": [a.key for a in dec.axes],
+            "weights": dec.weights,
+            "per_axis_winner": {
+                k: (scored[i].metrics.label if i is not None else None)
+                for k, i in dec.per_axis.items()
+            },
+            "pareto": [scored[i].metrics.label for i in dec.pareto],
+            "all_round": (scored[dec.all_round].metrics.label
+                          if dec.all_round is not None else None),
+            "safest": (scored[dec.safest].metrics.label
+                       if dec.safest is not None else None),
+            "all_red": dec.all_red,
+            "study_wide_caveats": dec.caveats,
+        },
         "rows": [
             {
                 "label": sr.metrics.label,
@@ -487,6 +720,13 @@ def _chapter_json(result: StudyResult, scored: list[ScoredRow]) -> dict[str, Any
                 "overall": sr.overall,
                 "chips": sr.chips,
                 "params": sr.metrics.params,
+                "composite": dec.composite.get(i),
+                "min_margin": sr.min_margin,
+                "min_margin_discounted": sr.min_margin_discounted,
+                "weakest_metric": sr.weakest_metric,
+                "extrapolated": sr.extrapolated_keys,
+                "confidence": {k: c.confidence for k, c in sr.cells.items()
+                               if c.category != "grey"},
                 "metrics": {
                     "throughput_mlhr": sr.metrics.throughput_mlhr,
                     "N_dfu": sr.metrics.N_dfu,
@@ -499,9 +739,12 @@ def _chapter_json(result: StudyResult, scored: list[ScoredRow]) -> dict[str, Any
                     "area_used_cm2": sr.metrics.area_used_cm2,
                     "fits_square": sr.metrics.fits_square,
                     "manufacturable": sr.metrics.manufacturable,
+                    "exit_width_um": sr.metrics.exit_width_um,
+                    "exit_depth_um": sr.metrics.exit_depth_um,
+                    "lambda_visc": sr.metrics.lambda_visc,
                 },
             }
-            for sr in scored
+            for i, sr in enumerate(scored)
         ],
     }
 

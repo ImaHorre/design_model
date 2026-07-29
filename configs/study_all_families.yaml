@@ -14,7 +14,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 title: "Serpentine vs radial vs manifold — cross-topology compare"
-goal: flatness
+goal: flatness            # legacy one-axis shorthand; `decide:` below supersedes it
+
+# ── the decide layer — several value axes, not one goal ──────────────────────
+# Per-axis winners and the Pareto set are the real output. The composite is a
+# convenience for ordering only: its weights are stated here and recorded in the
+# chapter precisely because a hidden weighting is worse than none at all.
+decide:
+  axes: [flatness, throughput, drive_pressure, margin]
+  weights: { flatness: 0.4, throughput: 0.3, drive_pressure: 0.2, margin: 0.1 }
 
 family: [serpentine, radial, manifold]
 

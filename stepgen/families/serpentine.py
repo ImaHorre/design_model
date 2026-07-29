@@ -72,7 +72,7 @@ class SerpentineFamily(Family):
         # Serpentine exposes all shared gates. regime_Ca is only meaningful when
         # an interfacial tension is given; otherwise the value is None -> grey.
         return {"throughput_mlhr", "uniformity_pct", "operating_Po_mbar",
-                "regime_Ca", "build"}
+                "regime_Ca", "build", "validity"}
 
     # -- compile -----------------------------------------------------------
     def compile(
@@ -241,6 +241,10 @@ def solve_config(
         uniformity_pct=float(row.get("dP_spread_pct", math.nan)),
         operating_Po_mbar=float(row["Po_in_mbar"]),
         regime_Ca=regime_Ca,
+        exit_width_um=exit_w * 1e6,
+        exit_depth_um=exit_d * 1e6,
+        lambda_visc=(config.fluids.mu_continuous / config.fluids.mu_dispersed
+                     if config.fluids.mu_dispersed else None),
         area_used_cm2=float(row["footprint_area_used"]) * 1e4,
         fits_square=bool(row["fits_footprint"]),
         manufacturable=manufacturable,

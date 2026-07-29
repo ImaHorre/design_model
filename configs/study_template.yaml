@@ -54,6 +54,22 @@ serpentine:
   # explicit junction block above:
   # target_droplet_um: [1, 10, 40]
 
+# ── the decide layer — what "best" means for this study ──────────────────────
+# Several value axes, not one goal. The output is a decision panel: a winner per
+# axis, the Pareto set, an all-round pick and the safest pick. Per-axis winners
+# and the Pareto set are the real finding — that the flattest design is a
+# different device from the fastest one is exactly what you want to know.
+#
+# The composite is a convenience for ordering only. Its weights are declared
+# here and recorded verbatim in the chapter: a composite whose weights are
+# hidden is a worse tool than no composite at all.
+#
+# Axes: flatness | throughput | drive_pressure | area | droplet_um | margin
+# `goal: <one word>` still works as a one-axis shorthand.
+decide:
+  axes: [flatness, throughput, drive_pressure, margin]
+  weights: { flatness: 0.4, throughput: 0.3, drive_pressure: 0.2, margin: 0.1 }
+
 # ── declarative scoring — traffic lights, worst-category-wins ────────────────
 scoring:
   throughput_mlhr:   { green: 5,   orange: 1,   higher_better: true }

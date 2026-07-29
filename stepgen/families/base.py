@@ -15,6 +15,7 @@ Interface (`Family`)
     compile(params, ...)  study params  -> family-native config object
     solve(compiled, op)   family-native config -> CommonMetrics
     applicable_metrics()  which scoring gates apply to this family
+    metric_confidence(cm) how far each metric of a row can be trusted
 
 `evaluate()` is a convenience that chains compile + solve.
 
@@ -36,8 +37,9 @@ from typing import Any
 # The shared, comparable contract
 # ---------------------------------------------------------------------------
 
-# The scoring keys that a family may declare applicable.  ``build`` is a
-# composite gate (fits_square / manufacturable / no_crossing).
+# The scoring keys that a family may declare applicable.  ``build`` and
+# ``validity`` are composite gates: ``build`` over fits_square / manufacturable /
+# no_crossing, ``validity`` over the model-envelope checks (see below).
 SCORING_KEYS: frozenset[str] = frozenset({
     "throughput_mlhr",
     "uniformity_pct",
@@ -45,7 +47,37 @@ SCORING_KEYS: frozenset[str] = frozenset({
     "regime_Ca",
     "hub_budget_pct",
     "build",
+    "validity",
 })
+
+
+# ---------------------------------------------------------------------------
+# Model-confidence tiers
+# ---------------------------------------------------------------------------
+# How much a given number deserves to be trusted.  Margin is discounted by the
+# tier, so a generous margin on an extrapolated quantity is not mistaken for
+# reassurance (PRD_studio_v1.md §6).
+VALIDATED = "validated"          # compared against experiment, agreement established
+CALIBRATED = "calibrated"        # empirical fit, evaluated in range
+EXTRAPOLATION = "extrapolation"  # model runs, but outside where it has been checked
+
+#: multiplier applied to a metric's margin when ranking by safety
+CONFIDENCE_WEIGHT: dict[str, float] = {
+    VALIDATED: 1.0,
+    CALIBRATED: 0.7,
+    EXTRAPOLATION: 0.4,
+}
+
+#: exit depth [µm] above which the droplet power-law is being extrapolated.
+#: The fit is calibrated at h = 1/5/10 µm (see DropletModelConfig); beyond ~2x
+#: the deepest calibration point the size and frequency are not trusted.
+DROPLET_FIT_DEPTH_UM = 12.0
+
+#: exit Ca above which the device is out of step-emulsification and the
+#: geometry-set droplet size no longer holds.  0.03 is the axisymmetric
+#: SE->balloon ceiling (@chakraborty2017-step-emulsification); the rectangular
+#: threshold is lower still, ~0.0125 (@montessori2020-step-emulsification).
+SE_CEILING_CA = 0.03
 
 
 @dataclass
@@ -76,6 +108,11 @@ class CommonMetrics:
     fits_square: bool | None = None         # fits the die/wafer square?
     manufacturable: bool | None = None      # within fab caps (depth/width/wall)?
     no_crossing: bool | None = None         # continuous never crosses dispersed?
+
+    # ── model-envelope inputs (feed the `validity` gate; see scoring.py) ─────
+    exit_width_um: float | None = None      # junction exit width [µm]
+    exit_depth_um: float | None = None      # junction exit depth [µm]
+    lambda_visc: float | None = None        # µ_continuous / µ_dispersed
 
     notes: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
@@ -111,6 +148,38 @@ class Family(ABC):
     @abstractmethod
     def applicable_metrics(self) -> set[str]:
         """Return the subset of :data:`SCORING_KEYS` that apply to this family."""
+
+    def metric_confidence(self, cm: "CommonMetrics") -> dict[str, str]:
+        """
+        How far each metric of *this row* can be trusted.
+
+        Returns ``{scoring_key: tier}`` over :data:`VALIDATED` /
+        :data:`CALIBRATED` / :data:`EXTRAPOLATION`.  The judgement is
+        row-dependent, not merely family-dependent: the same family produces a
+        validated throughput at a 10 µm exit and an extrapolated one at 50 µm,
+        because Stage-2 formation frequency for deep exits is not modelled and
+        the hydraulic number therefore becomes an upper bound.
+
+        This default encodes the shared v3 position (PRD_studio_v1.md §6);
+        families override to sharpen it for their own topology.
+        """
+        deep = (cm.exit_depth_um or 0.0) > DROPLET_FIT_DEPTH_UM
+        out_of_se = (cm.regime_Ca or 0.0) > SE_CEILING_CA
+
+        return {
+            # Stage-1 refill hydraulics and the ΔP distribution across the
+            # ladder are what the po_sweep work actually checked.
+            "operating_Po_mbar": VALIDATED,
+            "uniformity_pct": VALIDATED,
+            # Oil delivery is Stage-1 (solid), but it only converts to
+            # throughput if the DFU keeps up — unmodelled for deep exits.
+            "throughput_mlhr": EXTRAPOLATION if deep else VALIDATED,
+            # Ca is an analytic diagnostic; above the SE ceiling the regime it
+            # is reporting on is itself outside the validated envelope.
+            "regime_Ca": EXTRAPOLATION if out_of_se else CALIBRATED,
+            # Analytic Hele-Shaw hub drop — never checked against experiment.
+            "hub_budget_pct": CALIBRATED,
+        }
 
     @abstractmethod
     def compile(

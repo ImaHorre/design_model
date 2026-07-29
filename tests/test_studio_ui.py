@@ -83,9 +83,20 @@ def test_scored_dataframe_shape_and_columns(scored):
     df = ui.scored_dataframe(rows, best)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == len(rows)
-    for col in ("#", "★", "Config", "Family", "Verdict", "Build", "Reasons"):
+    for col in ("#", "★", "Config", "Family", "Verdict", "Build", "Reasons",
+                "Margin %", "Weakest link", "Valid"):
         assert col in df.columns
     assert df["Verdict"].iloc[0] in ("green", "orange", "red")
+
+
+def test_scored_dataframe_carries_margin_and_validity(scored):
+    _study, _result, rows = scored
+    df = ui.scored_dataframe(rows, set())
+    assert df["Valid"].iloc[0] in ("green", "orange", "red", "grey")
+    margin = df["Margin %"].iloc[0]
+    assert margin is None or margin >= 0
+    if margin is not None:
+        assert df["Weakest link"].iloc[0] in rows[0].cells
 
 
 def test_category_frame_matches_dataframe_shape(scored):
@@ -127,3 +138,59 @@ def test_module_exposes_entrypoints():
     assert callable(ui.render)
     assert callable(ui.main)
     assert callable(ui._compute)
+    assert callable(ui._render_decision)
+
+
+# ---------------------------------------------------------------------------
+# batch / interactive parity — the non-negotiable invariant (PRD §4)
+# ---------------------------------------------------------------------------
+
+def test_decision_tab_renders_headless(tmp_path):
+    """
+    Drive the real Streamlit app headless and assert the Decision tab renders.
+
+    The pure helpers are unit-tested above; this is the one check that the
+    Streamlit wiring itself holds together — tabs, sliders and all.
+    """
+    AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
+
+    study = tmp_path / "study.yaml"
+    study.write_text(_MINIMAL, encoding="utf-8")
+
+    ui_path = Path(ui.__file__)
+    at = AppTest.from_file(str(ui_path), default_timeout=300)
+    at.session_state["study_text"] = _MINIMAL
+    at.run()
+    assert not at.exception
+
+    run_btn = [b for b in at.button if "Run" in b.label]
+    assert run_btn, "the sidebar should offer a Run study button"
+    run_btn[0].click().run()
+    assert not at.exception
+
+    assert "Decision" in [t.label for t in at.tabs]
+    body = " ".join(m.value for m in at.markdown)
+    assert "Per-axis winners" in body
+    assert "Pareto set" in body
+    # one weight slider per declared axis
+    assert len(at.slider) >= 1
+
+
+def test_ui_and_workbook_reach_the_same_decision(scored):
+    """
+    The UI is a skin. For the same study and the same weights it must reach the
+    identical decision the batch path writes into the chapter — there is never a
+    second model.
+    """
+    from stepgen.studio.ranking import decide
+
+    study, _result, rows = scored
+    batch = decide(rows, study.decide, study.goal)
+    interactive = decide(rows, study.decide, study.goal,
+                         weights_override=batch.weights)
+
+    assert interactive.per_axis == batch.per_axis
+    assert interactive.pareto == batch.pareto
+    assert interactive.all_round == batch.all_round
+    assert interactive.safest == batch.safest
+    assert interactive.weights == pytest.approx(batch.weights)

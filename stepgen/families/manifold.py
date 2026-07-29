@@ -163,7 +163,7 @@ class ManifoldFamily(Family):
     def applicable_metrics(self) -> set[str]:
         # Same comparable gates as serpentine, plus a real no_crossing build gate.
         return {"throughput_mlhr", "uniformity_pct", "operating_Po_mbar",
-                "regime_Ca", "build"}
+                "regime_Ca", "build", "validity"}
 
     # -- compile -----------------------------------------------------------
     def compile(
@@ -487,6 +487,9 @@ def solve_manifold(
         uniformity_pct=uniformity_pct,
         operating_Po_mbar=Po_mbar,
         regime_Ca=regime_Ca,
+        exit_width_um=c.exit_width_m * 1e6,
+        exit_depth_um=c.exit_depth_m * 1e6,
+        lambda_visc=(c.mu_water / c.mu_oil) if c.mu_oil else None,
         hub_budget_pct=None,        # N-A for manifold (radial-specific)
         area_used_cm2=area_used_cm2,
         fits_square=fits_square,

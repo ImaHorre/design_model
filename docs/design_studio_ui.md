@@ -43,10 +43,22 @@ exits — it never crashes the core CLI.
 - **Sidebar** — pick a shipped `configs/study_*.yaml`, upload one, or paste/edit
   YAML directly. Press **▶ Run study**. Runs are cached on the YAML text, so
   re-editing and re-running is instant unless the config actually changed.
+- **Decision tab** — what the study concluded. A winner per value axis, the
+  Pareto set, an all-round pick and a *safest* pick. The composite weights are
+  live sliders: moving one re-ranks instantly without re-running the physics,
+  because re-ranking only reads the already-solved rows. Whatever the weights
+  are left at is what gets written into the chapter — a composite whose weights
+  are hidden is worse than no composite at all. Declare the axes with a
+  `decide:` block; `goal: <one word>` still works as a one-axis shorthand.
 - **Scored comparison tab** — the traffic-light table (worst-category-wins),
-  filterable by family and verdict, with ★ marking the best rows for the study's
-  `goal`. Pick any point to drill into its swept params, score reasons, and raw
-  family-native metrics.
+  filterable by family and verdict, with ★ marking the best rows all-round.
+  **Margin %** is how far the weakest applicable metric sits from its red
+  boundary as a fraction of the green→red span, discounted by how far the model
+  is trusted for that number (100% = exactly the green bound; above 100% = extra
+  headroom). **Valid** goes orange when the design sits outside the envelope the
+  model has actually been checked in — never green there, and never red on those
+  grounds alone. Pick any point to drill into its swept params, score reasons,
+  per-metric margins and trust tiers, and raw family-native metrics.
 - **Plots tab** — the standard plot set with the same *best-3* and *references*
   toggles as the static workbook.
 - **Provenance & export tab** — model git hash, run timestamp, resolved

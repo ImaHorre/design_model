@@ -13,8 +13,8 @@ worth having. Everything after it makes the result durable.
 
 | Phase | Scope | Size | Status |
 |---|---|---|---|
-| 0 | Housekeeping + threshold correction | S | not started |
-| 1 | Decide layer — value axes, margin, confidence, validity | M | not started |
+| 0 | Housekeeping + threshold correction | S | **done** (`e390764`) |
+| 1 | Decide layer — value axes, margin, confidence, validity | M | **done** |
 | 2 | Intent layer + constraint diagnosis | M | not started |
 | 3 | Design visualiser (to-scale SVG) | M | not started |
 | **M1** | **Deep-DFU sweep session** | — | **gated on 0–3** |
@@ -99,6 +99,46 @@ all-round pick, safest pick, weights shown and (in the UI) live-adjustable.
 ### Risk
 Weight-tuning is seductive and mostly noise. Per-axis winners and the Pareto set are the
 real output; the composite is a convenience. Resist letting it become the headline.
+
+### What actually landed
+
+`stepgen/studio/ranking.py` (new) — axis registry, per-axis winners, N-axis Pareto,
+weighted composite, `safest`. `viz/plots.py::_pareto_front` now delegates to
+`ranking.pareto_mask`, so there is one implementation of the rule.
+`scoring.py` — `CellScore.margin` / `.confidence` / `.detail`, `ScoredRow.min_margin`,
+`.min_margin_discounted`, `.weakest_metric`, `.extrapolated_keys`, and the `validity`
+gate. `families/base.py` — `metric_confidence(cm)` on the contract (row-aware, not just
+family-static), plus `exit_width_um` / `exit_depth_um` / `lambda_visc` on `CommonMetrics`
+to feed the envelope checks. Decision panel in the chapter and a Decision tab with live
+weight sliders in the UI; `decision` block added to the JSON sidecar.
+Tests: `tests/test_studio_decide.py` (43) + UI additions.
+
+Three decisions worth recording, because they departed from the plan as written:
+
+1. **Margin is not capped above 1.0.** Capping at the green bound was the first
+   implementation and it made *every* green cell read 100%, which destroys the
+   distinction the column exists to draw. It is now floored at 0 and uncapped above:
+   1.0 is exactly the green bound, and 1.6 means "a full green→red span of headroom
+   and a bit over half of another". This resolves open question 2 in the direction of
+   *not* forcing commensurability; the caveat about cross-metric comparison is recorded
+   in the `_margin` docstring rather than papered over by a clamp.
+
+2. **Validity breaches are split into study-wide caveats and row-specific ones.**
+   Our λ ≈ 0.015 is outside the validated envelope for *every* design we will ever run
+   on this fluid system, so scoring it per row makes every row orange for the same
+   reason and desensitises the signal. `ranking.shared_caveats()` lifts breaches common
+   to all rows into a single standing caveat; `row_specific_breaches()` leaves the ones
+   that actually discriminate on the row. The gate itself stays honest per row.
+
+3. **Confidence is row-aware, not family-static.** `metric_confidence()` takes the
+   `CommonMetrics`, because the same family yields a validated throughput at a 10 µm
+   exit and an extrapolated one at 50 µm. This answers open question 3: the tier lives
+   in family code but is computed from the row, with the shared v3 position in the base
+   class and families free to sharpen it.
+
+Still open: the real `study_all_families` grid has one design that wins every axis, so
+the four-different-winners case is exercised by a constructed set in the tests rather
+than by a shipped config. M1's deep-DFU grid is where genuine conflict should show up.
 
 ---
 

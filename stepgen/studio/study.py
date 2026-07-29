@@ -76,6 +76,9 @@ class Study:
     scoring: dict[str, Any]
     references: list[dict[str, Any]]
     points: list[StudyPoint]
+    #: the ``decide:`` block (value axes + composite weights).  Empty means fall
+    #: back to ``goal:`` as a one-axis shorthand — see studio.ranking.
+    decide: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
     source_path: str | None = None
     source_text: str | None = None
@@ -163,6 +166,7 @@ def load_study_text(text: str, source_path: str | Path | None = None) -> Study:
         scoring=raw.get("scoring", {}) or {},
         references=list(raw.get("reference", []) or []),
         points=points,
+        decide=raw.get("decide", {}) or {},
         raw=raw,
         source_path=None if source_path is None else str(source_path),
         source_text=text,

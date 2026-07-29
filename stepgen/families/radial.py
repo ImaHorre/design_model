@@ -90,6 +90,7 @@ class RadialCompiled:
     mu_oil: float
     gamma: float
     min_feature_m: float
+    mu_water: float = 0.00089     # continuous phase; envelope reporting only
 
 
 @register_family
@@ -100,7 +101,7 @@ class RadialFamily(Family):
         # Uniformity is automatic (grey / N-A). Radial-specific gates are the exit
         # Ca regime and the hub pressure budget.
         return {"throughput_mlhr", "operating_Po_mbar", "regime_Ca",
-                "hub_budget_pct", "build"}
+                "hub_budget_pct", "build", "validity"}
 
     # -- compile -----------------------------------------------------------
     def compile(
@@ -133,6 +134,7 @@ class RadialFamily(Family):
             mu_oil=float(fluids.get("mu_dispersed", 0.06)),
             gamma=float(fluids.get("gamma", 0.0)),
             min_feature_m=float(manufacturing.get("min_wall_um", 0.5)) * 1e-6,
+            mu_water=float(fluids.get("mu_continuous", 0.00089)),
         )
 
     # -- solve -------------------------------------------------------------
@@ -256,6 +258,9 @@ def solve_radial(
         uniformity_pct=None,          # automatic flatness -> N-A (grey)
         operating_Po_mbar=Po_mbar,
         regime_Ca=regime_Ca,
+        exit_width_um=c.exit_width_m * 1e6,
+        exit_depth_um=h * 1e6,
+        lambda_visc=(c.mu_water / c.mu_oil) if c.mu_oil else None,
         hub_budget_pct=hub_budget_pct,
         area_used_cm2=area_used_cm2,
         fits_square=fits_square,

@@ -375,17 +375,15 @@ def _pareto_front(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
     A point is Pareto-optimal if no other point dominates it (i.e., no other
     point is strictly better in at least one axis and at least as good in the
     other).
+
+    Thin two-axis wrapper over :func:`stepgen.studio.ranking.pareto_mask`, which
+    is the N-axis generalisation the Studio decide layer uses.  One rule, one
+    implementation.
     """
-    n = len(xs)
-    dominated = np.zeros(n, dtype=bool)
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            if xs[j] >= xs[i] and ys[j] >= ys[i] and (xs[j] > xs[i] or ys[j] > ys[i]):
-                dominated[i] = True
-                break
-    return ~dominated
+    from stepgen.studio.ranking import pareto_mask
+
+    return pareto_mask(np.column_stack([np.asarray(xs, dtype=float),
+                                        np.asarray(ys, dtype=float)]))
 
 
 def plot_pareto(

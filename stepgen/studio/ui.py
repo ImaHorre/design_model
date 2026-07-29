@@ -78,8 +78,13 @@ def scored_dataframe(scored: list[ScoredRow], best: set[int]) -> pd.DataFrame:
         }
         for key, header in _COLUMNS:
             row[header] = getattr(m, key, None)
+        disc = sr.min_margin_discounted
+        row["Margin %"] = None if disc is None else round(disc * 100, 1)
+        row["Weakest link"] = sr.weakest_metric or ""
         build = sr.cells.get("build")
         row["Build"] = build.category if build else "grey"
+        validity = sr.cells.get("validity")
+        row["Valid"] = validity.category if validity else "grey"
         row["Reasons"] = " · ".join(sr.chips)
         rows.append(row)
     return pd.DataFrame(rows)
@@ -96,10 +101,17 @@ def category_frame(scored: list[ScoredRow], df: pd.DataFrame) -> pd.DataFrame:
         cats.at[i, "Verdict"] = sr.overall
         build = sr.cells.get("build")
         cats.at[i, "Build"] = build.category if build else "grey"
+        validity = sr.cells.get("validity")
+        cats.at[i, "Valid"] = validity.category if validity else "grey"
         for key, header in _COLUMNS:
             cell = sr.cells.get(key)
             if cell is not None:
                 cats.at[i, header] = cell.category
+        # a margin under a fifth of the green->red span is marginal, not safe
+        disc = sr.min_margin_discounted
+        if disc is not None:
+            cats.at[i, "Margin %"] = ("red" if disc < 0.2
+                                      else "orange" if disc < 0.5 else "green")
     return cats
 
 
@@ -160,7 +172,7 @@ def _compute(text: str, source_path: str | None) -> dict[str, Any]:
     result = run_study(study)
     scored = score_result(result, study.scoring)
     refs = resolve_references(study)
-    best = set(_best_indices(scored, study.goal))
+    best = set(_best_indices(scored, study.goal, spec=study.decide))
 
     df = scored_dataframe(scored, best)
     cats = category_frame(scored, df)
@@ -256,8 +268,11 @@ def _render_results(st, data: dict[str, Any]) -> None:
     n_orange = sum(1 for s in scored if s.overall == "orange")
     n_red = sum(1 for s in scored if s.overall == "red")
 
+    from stepgen.studio.ranking import resolve_axes
+
+    axis_names = ", ".join(a.key for a in resolve_axes(study.decide, study.goal))
     st.subheader(study.title or "Untitled study")
-    st.caption(f"Goal: **{study.goal or '—'}**  ·  Families: "
+    st.caption(f"Deciding on: **{axis_names}**  ·  Families: "
                f"{', '.join(study.families)}  ·  {len(scored)} configs")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -266,8 +281,11 @@ def _render_results(st, data: dict[str, Any]) -> None:
     c3.metric("🟠 Orange", n_orange)
     c4.metric("🔴 Red", n_red)
 
-    tab_table, tab_plots, tab_prov = st.tabs(
-        ["Scored comparison", "Plots", "Provenance & export"])
+    tab_decide, tab_table, tab_plots, tab_prov = st.tabs(
+        ["Decision", "Scored comparison", "Plots", "Provenance & export"])
+
+    with tab_decide:
+        _render_decision(st, scored, study)
 
     with tab_table:
         _render_table(st, scored, df, cats)
@@ -277,6 +295,122 @@ def _render_results(st, data: dict[str, Any]) -> None:
 
     with tab_prov:
         _render_provenance(st, result, study)
+
+
+def _render_decision(st, scored: list[ScoredRow], study: Study) -> None:
+    """
+    The decide layer, with the composite weights live on sliders.
+
+    Re-ranking is pure — it reads the already-solved rows — so moving a slider
+    never re-runs the physics, and the batch and interactive paths still produce
+    identical numbers for identical weights.
+    """
+    from stepgen.studio.ranking import (
+        axis_value, decide, resolve_axes, resolve_weights, row_specific_breaches,
+    )
+
+    if not scored:
+        st.info("No rows to decide between.")
+        return
+
+    axes = resolve_axes(study.decide, study.goal)
+    defaults = resolve_weights(study.decide, axes)
+
+    st.caption("Per-axis winners and the Pareto set are the finding. The composite "
+               "is a convenience for ordering — its weights are yours to set, and "
+               "whatever you leave them at is what gets recorded in the chapter.")
+
+    with st.expander("Composite weights", expanded=True):
+        cols = st.columns(len(axes))
+        weights = {
+            axis.key: col.slider(axis.label, 0.0, 1.0,
+                                 float(defaults.get(axis.key, 0.0)), 0.05,
+                                 key=f"w_{axis.key}")
+            for axis, col in zip(axes, cols)
+        }
+        if sum(weights.values()) <= 0:
+            st.warning("All weights are zero — falling back to the study's weights.")
+            weights = defaults
+
+    dec = decide(scored, study.decide, study.goal, weights_override=weights)
+
+    # ── the four picks ──────────────────────────────────────────────────────
+    st.markdown("#### Per-axis winners")
+    cols = st.columns(len(dec.axes))
+    for axis, col in zip(dec.axes, cols):
+        i = dec.per_axis.get(axis.key)
+        if i is None:
+            col.metric(axis.label, "—", help="N-A for every row")
+            continue
+        value = axis_value(scored[i], axis)
+        shown = f"{value * 100:.0f}%" if axis.key == "margin" else f"{value:.4g}"
+        col.metric(axis.label, shown, help=scored[i].metrics.label)
+        col.caption(scored[i].metrics.label)
+
+    st.markdown("#### All-round and safest")
+    c1, c2 = st.columns(2)
+    if dec.all_round is not None:
+        c1.metric("All-round", scored[dec.all_round].metrics.label,
+                  help=f"composite {dec.composite.get(dec.all_round, 0):.3f}")
+        c1.caption("weights: " + ", ".join(f"{k} {v:.2f}" for k, v in dec.weights.items()))
+    if dec.safest is not None:
+        row = scored[dec.safest]
+        c2.metric("Safest to build first", row.metrics.label,
+                  help="highest confidence-discounted margin")
+        c2.caption(f"discounted margin {(row.min_margin_discounted or 0) * 100:.0f}% "
+                   f"· weakest link: {row.weakest_metric or '—'}")
+
+    # ── Pareto ──────────────────────────────────────────────────────────────
+    st.markdown("#### Pareto set")
+    if dec.pareto:
+        if dec.is_conflicted():
+            st.info("The axes disagree — no single design wins on everything. "
+                    "This set is the honest answer.")
+        st.dataframe(
+            pd.DataFrame([
+                {"Config": scored[i].metrics.label,
+                 **{a.label: axis_value(scored[i], a) for a in dec.axes}}
+                for i in dec.pareto
+            ]),
+            width="stretch", hide_index=True,
+        )
+    else:
+        st.caption("No design can be compared across all declared axes.")
+
+    incomparable = [i for i in dec.candidates if i not in set(dec.pareto)
+                    and any(axis_value(scored[i], a) is None for a in dec.axes)]
+    if incomparable:
+        missing = sorted({a.label for i in incomparable for a in dec.axes
+                          if axis_value(scored[i], a) is None})
+        st.caption(
+            f"{len(incomparable)} design{'s' if len(incomparable) != 1 else ''} "
+            f"left off the front — N-A on {', '.join(missing)}. A design that "
+            f"cannot be measured on an axis is not given a substitute value, so "
+            f"it cannot be called non-dominated across all of them.")
+
+    # ── honesty notes ───────────────────────────────────────────────────────
+    if dec.all_red:
+        st.error("Every design scored red. These picks are the least-bad of an "
+                 "unbuildable set, not recommendations.")
+    elif len(dec.candidates) < len(scored):
+        n = len(scored) - len(dec.candidates)
+        st.caption(f"{n} red row{'s' if n != 1 else ''} excluded from selection — "
+                   f"a winner should be buildable.")
+
+    for name, i in (("all-round", dec.all_round), ("safest", dec.safest)):
+        if i is None:
+            continue
+        keys = [k for k in scored[i].extrapolated_keys if k != "validity"]
+        if keys:
+            st.warning(f"The **{name}** pick rests on extrapolated "
+                       f"{', '.join(keys)} — the model has not been checked there.")
+        specific = row_specific_breaches(scored[i], dec.caveats)
+        if specific:
+            st.warning(f"**{name}** — outside the validated envelope: "
+                       + "; ".join(specific))
+
+    for caveat in dec.caveats:
+        st.warning(f"Applies to **every** design in this study: {caveat}")
 
 
 def _render_table(st, scored, df, cats) -> None:
@@ -302,7 +436,10 @@ def _render_table(st, scored, df, cats) -> None:
     st.dataframe(styler, width="stretch", hide_index=True,
                  height=min(70 + 35 * len(view), 620))
     st.caption("Verdict is **worst-category-wins** across every applicable gate; "
-               "grey cells are N-A for that family. ★ marks the best rows for the goal.")
+               "grey cells are N-A for that family. ★ marks the best rows all-round. "
+               "**Margin %** is how far the weakest applicable metric sits from its red "
+               "boundary, discounted by how far the model is trusted for that number. "
+               "**Valid** is orange outside the envelope the model has been checked in.")
 
     # ── drill-down ──────────────────────────────────────────────────────────
     st.markdown("#### Drill into a point")
@@ -329,6 +466,23 @@ def _render_drilldown(st, sr: ScoredRow) -> None:
         st.markdown("**Notes**")
         for n in (m.notes or ["—"]):
             st.write(f"- {n}")
+        st.markdown("**Margin & trust**")
+        graded = sr.graded_cells
+        if graded:
+            st.dataframe(
+                pd.DataFrame([
+                    {"Metric": c.key,
+                     "Margin %": round((c.margin or 0) * 100, 1),
+                     "Trust": c.confidence}
+                    for c in sorted(graded, key=lambda c: c.margin or 0)
+                ]),
+                width="stretch", hide_index=True,
+            )
+            st.caption(f"Weakest link: **{sr.weakest_metric or '—'}** · "
+                       f"discounted margin "
+                       f"{(sr.min_margin_discounted or 0) * 100:.0f}%")
+        else:
+            st.caption("No graded metric carries a margin for this row.")
     with right:
         st.markdown("**Raw metrics**")
         raw = {k: v for k, v in (m.raw or {}).items() if not k.startswith("_")}
@@ -406,9 +560,15 @@ def _families_hint(st) -> None:
 
 _TEMPLATE_HINT = """\
 title: "My study"
-goal: throughput          # 'flatness' or 'throughput'
 family: serpentine        # or a list, e.g. [serpentine, radial, manifold]
 
+# What "best" means. Several axes, not one goal — the Decision tab reports a
+# winner per axis, the Pareto set, an all-round pick and the safest pick.
+decide:
+  axes: [flatness, throughput, drive_pressure, margin]
+  weights: { flatness: 0.4, throughput: 0.3, drive_pressure: 0.2, margin: 0.1 }
+
+# `goal: throughput` still works as a one-axis shorthand.
 # See configs/study_template.yaml for the full annotated schema.
 """
 
