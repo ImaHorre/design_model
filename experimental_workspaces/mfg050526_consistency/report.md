@@ -46,7 +46,7 @@
 | Production batch | 050526 |
 | Testing date | 060526 |
 | Continuous phase | SDS |
-| Dispersed phase | Silicone Oil |
+| Dispersed phase | Sunflower Oil |
 | Flow rate (Qw) | 5 ml/hr |
 | Oil pressure (Po) | 300 mbar |
 | Positions tested | DFU1–DFU10 |

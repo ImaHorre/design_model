@@ -1,7 +1,7 @@
 ---
 study-type: experimental
 device: V5-8-1 (ID B, V5-30 geometry)
-emulsion: Silicone oil / SDS-water
+emulsion: Sunflower oil / SDS-water
 date: 2026-04
 parameter-varied: [SDS] (0.125–2% mass), CMC ≈ 0.24%
 fixed: key cross-concentration comparison at Po=200 mbar, Qw=5 mL/hr

@@ -54,7 +54,7 @@ result.average_frequency_hz                            # Device frequency [Hz]
 ## Device configurations
 
 Active configs in `configs/`:
-- `v5_30.yaml` — V5-30 device (30 µm features, o/w: SDS continuous, silicone oil dispersed)
+- `v5_30.yaml` — V5-30 device (30 µm features, o/w: SDS continuous, sunflower oil dispersed)
 - `w11.yaml` — W11 device
 - `test_stage_wise_v3.yaml` — test config with full v3 physics section
 

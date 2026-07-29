@@ -1,6 +1,6 @@
 # V5-8-1 — Qw Sweep Analysis Report
 **Device:** V5-8-1 (V5-30 geometry, 30 µm junction)  
-**Fluids:** 2% SDS continuous (water), silicone oil dispersed  
+**Fluids:** 2% SDS continuous (water), sunflower oil dispersed  
 **Date analysed:** 2026-04-27  
 **Script:** `scripts/v5_8_1_qw_sweep_analysis.py`  
 **Output figures:** `results/v5_8_1_qw_sweep/fig_01–06.png`

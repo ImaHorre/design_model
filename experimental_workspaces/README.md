@@ -53,13 +53,13 @@ When starting a new Claude session on a workspace, paste this into your first me
 | `qw_sweep_v581/` | V5-8-1 (ID B) | Qw × Po matrix | Stage timing vs water flowrate; Stage 2 Qw dependence |
 | `conc_sweep_v581/` | V5-8-1 (ID B) | [SDS] (0.125–2%) | Surfactant concentration effects; contact-angle mechanism |
 | `mfg050526_consistency/` | V5-30 (batch) | DFU position | Manufacturing batch consistency (3 devices) |
-| `nacas_mct_comparison/` | V5-30 (ID A) | Emulsion system | NaCas/MCT vs SDS/silicone-oil comparison |
+| `nacas_mct_comparison/` | V5-30 (ID A) | Emulsion system | NaCas/MCT vs SDS/sunflower-oil comparison |
 
 ### Synthesis — cross-workspace analysis
 
 | Workspace | Covers | Description |
 |---|---|---|
-| `sds_sweep_synthesis/` | po_sweep_v530, qw_sweep_v581, conc_sweep_v581 | Full SDS/silicone-oil characterisation; model tuning recommendations |
+| `sds_sweep_synthesis/` | po_sweep_v530, qw_sweep_v581, conc_sweep_v581 | Full SDS/sunflower-oil characterisation; model tuning recommendations |
 
 ### Computational — model-only
 

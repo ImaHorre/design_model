@@ -5,7 +5,7 @@ There is ONE master dataset, not three: ``po_sweep/data/stage_timings.csv``
 (device V5-8-1). The po / qw / conc "sweeps" are filtered views of it.
 
 This module loads that master CSV, parses the SDS concentration out of the
-``VideoFile`` string (it is NOT a column), restricts to the SDS / silicone-oil
+``VideoFile`` string (it is NOT a column), restricts to the SDS / sunflower-oil
 system, tags each event's regime class (clean dripping interior vs held-out
 out-of-regime), and computes the per-event reset volume ``V_reset`` used by the
 Stage-1 refill inversion.
@@ -80,7 +80,7 @@ def classify_regime(sds_pc: float, po_mbar: float) -> str:
 
 def load_events(csv_path: Path | str = MASTER_CSV) -> pd.DataFrame:
     """
-    Load and normalise the master event table for the SDS / silicone-oil system.
+    Load and normalise the master event table for the SDS / sunflower-oil system.
 
     Returns one row per formation event with tidy columns:
         sds_pc, Po_mbar, Qw_mlhr, S1_s, S2_s, S3_s, total_s,
@@ -89,7 +89,7 @@ def load_events(csv_path: Path | str = MASTER_CSV) -> pd.DataFrame:
     """
     df = pd.read_csv(csv_path)
 
-    # Restrict to silicone-oil dispersed phase; concentration is in ContPhase.
+    # Restrict to sunflower-oil dispersed phase; concentration is in ContPhase.
     df = df[df["DispPhase"] == "SO"].copy()
 
     df["sds_pc"] = df["ContPhase"].apply(parse_sds_pc)   # None for NaCas -> dropped

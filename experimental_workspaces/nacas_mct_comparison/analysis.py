@@ -787,7 +787,7 @@ report = f"""\
 
 This report characterises droplet formation in a new fluid system — 2.5% sodium caseinate
 (NaCas) as continuous-phase surfactant with medium-chain triglyceride oil (MCT) as the
-dispersed phase — against a well-established SDS/silicone-oil (SO) control.
+dispersed phase — against a well-established SDS/sunflower-oil (SO) control.
 Both systems were run at continuous-phase (water) flow rate Qw = 5 ml/hr across a range
 of oil inlet pressures (Po). A low-flow NaCas/MCT dataset at Qw = 1 ml/hr is included
 as an extreme reference. No model simulations are used; all results are from direct video
@@ -822,8 +822,21 @@ operating boundary for this fluid system under these flow conditions.
 
 **Implication:** The minimum viable oil pressure for NaCas/MCT at 5 ml/hr is between
 200 and 300 mbar. This contrasts with SDS/SO, which operates successfully at 200 mbar.
-The higher threshold likely reflects the greater viscosity of MCT relative to silicone oil,
-requiring a larger driving pressure to initiate and sustain filling.
+The higher threshold was originally attributed to "the greater viscosity of MCT relative to
+the control oil".
+
+> **CORRECTION 2026-07-29 — this explanation no longer holds.** The control's dispersed
+> phase was recorded as silicone oil throughout this workspace; it is **sunflower oil**
+> (`DispPhase = SO`; ruling confirmed 2026-07-29, see `CLAUDE.md`). Sunflower oil is
+> ~50-60 cP while MCT is ~25-30 cP, so MCT is roughly **half** the viscosity of the
+> control, not greater. The viscosity argument therefore predicts the *opposite* of what
+> was observed and must be discarded.
+>
+> The observation itself stands: NaCas/MCT produced no droplets at 200 mbar where SDS/SO
+> does. A viscosity-independent explanation is needed — candidates are the higher
+> interfacial tension of a NaCas-stabilised interface (raising the capillary entry
+> pressure), slower NaCas adsorption kinetics at the timescale of neck thinning, or
+> different wetting of the channel walls. **Open — do not cite the viscosity reason.**
 
 ---
 

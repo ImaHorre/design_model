@@ -36,8 +36,10 @@ from stepgen.families.intent import (
     rungs_for_throughput,
 )
 from stepgen.studio.diagnosis import (
+    DEFAULT_GAMMA_RANGE_NM,
     EVIDENCE_THIN_GATES,
     KNOBS,
+    ca_gamma_robustness,
     active_knobs,
     binding_gates,
     diagnose,
@@ -566,6 +568,111 @@ def test_the_deep_dfu_study_reports_a_build_and_see_shortlist():
     assert len(diag.theory_limited_labels) == len(diag.theory_limited)
     assert "build-and-see" in diag.headline()
     assert diag.to_json()["theory_limited"] == diag.theory_limited_labels
+
+
+# ---------------------------------------------------------------------------
+# γ-robustness — Ca is a verdict resting on a constant nobody has measured
+# ---------------------------------------------------------------------------
+
+def test_gamma_enters_only_the_ca_diagnostic_never_the_flow_solve():
+    """
+    The premise the whole γ-robustness layer rests on.
+
+    If γ affected the hydraulics, sweeping it would need a re-solve per value.
+    It does not — so Ca ∝ 1/γ exactly and the band is free.
+    """
+    base = _PLANTED.replace("gamma: 0.005", "gamma: 0.005")
+    other = _PLANTED.replace("gamma: 0.005", "gamma: 0.020")
+    _, a = _run(base)
+    _, b = _run(other)
+
+    for ra, rb in zip(a, b):
+        assert ra.metrics.throughput_mlhr == pytest.approx(rb.metrics.throughput_mlhr)
+        assert ra.metrics.uniformity_pct == pytest.approx(rb.metrics.uniformity_pct)
+        # ...and Ca moved by exactly the inverse ratio
+        assert ra.metrics.regime_Ca == pytest.approx(rb.metrics.regime_Ca * 4.0)
+
+
+def test_ca_robustness_reports_the_band_analytically():
+    row = _ca_row(regime_Ca=0.05)          # red at γ_ref = 5 mN/m
+    rb = ca_gamma_robustness(row, _CA_SCORING, gamma_ref=0.005,
+                             gamma_range=(0.003, 0.020))
+    assert rb is not None
+    # Ca ∝ 1/γ
+    assert rb.ca_at_lo == pytest.approx(0.05 * 0.005 / 0.003)
+    assert rb.ca_at_hi == pytest.approx(0.05 * 0.005 / 0.020)   # = 0.0125, green
+    assert rb.verdict_lo == "red" and rb.verdict_hi == "green"
+    assert not rb.robustly_red and not rb.is_robust
+    # clears once γ takes Ca to the red bound (0.03)
+    assert rb.gamma_to_clear_red == pytest.approx(0.05 * 0.005 / 0.03)
+
+
+def test_a_design_far_into_the_red_stays_red_at_every_gamma():
+    """The user's distinction: 'major into the red throughout a range of γ'."""
+    rb = ca_gamma_robustness(_ca_row(regime_Ca=0.5), _CA_SCORING,
+                             gamma_ref=0.005, gamma_range=(0.003, 0.020))
+    assert rb.robustly_red
+    assert rb.gamma_to_clear_red is None
+    assert "genuinely out of regime" in rb.describe()
+
+
+def test_a_design_only_just_red_depends_on_gamma():
+    """'...only just into the red with only select values of γ'."""
+    rb = ca_gamma_robustness(_ca_row(regime_Ca=0.035), _CA_SCORING,
+                             gamma_ref=0.005, gamma_range=(0.003, 0.020))
+    assert not rb.robustly_red
+    assert rb.gamma_to_clear_red is not None
+    assert "red only for γ below" in rb.describe()
+
+
+def test_a_comfortably_green_design_is_robust_too():
+    rb = ca_gamma_robustness(_ca_row(regime_Ca=0.001), _CA_SCORING,
+                             gamma_ref=0.005, gamma_range=(0.003, 0.020))
+    assert rb.robustly_ok and rb.is_robust
+    assert "does not depend on the γ we assume" in rb.describe()
+
+
+def test_ca_robustness_declines_when_there_is_no_ca():
+    row = _ca_row(regime_Ca=None)
+    assert ca_gamma_robustness(row, _CA_SCORING, gamma_ref=0.005) is None
+    assert ca_gamma_robustness(_ca_row(), {}, gamma_ref=0.005) is None
+    assert ca_gamma_robustness(_ca_row(), _CA_SCORING, gamma_ref=0.0) is None
+
+
+def test_diagnosis_splits_the_shortlist_by_gamma_robustness():
+    study, scored = _run(INTENT_RAW)
+    diag = diagnose(study, scored, price="never")
+
+    assert diag.gamma_ref == pytest.approx(0.005)
+    assert diag.robustly_red_ca and diag.gamma_dependent_ca
+    # the split partitions the theory-limited set
+    assert (len(diag.robustly_red_ca) + len(diag.gamma_dependent_ca)
+            == len(diag.theory_limited))
+    assert set(diag.robustly_red_ca).isdisjoint(diag.gamma_dependent_ca)
+    assert "build-and-see shortlist" in diag.headline()
+
+
+def test_the_shortlist_is_ordered_by_how_little_gamma_it_needs():
+    """A design needing 6 mN/m is a better bet than one needing 19."""
+    study, scored = _run(INTENT_RAW)
+    diag = diagnose(study, scored, price="never")
+
+    needed = []
+    for i in diag.gamma_dependent_ca:
+        rb = ca_gamma_robustness(scored[i], study.scoring,
+                                 gamma_ref=diag.gamma_ref,
+                                 gamma_range=diag.gamma_range)
+        needed.append(rb.gamma_to_clear_red)
+    assert needed == sorted(needed)
+
+
+def test_gamma_split_reaches_the_chapter_sidecar():
+    study, scored = _run(INTENT_RAW)
+    blob = diagnose(study, scored, price="never").to_json()
+    assert blob["gamma_ref_Nm"] == pytest.approx(0.005)
+    assert blob["gamma_range_Nm"] == [0.003, 0.020]
+    assert blob["ca_red_only_at_some_gamma"]
+    assert blob["ca_red_at_every_gamma"]
 
 
 def test_the_deep_dfu_intent_is_blocked_by_physics_not_by_a_cap():

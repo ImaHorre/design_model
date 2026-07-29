@@ -43,7 +43,9 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
-from stepgen.studio.scoring import GREEN, ORANGE, RED, ScoredRow, score_result
+from stepgen.studio.scoring import (
+    GREEN, ORANGE, RED, ScoredRow, _score_threshold, score_result,
+)
 from stepgen.studio.study import Study, build_study
 
 #: Most constraints to price in one pass.  Each costs a full re-run.
@@ -280,6 +282,131 @@ def knobs_for_gate(gate: str) -> list[Knob]:
 EVIDENCE_THIN_GATES: frozenset[str] = frozenset({"regime_Ca"})
 
 
+# ---------------------------------------------------------------------------
+# γ-robustness of the Ca verdict
+# ---------------------------------------------------------------------------
+
+#: The plausible band for the oil/water interfacial tension of the Peak system,
+#: in **N/m**.  Deliberately wide, because γ has never been measured here: the
+#: configs in this repo variously assume 5, 15 and 0 mN/m, and the value picked
+#: in `comp_interfacial_inversion` (9 mN/m) was a literature figure for the
+#: wrong fluid pair. 3–20 mN/m spans SDS well above CMC against a vegetable oil
+#: without pretending to more precision than we have.
+#:
+#: This is a statement of our ignorance, not a measurement. Narrow it the day a
+#: pendant-drop number exists — that is the point of writing it down as a band.
+DEFAULT_GAMMA_RANGE_NM: tuple[float, float] = (0.003, 0.020)
+
+
+@dataclass
+class CaGammaRobustness:
+    """How much of a row's exit-Ca verdict survives our ignorance about γ."""
+
+    gamma_ref: float           # the γ the study was solved at [N/m]
+    gamma_lo: float            # plausible band, low end [N/m]
+    gamma_hi: float            # plausible band, high end [N/m]
+    ca_ref: float              # exit Ca as scored, at gamma_ref
+    ca_at_lo: float            # Ca if γ were at the low end (worst case)
+    ca_at_hi: float            # Ca if γ were at the high end (best case)
+    verdict_lo: str            # category at the low-γ end
+    verdict_hi: str            # category at the high-γ end
+    #: γ above which the row would stop being red, or None if it never is / always is
+    gamma_to_clear_red: float | None = None
+
+    @property
+    def is_robust(self) -> bool:
+        """The verdict is the same across the whole plausible band."""
+        return self.verdict_lo == self.verdict_hi
+
+    @property
+    def robustly_red(self) -> bool:
+        """Red no matter what γ turns out to be — believe this one."""
+        return self.verdict_lo == RED and self.verdict_hi == RED
+
+    @property
+    def robustly_ok(self) -> bool:
+        """Never red across the band."""
+        return self.verdict_lo != RED and self.verdict_hi != RED
+
+    def describe(self) -> str:
+        lo, hi = self.gamma_lo * 1e3, self.gamma_hi * 1e3
+        if self.robustly_red:
+            over = self.ca_at_hi
+            return (f"red across the whole plausible γ band ({lo:g}–{hi:g} mN/m) — "
+                    f"even at γ = {hi:g} mN/m the exit Ca is {over:.3g}. "
+                    f"This one is genuinely out of regime.")
+        if self.robustly_ok:
+            return (f"never red across the plausible γ band ({lo:g}–{hi:g} mN/m) — "
+                    f"the Ca verdict does not depend on the γ we assume.")
+        g = self.gamma_to_clear_red
+        return (f"red only for γ below {g * 1e3:.3g} mN/m; above that it clears. "
+                f"The verdict turns on a constant we have never measured "
+                f"(band {lo:g}–{hi:g} mN/m).")
+
+
+def ca_gamma_robustness(
+    row: ScoredRow,
+    scoring: dict[str, Any],
+    *,
+    gamma_ref: float,
+    gamma_range: tuple[float, float] = DEFAULT_GAMMA_RANGE_NM,
+) -> CaGammaRobustness | None:
+    """
+    Re-evaluate a row's exit-Ca verdict across the plausible range of γ.
+
+    **This costs nothing and needs no re-solve.** γ enters the studio families in
+    exactly one place — the ``regime_Ca`` diagnostic, ``Ca = µ·v/γ`` — and never
+    the hydraulic solve, so ``Ca ∝ 1/γ`` exactly and the whole band can be swept
+    analytically from the single solved value.
+
+    Why it exists: γ has never been measured for the Peak fluid system, so a hard
+    red on Ca is a hard verdict resting on a guessed constant. A design that is
+    red at every plausible γ is genuinely out of step-emulsification; a design
+    that is red only at the pessimistic end of the band is telling you about our
+    ignorance rather than about itself. Those deserve to be distinguished, and
+    until now were not.
+
+    Returns ``None`` when the row has no Ca to reason about.
+    """
+    cell = row.cells.get("regime_Ca")
+    spec = scoring.get("regime_Ca")
+    if cell is None or cell.value is None or spec is None or gamma_ref <= 0:
+        return None
+
+    lo, hi = float(gamma_range[0]), float(gamma_range[1])
+    ca_ref = float(cell.value)
+    # Ca ∝ 1/γ: low γ is the pessimistic end
+    ca_at_lo = ca_ref * gamma_ref / lo
+    ca_at_hi = ca_ref * gamma_ref / hi
+
+    v_lo = _score_threshold(ca_at_lo, spec)
+    v_hi = _score_threshold(ca_at_hi, spec)
+
+    # γ at which Ca falls to the red boundary (the `orange` bound, past which it
+    # is red): Ca(γ) = ca_ref·gamma_ref/γ = bound  ->  γ = ca_ref·gamma_ref/bound
+    gamma_clear: float | None = None
+    if v_lo == RED and v_hi != RED:
+        bound = float(spec["orange"])
+        if bound > 0:
+            gamma_clear = ca_ref * gamma_ref / bound
+
+    return CaGammaRobustness(
+        gamma_ref=gamma_ref, gamma_lo=lo, gamma_hi=hi,
+        ca_ref=ca_ref, ca_at_lo=ca_at_lo, ca_at_hi=ca_at_hi,
+        verdict_lo=v_lo, verdict_hi=v_hi,
+        gamma_to_clear_red=gamma_clear,
+    )
+
+
+def study_gamma(study: Study) -> float:
+    """The interfacial tension a study was solved at [N/m], 0 if none given."""
+    fluids = (study.raw or {}).get("fluids") or {}
+    try:
+        return float(fluids.get("gamma", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def theory_limited_rows(rows: Sequence[ScoredRow]) -> list[int]:
     """
     Indices of rows that are red **only** on evidence-thin gates.
@@ -442,6 +569,16 @@ class Diagnosis:
     theory_limited: list[int] = field(default_factory=list)
     #: labels for those rows, so the summary survives without the row list
     theory_limited_labels: list[str] = field(default_factory=list)
+    #: of those, the ones red at EVERY plausible γ — the Ca verdict survives our
+    #: ignorance about interfacial tension, so it should be believed
+    robustly_red_ca: list[int] = field(default_factory=list)
+    #: and the ones red only at part of the γ band — the verdict is an artefact
+    #: of a constant nobody has measured. These are the real shortlist.
+    gamma_dependent_ca: list[int] = field(default_factory=list)
+    gamma_dependent_labels: list[str] = field(default_factory=list)
+    #: the γ band used, in N/m, for the report
+    gamma_range: tuple[float, float] = DEFAULT_GAMMA_RANGE_NM
+    gamma_ref: float = 0.0
 
     @property
     def infeasible(self) -> bool:
@@ -482,14 +619,27 @@ class Diagnosis:
         from stepgen.families.base import CA_MEASURED_MAX
 
         n = len(self.theory_limited)
-        return (
+        out = (
             f"{n} design{'s' if n != 1 else ''} pass every gate except exit Ca "
             f"— buildable, and blocked only by the threshold resting on the "
             f"thinnest evidence we have (the highest Ca ever measured on a Peak "
-            f"device is {CA_MEASURED_MAX:g}, against a 0.0125 green bound). "
-            f"Whether they work is a question the model cannot settle: they are "
-            f"build-and-see candidates, not failures."
+            f"device is {CA_MEASURED_MAX:g}, against a 0.0125 green bound)."
         )
+        # γ has never been measured, so split by whether the verdict survives it
+        if self.gamma_dependent_ca or self.robustly_red_ca:
+            lo, hi = self.gamma_range[0] * 1e3, self.gamma_range[1] * 1e3
+            n_g, n_r = len(self.gamma_dependent_ca), len(self.robustly_red_ca)
+            out += (
+                f" Of those, {n_r} stay red at every plausible interfacial "
+                f"tension ({lo:g}–{hi:g} mN/m) and should be believed, while "
+                f"**{n_g} are red only at part of that band** — their verdict "
+                f"turns on a constant nobody has measured. Those {n_g} are the "
+                f"build-and-see shortlist."
+            )
+        else:
+            out += (" Whether they work is a question the model cannot settle: "
+                    "they are build-and-see candidates, not failures.")
+        return out
 
     def headline(self) -> str:
         """The answer to 'why can't I have what I asked for?'"""
@@ -541,6 +691,14 @@ class Diagnosis:
             "infeasible": self.infeasible,
             "binding_is_physics": self.binding_is_physics,
             "theory_limited": self.theory_limited_labels,
+            # gamma has never been measured; record which Ca verdicts survive that
+            "gamma_ref_Nm": self.gamma_ref,
+            "gamma_range_Nm": list(self.gamma_range),
+            "ca_red_at_every_gamma": [
+                self.theory_limited_labels[self.theory_limited.index(i)]
+                for i in self.robustly_red_ca if i in self.theory_limited
+            ],
+            "ca_red_only_at_some_gamma": self.gamma_dependent_labels,
             "headline": self.headline(),
             "binding": (None if self.binding is None else {
                 "gate": self.binding.key,
@@ -572,6 +730,7 @@ def diagnose(
     price: str = "auto",
     limit: int = MAX_PRICED_KNOBS,
     progress: bool = False,
+    gamma_range: tuple[float, float] = DEFAULT_GAMMA_RANGE_NM,
 ) -> Diagnosis:
     """
     Diagnose a scored study.
@@ -580,6 +739,10 @@ def diagnose(
     answer owes the user a way forward), ``"always"`` or ``"never"``.  Pricing
     costs one full re-run per knob, so ``auto`` is the sensible default: a study
     that already has green rows does not need to be told what to relax.
+
+    *gamma_range* is the plausible band for interfacial tension, used to test
+    how much of each exit-Ca verdict survives the fact that γ has never been
+    measured for this fluid system.  Free — see :func:`ca_gamma_robustness`.
     """
     scored = list(scored)
     failures = binding_gates(scored)
@@ -588,11 +751,39 @@ def diagnose(
     n_red = sum(1 for r in scored if r.overall == RED)
 
     theory_limited = theory_limited_rows(scored)
+
+    # γ has never been measured for the Peak system, so a hard red on Ca is a
+    # hard verdict resting on a guessed constant. Split the Ca-only reds by
+    # whether the verdict survives the plausible γ band — free, because Ca
+    # scales exactly as 1/γ and γ enters nothing else.
+    gamma_ref = study_gamma(study)
+    robust: list[int] = []
+    dependent: list[tuple[float, int]] = []
+    for i in theory_limited:
+        rb = ca_gamma_robustness(scored[i], study.scoring, gamma_ref=gamma_ref,
+                                 gamma_range=gamma_range)
+        if rb is None:
+            continue
+        if rb.robustly_red:
+            robust.append(i)
+        else:
+            # order by how little γ it takes to clear: a design that needs only
+            # 6 mN/m is a far better bet than one needing 19, and the second is
+            # barely distinguishable from robustly red
+            dependent.append((rb.gamma_to_clear_red or 0.0, i))
+    dependent.sort()
+    dependent_idx = [i for _, i in dependent]
+
     diag = Diagnosis(
         n_rows=len(scored), n_green=n_green, n_orange=n_orange, n_red=n_red,
         failures=failures,
         theory_limited=theory_limited,
         theory_limited_labels=[scored[i].metrics.label for i in theory_limited],
+        robustly_red_ca=robust,
+        gamma_dependent_ca=dependent_idx,
+        gamma_dependent_labels=[scored[i].metrics.label for i in dependent_idx],
+        gamma_range=gamma_range,
+        gamma_ref=gamma_ref,
     )
 
     wants_price = (price == "always") or (price == "auto" and n_green == 0 and scored)

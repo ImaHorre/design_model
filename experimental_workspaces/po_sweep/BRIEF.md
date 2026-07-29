@@ -1,31 +1,35 @@
 ---
 study-type: experimental
 device: V5-30 (ID A)
-emulsion: "DISPUTED — see 'Fluid identity' below / 2% SDS-water"
+emulsion: Sunflower oil (SO) / 2% SDS-water
 date: 2026-04
 parameter-varied: Po (200–500 mbar)
 fixed: Qw=5 mL/hr, [SDS]=2%
 ---
 
-## Fluid identity — unresolved discrepancy (flagged 2026-07-29)
+## Fluid identity — corrected 2026-07-29
 
 This frontmatter previously read **"Silicone oil / 2% SDS-water"**, and the wiki page
-`@ws-2026-07-13-po-sweep-v5-8-1` inherited that reading. The raw data disagrees:
+`@ws-2026-07-13-po-sweep-v5-8-1` inherited that reading. The raw data always disagreed:
+`data/stage_timings.csv` column `DispPhase` reads `SO`, which per `CLAUDE.md` means
+**sunflower oil, never silicone**.
 
-| Source | Says |
-|---|---|
-| this BRIEF (as originally written) | Silicone oil |
-| `data/stage_timings.csv`, column `DispPhase` | `SO` |
-| `CLAUDE.md` (project convention) | **SO = sunflower oil; never interpret SO as silicone oil** |
+**Ruled 2026-07-29: SO is always sunflower oil.** Corrected here and in every other
+workspace, script and wiki page that carried the silicone label (22 files).
 
-Not cosmetic: sunflower oil is ~60 cP while silicone oils span ~5–100 cP. Exit Ca scales
-linearly with µ, and this dataset is the **only** measurement of exit Ca Peak has
-(0.00035–0.00137 at µ = 60 cP, γ = 5 mN/m — see the wiki page's derived-Ca section). Every
-regime verdict in the design model that anchors on this device moves with the answer.
+Why it mattered: sunflower oil is ~50–60 cP while silicone oils span ~5–100 cP, and exit Ca
+scales linearly with µ. This dataset is the **only** measurement of exit Ca Peak has
+(0.00035–0.00137 at µ = 60 cP, γ = 5 mN/m — see the wiki page's derived-Ca section), and it
+anchors the regime verdicts in the design model. Under the correct µ = 60 cP those numbers
+stand as computed.
 
-**Needs a human answer.** Per CLAUDE.md, a fluid mismatch is flagged rather than resolved by
-inference. Once settled, correct this frontmatter, the wiki setup table, and the derived Ca
-table together.
+Two downstream conclusions did **not** survive the correction and are flagged in place:
+- `nacas_mct_comparison` attributed MCT's higher pressure threshold to MCT being more viscous
+  than the control. With sunflower (~60 cP) as the control, MCT (~25–30 cP) is roughly half
+  as viscous — the explanation inverts and has been withdrawn.
+- `comp_interfacial_inversion` uses `GAMMA_LIT_2PC_MNM = 9.0`, selected as a literature value
+  for SDS/*silicone*. It is retained as an order-of-magnitude placeholder but is no longer a
+  sourced value; the pendant-drop measurement must be run against sunflower oil.
 
 ## Research question
 

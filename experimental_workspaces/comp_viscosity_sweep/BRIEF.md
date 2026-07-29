@@ -11,7 +11,7 @@ Model-only parameter sweeps varying oil and water viscosity to understand sensit
 timings and pressure profiles to fluid properties. No experimental comparison.
 
 Useful for: checking model behaviour before running experiments with different oil/surfactant systems
-(e.g. MCT oil vs silicone oil, or NaCas continuous phase).
+(e.g. MCT oil vs sunflower oil, or NaCas continuous phase).
 
 ## Files
 

@@ -1,4 +1,4 @@
-# Interfacial Inversion — SDS / silicone-oil, device V5-8-1
+# Interfacial Inversion — SDS / sunflower-oil, device V5-8-1
 *Generated 2026-07-13 by `analysis.py`. Constants in `calibrated_constants.yaml`.*
 
 ## Headline
@@ -62,16 +62,16 @@ Above CMC, β = -0.17 [-0.27, -0.05] — essentially zero. Stage-2 timing barely
 
 ## Provisional γ / θ split (needs pendant drop)
 
-Using a literature γ(2% SDS/silicone-oil) ≈ 9 mN/m: cosθ ≈ 1.00 → θ ≈ 0°. **Provisional** — the two regime boundaries cannot pin γ (Ca is tiny; jetting is pressure-driven), so an absolute γ still requires measurement.
+Using a literature γ(2% SDS/sunflower-oil) ≈ 9 mN/m: cosθ ≈ 1.00 → θ ≈ 0°. **Provisional** — the two regime boundaries cannot pin γ (Ca is tiny; jetting is pressure-driven), so an absolute γ still requires measurement.
 
 ## What else is needed (ranked)
 
-1. **Pendant-drop γ** for SDS/silicone-oil (≥1 conc) — the keystone: turns every γ·cosθ into absolute γ + θ, and fixes absolute β. Highest value.
+1. **Pendant-drop γ** for SDS/sunflower-oil (≥1 conc) — the keystone: turns every γ·cosθ into absolute γ + θ, and fixes absolute β. Highest value.
 2. **Sessile θ([SDS])** on the device substrate — confirms the provisional θ trend.
 3. **Low-pressure frequency data (30–200 mbar)** — the onset anchor rests on a single observation with no measured points below 200 mbar; a few points would pin it.
 4. **Manifold/spatial data + geometry** near the ~1000 mbar boundary — to model the start/end blowout (this ladder config can't).
 5. **Resolve the 2× stage-time convention** (this CSV vs conc_sweep notes) so *absolute* Stage-1 dissipation constants — not just ratios — can be trusted.
-6. Confirm silicone-oil grade/density and that bare-`SDS` = 2% mass.
+6. Confirm sunflower-oil grade/density and that bare-`SDS` = 2% mass.
 
 ## Figures
 

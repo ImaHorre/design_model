@@ -6,7 +6,7 @@
 ## Research question
 
 How does sodium caseinate (NaCas) continuous phase with MCT oil compare to the
-standard SDS continuous phase with silicone oil (SO) system in terms of stage timings,
+standard SDS continuous phase with sunflower oil (SO) system in terms of stage timings,
 droplet size, and model accuracy?
 
 ## Background

@@ -515,14 +515,21 @@ def _cmd_study(args: argparse.Namespace) -> int:
     for p in diag.prices:
         print(f"    · {p.describe()}")
     if diag.theory_limited:
+        lo, hi = diag.gamma_range[0] * 1e3, diag.gamma_range[1] * 1e3
         print()
         print(f"  Build-and-see candidates (green except exit Ca): "
               f"{len(diag.theory_limited)}")
-        for lbl in diag.theory_limited_labels[:5]:
-            print(f"    · {lbl}")
-        if len(diag.theory_limited_labels) > 5:
-            print(f"    · …and {len(diag.theory_limited_labels) - 5} more "
-                  f"(full list in the chapter)")
+        if diag.gamma_dependent_ca or diag.robustly_red_ca:
+            print(f"    γ is unmeasured; Ca re-checked across {lo:g}-{hi:g} mN/m")
+            print(f"    · red at EVERY plausible γ (believe it): "
+                  f"{len(diag.robustly_red_ca)}")
+            print(f"    · red only at PART of the band (the shortlist): "
+                  f"{len(diag.gamma_dependent_ca)}")
+        shown = diag.gamma_dependent_labels or diag.theory_limited_labels
+        for lbl in shown[:5]:
+            print(f"      - {lbl}")
+        if len(shown) > 5:
+            print(f"      - …and {len(shown) - 5} more (full list in the chapter)")
     print()
     print(f"  -> chapter : {chapter}")
     print(f"  -> sidecar : {chapter.with_suffix('.json')}")

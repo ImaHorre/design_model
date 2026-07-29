@@ -36,15 +36,23 @@ Sizes are relative: **S** = a sitting, **M** = a focused block of work, **L** = 
 
 Everything lives in `design_model/`. No new repos.
 
-### Open items carried out of Phase 2
+### Items carried out of Phase 2 — both now settled (2026-07-29)
 
-Neither blocks Phase 3, both must be settled before the Phase 5 wafer is interpreted:
+1. **Dispersed phase — RULED: `SO` is always sunflower oil, never silicone.** Corrected across
+   22 files (workspaces, analysis scripts, archived scripts) and the wiki. µ = 50–60 cP, which
+   is what the derived Ca figures already assumed, so those stand. Two downstream conclusions
+   did *not* survive and were flagged in place rather than silently amended:
+   - `nacas_mct_comparison` explained MCT's higher minimum pressure by MCT being *more* viscous
+     than the control. Sunflower ~50–60 cP vs MCT ~25–30 cP inverts that — argument withdrawn,
+     observation stands, needs a new explanation.
+   - `comp_interfacial_inversion`'s `GAMMA_LIT_2PC_MNM = 9.0` was a literature figure for
+     SDS/*silicone*. Retained as an order-of-magnitude placeholder, no longer sourced; the
+     pendant-drop measurement must be run against sunflower oil.
 
-1. **Dispersed phase of the anchor experiment is disputed** — sunflower vs silicone oil
-   (`experimental_workspaces/po_sweep/BRIEF.md`, wiki `@ws-2026-07-13-po-sweep-v5-8-1`, both
-   now flagged). µ differs up to 10× and Ca scales with µ. **Needs a human answer.**
-2. **Interfacial tension is not pinned** — configs in this repo use γ = 5, 15 or 0 mN/m. A 3×
-   spread in γ is a 3× spread in every Ca number here.
+2. **Interfacial tension — CONFIRMED UNKNOWN, and acted on.** γ has never been measured for the
+   Peak system; every config value is a guess (5, 15, 0 mN/m across this repo). Rather than
+   leave Ca as a hard gate resting on a guessed constant, the Studio now reports **γ-robustness
+   of every Ca verdict**. See below.
 
 ---
 
@@ -322,6 +330,34 @@ Consequences taken:
   *build-and-see candidates* and say why. Whether they work is a question the model cannot
   settle, and the user is better placed than the scorer to decide whether to try.
 
+#### γ-robustness — how much of a Ca verdict survives not knowing γ
+
+*Added 2026-07-29 in response to: "if it's major into the red throughout a range of gamma then
+that seems more wrong than only just into the red with only select values of gamma."*
+
+γ has never been measured for this fluid system, so a hard red on Ca is a hard verdict resting
+on a guessed constant. But **γ enters the studio families in exactly one place** — the
+`Ca = µ·v/γ` diagnostic — and never the hydraulic solve. So `Ca ∝ 1/γ` exactly, and the whole
+plausible band can be swept **analytically from the single solved value, at zero cost and with
+no re-runs**. `ca_gamma_robustness()` does this over `DEFAULT_GAMMA_RANGE_NM = 3–20 mN/m`, a
+band written down as a statement of ignorance rather than a measurement, to be narrowed the day
+a pendant-drop number exists.
+
+The Ca-only reds then split in two, and the split is the finding:
+
+| | Count (deep-DFU study) | Reading |
+|---|---|---|
+| Red at **every** plausible γ | 45 | The verdict survives our ignorance. Genuinely out of regime — believe it. |
+| Red at **part** of the band | 42 | The verdict turns on a constant nobody has measured. **This is the real shortlist.** |
+
+The shortlist is ordered by **how little γ it takes to clear** — a design that clears above
+6.6 mN/m is a far better bet than one needing 18.6, and the second is barely distinguishable
+from robustly red. Reported in the chapter, the UI ("Clears above γ" column) and the CLI, and
+recorded in the sidecar as `ca_red_at_every_gamma` / `ca_red_only_at_some_gamma`.
+
+This is the mechanism that stops Ca being a hard no while keeping it honest: the gate is not
+weakened, but a red caused by our ignorance is separated from a red caused by the design.
+
 *Checked against the wiki.* Two qualifications, neither of which rescues the picture:
 
 * Our `regime_Ca` is the **nominal** exit Ca; the threshold is stated for the **local pinch**
@@ -333,21 +369,20 @@ Consequences taken:
   (ρu²/2 ≈ 0.1 Pa against σ/λ ≈ 100 Pa) — negligible, so the transition is Ca-driven exactly
   as the dripping branch of that criterion predicts.
 
-#### Two provenance discrepancies found, flagged not fixed
+#### Two provenance discrepancies found — both resolved 2026-07-29
 
-1. **Dispersed phase.** `wiki/experiments/@ws-2026-07-13-po-sweep-v5-8-1` and
-   `experimental_workspaces/po_sweep/BRIEF.md` both say *silicone oil*; the raw data column
-   is `DispPhase = SO`, which per `CLAUDE.md` means **sunflower oil, never silicone**. µ
-   differs by up to 10× between them and Ca scales linearly with µ, so every Ca derived from
-   that experiment depends on which is right. **Needs a human answer before the wiki is
-   edited** — CLAUDE.md's own rule is to flag a fluid mismatch rather than proceed.
-2. **Interfacial tension.** Configs disagree: `study_all_families.yaml` uses γ = 5 mN/m,
-   `study_template.yaml` and the `wo_*` configs use 15, and `v5_30.yaml` uses 0 (Ca disabled).
-   The wiki's `deep-dfu-se-regime` page computed its Ca estimate at 15. A 3× spread in γ is a
-   3× spread in every Ca number in this repo.
+1. **Dispersed phase — ruled.** `SO` is always **sunflower oil**, never silicone. The wiki page
+   and the workspace BRIEF both carried the wrong label; the raw `DispPhase = SO` column and
+   `CLAUDE.md` were right. Corrected across 22 files and the wiki. Since the derived Ca table
+   already used µ = 60 cP, those figures stand. Two downstream conclusions did not survive —
+   see "Items carried out of Phase 2" above.
+2. **Interfacial tension — confirmed unknown.** Configs disagree: `study_all_families.yaml`
+   uses γ = 5 mN/m, `study_template.yaml` and the `wo_*` configs use 15, and `v5_30.yaml` uses
+   0 (Ca disabled). A 3× spread in γ is a 3× spread in every Ca number in this repo. Handled by
+   the γ-robustness layer above rather than by picking a number.
 
-Both belong in Phase 5's scope: the probe measures `Ca_crit` with γ and µ folded in, which is
-the right unit for *design*, but exporting the result to another fluid system needs both
+Both still belong in Phase 5's scope: the probe measures `Ca_crit` with γ and µ folded in,
+which is the right unit for *design*, but exporting the result to another fluid system needs γ
 pinned independently.
 
 ---
@@ -512,8 +547,8 @@ with the step-emulsification ceiling.
   inversely. The probe measures `Ca_crit` with γ folded in — the right unit for *design*,
   since Po and geometry are what you control — but γ must be measured independently before
   the result can be exported to another surfactant system.
-- **The dispersed phase of the anchor experiment is disputed** (sunflower vs silicone; see
-  the provenance note above). Resolve before the probe's control device is interpreted.
+- **The dispersed phase is settled** (sunflower oil, ruled 2026-07-29), so the control device
+  is interpretable. γ remains the open input.
 
 ### Why it matters
 Our SE ceiling is currently borrowed from literature at λ ≈ 1 while we operate at

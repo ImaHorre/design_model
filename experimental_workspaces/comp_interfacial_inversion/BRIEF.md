@@ -14,7 +14,7 @@ and use them to estimate the **capillary number Ca** and the droplet-formation
 
 ## Background
 
-γ (interfacial tension) is unknown for this SDS / silicone-oil system and is a
+γ (interfacial tension) is unknown for this SDS / sunflower-oil system and is a
 hard-coded 15 mN/m default in the model (`stage_wise_v3/__init__.py`). It only
 ever appears in the data as lumped groups (γ·cosθ in Stage-1 refill; γ×prefactor
 in Stage-2 snap-off). This workspace formalises the by-hand inversions already
@@ -47,7 +47,7 @@ moment a pendant-drop γ arrives.
 
 | ID | Device | Date | Conditions | File | Notes |
 |----|--------|------|------------|------|-------|
-| @exp-2026-04-24-V5-8-1 | V5-8-1 | 2026-04-24 | Po 200–600 mbar, Qw 2–20 mL/hr, [SDS] 0.125–2 %, SDS/silicone-oil | `../po_sweep/data/stage_timings.csv` | **Master CSV** — the po/qw/conc "sweeps" are filtered views of this one file. [SDS] is in the `ContPhase` column. Absolute stage times are 0.5× the conc_sweep notes (FPS convention); ratios/scaling identical. NaCas rows excluded. |
+| @exp-2026-04-24-V5-8-1 | V5-8-1 | 2026-04-24 | Po 200–600 mbar, Qw 2–20 mL/hr, [SDS] 0.125–2 %, SDS/sunflower-oil | `../po_sweep/data/stage_timings.csv` | **Master CSV** — the po/qw/conc "sweeps" are filtered views of this one file. [SDS] is in the `ContPhase` column. Absolute stage times are 0.5× the conc_sweep notes (FPS convention); ratios/scaling identical. NaCas rows excluded. |
 
 ## Success criteria
 
@@ -86,7 +86,7 @@ moment a pendant-drop γ arrives.
 
 ## Open questions
 
-- Pendant-drop γ for SDS/silicone-oil (keystone: splits γ from cosθ and fixes β).
+- Pendant-drop γ for SDS/sunflower-oil (keystone: splits γ from cosθ and fixes β).
 - Sessile θ([SDS]) on the device substrate.
 - Low-pressure frequency data (30–200 mbar) to pin the onset anchor.
 - High-pressure / manifold data to characterise the blowout boundary.

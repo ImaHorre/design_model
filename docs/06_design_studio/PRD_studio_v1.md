@@ -282,8 +282,35 @@ The second is not a failure. It is a design sitting somewhere we have never look
    between what we score and what we have measured has actually been computed. `regime_Ca` is
    there because that computation was done and written down; nothing else is there yet.
 
-This is the mechanism by which an unmeasured boundary stops being a wall and becomes an
-experiment — which is what §7 is for.
+### Constant-robustness — not all reds are equally wrong
+
+*Added 2026-07-29.* Naming an evidence-thin gate is only half of it. Within the set of designs
+red on Ca, some are red by a hair and some by a factor of twenty, and treating those alike
+throws away the most useful signal in the table.
+
+Where a verdict depends on a constant we have not measured, **sweep the constant and report how
+much of the verdict survives**. For exit Ca the constant is interfacial tension, and the sweep
+is free: γ enters the model in exactly one place, `Ca = µ·v/γ`, and never the hydraulic solve,
+so `Ca ∝ 1/γ` exactly and the whole plausible band follows analytically from the one solved
+value. No re-runs.
+
+That splits the reds into two kinds that deserve different treatment:
+
+- **Red at every plausible γ** — the verdict survives our ignorance. Believe it.
+- **Red at only part of the band** — the verdict is telling you about the constant, not about
+  the design. This is the shortlist, ordered by *how little γ it takes to clear*, because a
+  design that clears above 6 mN/m is a much better bet than one needing 19.
+
+The band itself is written down as a statement of ignorance (`DEFAULT_GAMMA_RANGE_NM`, currently
+3–20 mN/m), to be narrowed the day a measurement exists — which is itself a way of making the
+missing measurement visible rather than letting a guessed default hide it.
+
+The general principle: **where a gate rests on a constant nobody has measured, the honest output
+is not a verdict but a verdict plus its sensitivity.** Applied to γ today; the same treatment is
+owed to any future gate in the same position.
+
+Together these are the mechanism by which an unmeasured boundary stops being a wall and becomes
+an experiment — which is what §7 is for.
 
 ---
 
@@ -323,10 +350,11 @@ readout, short arrays, a 30×10 control — is designed in the roadmap's Phase 5
 
 Two inputs must be pinned alongside it, both surfaced by the same audit: **interfacial
 tension** (configs in this repo disagree 3×, and Ca scales inversely with γ) and the
-**dispersed-phase identity** of the anchor experiment (disputed between sunflower and silicone
-oil; µ differs up to 10×, and Ca scales with µ). The probe measures `Ca_crit` with both folded
-in, which is the right unit for *design* — Po and geometry are what you control — but not for
-exporting the result to another fluid system.
+**dispersed-phase identity** of the anchor experiment — the latter ruled 2026-07-29 (`SO` is
+always sunflower oil, µ ≈ 50–60 cP). γ remains open, and is handled meanwhile by the
+constant-robustness treatment in §6. The probe measures `Ca_crit` with both folded in, which is
+the right unit for *design* — Po and geometry are what you control — but not for exporting the
+result to another fluid system.
 
 ---
 

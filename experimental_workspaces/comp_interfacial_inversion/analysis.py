@@ -38,8 +38,20 @@ FIGS = HERE / "figures"
 FIGS.mkdir(exist_ok=True)
 CONFIG_PATH = PROJECT_ROOT / "configs" / "v5_30.yaml"
 
-# Literature interfacial tension used ONLY for the provisional gamma/theta split
-# (SDS/silicone-oil above CMC). Provisional until a pendant-drop measurement.
+# Literature interfacial tension used ONLY for the provisional gamma/theta split.
+# Provisional until a pendant-drop measurement.
+#
+# CORRECTION 2026-07-29: this value was originally selected as a literature
+# figure for 2% SDS against *silicone* oil. The dispersed phase is **sunflower
+# oil** (`DispPhase = SO`; ruling confirmed 2026-07-29, see CLAUDE.md), so the
+# source pair was wrong. 9 mN/m is retained as a placeholder of the right order
+# — SDS well above CMC drives most vegetable-oil/water interfaces into the
+# single-digit mN/m range — but it is now an *assumption about the wrong fluid
+# pair carried forward deliberately*, not a sourced value.
+#
+# Everything downstream of it (cos-theta, the absolute beta) inherits that. The
+# pendant-drop measurement already listed as this workspace's keystone next step
+# is what replaces it, and it must be run against sunflower oil.
 GAMMA_LIT_2PC_MNM = 9.0
 
 PO_REF, QW_REF = 200.0, 5.0
@@ -82,7 +94,7 @@ def write_constants(cfg, R_rung, onset, gct_2pc_mNm, curve, beta, xc,
                     cos_theta_2pc, theta_2pc_deg) -> None:
     """Emit the durable YAML of calibrated constants with provenance."""
     lines = []
-    lines.append("# Calibrated interfacial constants -- SDS / silicone-oil, device V5-8-1")
+    lines.append("# Calibrated interfacial constants -- SDS / sunflower-oil, device V5-8-1")
     lines.append(f"# Generated: {date.today().isoformat()} by comp_interfacial_inversion/analysis.py")
     lines.append("# Source data: experimental_workspaces/po_sweep/data/stage_timings.csv")
     lines.append("# Update the 'provisional' block when a pendant-drop gamma arrives.")
@@ -229,7 +241,7 @@ def make_figures(df, cfg, curve, beta, grid) -> None:
 def write_report(cfg, onset, gct_2pc_mNm, curve, beta, xc,
                  cos_theta_2pc, theta_2pc_deg, grid) -> None:
     L = []
-    L.append("# Interfacial Inversion — SDS / silicone-oil, device V5-8-1")
+    L.append("# Interfacial Inversion — SDS / sunflower-oil, device V5-8-1")
     L.append(f"*Generated {date.today().isoformat()} by `analysis.py`. "
              f"Constants in `calibrated_constants.yaml`.*\n")
 
@@ -303,13 +315,13 @@ def write_report(cfg, onset, gct_2pc_mNm, curve, beta, xc,
              "quantitatively needs the manifold geometry — see `comp_manifold_parametrization`.\n")
 
     L.append("## Provisional γ / θ split (needs pendant drop)\n")
-    L.append(f"Using a literature γ(2% SDS/silicone-oil) ≈ {GAMMA_LIT_2PC_MNM:.0f} mN/m: "
+    L.append(f"Using a literature γ(2% SDS/sunflower-oil) ≈ {GAMMA_LIT_2PC_MNM:.0f} mN/m: "
              f"cosθ ≈ {cos_theta_2pc:.2f} → θ ≈ {theta_2pc_deg:.0f}°. **Provisional** — the two "
              "regime boundaries cannot pin γ (Ca is tiny; jetting is pressure-driven), so an "
              "absolute γ still requires measurement.\n")
 
     L.append("## What else is needed (ranked)\n")
-    L.append("1. **Pendant-drop γ** for SDS/silicone-oil (≥1 conc) — the keystone: turns every "
+    L.append("1. **Pendant-drop γ** for SDS/sunflower-oil (≥1 conc) — the keystone: turns every "
              "γ·cosθ into absolute γ + θ, and fixes absolute β. Highest value.")
     L.append("2. **Sessile θ([SDS])** on the device substrate — confirms the provisional θ trend.")
     L.append("3. **Low-pressure frequency data (30–200 mbar)** — the onset anchor rests on a "
@@ -318,7 +330,7 @@ def write_report(cfg, onset, gct_2pc_mNm, curve, beta, xc,
              "start/end blowout (this ladder config can't).")
     L.append("5. **Resolve the 2× stage-time convention** (this CSV vs conc_sweep notes) so "
              "*absolute* Stage-1 dissipation constants — not just ratios — can be trusted.")
-    L.append("6. Confirm silicone-oil grade/density and that bare-`SDS` = 2% mass.\n")
+    L.append("6. Confirm sunflower-oil grade/density and that bare-`SDS` = 2% mass.\n")
 
     L.append("## Figures\n")
     L.append("| File | Content |\n|---|---|")

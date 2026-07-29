@@ -2,7 +2,7 @@
 **Device:** V5-8-1 | **Date:** 2026-04-27 | **Script:** `scripts/v5_8_1_conc_sweep_analysis.py`
 
 Concentrations tested: 2%, 1%, 0.5%, 0.25%, 0.125% SDS (mass).
-Dispersed phase: silicone oil. CMC of SDS ≈ 0.24%.
+Dispersed phase: sunflower oil. CMC of SDS ≈ 0.24%.
 
 ---
 
@@ -213,7 +213,7 @@ using the same model scaling.
 
 ## Open questions / next steps
 
-1. **Measure γ for this specific SDS/silicone-oil system** at each concentration —
+1. **Measure γ for this specific SDS/sunflower-oil system** at each concentration —
    literature values for SDS/water vs air are not the same as SDS/water vs silicone
    oil. A pendant drop measurement at each concentration would anchor the Stage 2 model.
 

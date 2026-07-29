@@ -1,7 +1,7 @@
 # Droplet Formation — Experimental Analysis Report
 
 **Devices:** V5-30 (ID A), V5-8-1 (ID B)  
-**Emulsion system:** Silicone oil dispersed / SDS-water continuous (unless noted)  
+**Emulsion system:** Sunflower oil dispersed / SDS-water continuous (unless noted)  
 **Date compiled:** 2026-04-28  
 
 ---
@@ -169,7 +169,7 @@ The dP_eff drop is physically explained by **weakening γ·cosθ capillary drivi
 | 0.25% | 0.373 | 1.07 | 1.67 |
 | 0.125%| 0.507 | 1.45 | 3.33 |
 
-The ~2× over-prediction of the γ-model likely reflects: (a) literature γ values overestimating the actual interfacial tension for this SDS/silicone-oil system; (b) snap-off not being purely capillary — viscous dissipation in the thinning neck limits sensitivity to γ; (c) dynamic adsorption effects at snap-off timescales.
+The ~2× over-prediction of the γ-model likely reflects: (a) literature γ values overestimating the actual interfacial tension for this SDS/sunflower-oil system; (b) snap-off not being purely capillary — viscous dissipation in the thinning neck limits sensitivity to γ; (c) dynamic adsorption effects at snap-off timescales.
 
 ### Figure 4 — Full Cycle Summary
 
@@ -252,7 +252,7 @@ A P_cap = 12 mbar opposing term in the Stage 1 driving pressure eliminates the r
 ### Required measurements to close the model gaps
 
 1. **Contact angle θ([SDS])** on device substrate at each concentration — would allow quantitative prediction of dP_eff and therefore Stage 1 at arbitrary [SDS].
-2. **Interfacial tension γ** for SDS/water vs silicone oil at each concentration — literature values for SDS/water vs air are not representative; a pendant drop or spinning drop measurement is needed.
+2. **Interfacial tension γ** for SDS/water vs sunflower oil at each concentration — literature values for SDS/water vs air are not representative; a pendant drop or spinning drop measurement is needed.
 3. **Higher frame rate imaging** for Stage 2 — at 25 fps, Stage 2 is quantised to 40 ms steps. True snap-off variability cannot be resolved. A 100+ fps measurement would allow a functional Stage 2 model to be fitted.
 
 ---
@@ -261,9 +261,9 @@ A P_cap = 12 mbar opposing term in the Stage 1 driving pressure eliminates the r
 
 The next dataset uses sodium caseinate (NaCas) as the continuous-phase surfactant and MCT oil as the dispersed phase — a different emulsion chemistry on the same device geometry.
 
-Expected differences vs SDS/silicone oil:
+Expected differences vs SDS/sunflower oil:
 - NaCas is a protein surfactant: adsorption kinetics are slower and concentration-independent above saturation. Dynamic interfacial tension effects may be more pronounced during Stage 2.
-- MCT oil viscosity differs from silicone oil — Stage 1 will shift accordingly (R_rung scales with µ_oil).
+- MCT oil viscosity differs from sunflower oil — Stage 1 will shift accordingly (R_rung scales with µ_oil).
 - The Stage 1 model form remains valid; C_visc will need fresh calibration for this system.
 
 Recommended analysis: mirror the structure of Experiments 1–3 — sweep Po at fixed Qw and concentration first, then introduce Qw and concentration variation once the baseline C_visc for NaCas/MCT is established.

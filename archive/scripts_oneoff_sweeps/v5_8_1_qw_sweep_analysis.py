@@ -2,7 +2,7 @@
 v5_8_1_qw_sweep_analysis.py
 ============================
 Experimental analysis of V5-8-1 device: oil pressure × water-flowrate sweep.
-2% SDS continuous, silicone oil dispersed.
+2% SDS continuous, sunflower oil dispersed.
 
 Research questions
 ------------------
@@ -23,7 +23,7 @@ analysis/stage_timings.csv — SDS rows only (NaCas excluded)
 
 Model
 -----
-configs/v5_30.yaml (o/w: water continuous, silicone-oil dispersed)
+configs/v5_30.yaml (o/w: water continuous, sunflower-oil dispersed)
 Stage 1 formula: t = C_visc × V_reset × R_rung / DP_rung
   V_reset_nom = exit_width^2 × exit_depth  (= 9000 µm³, 30 µm junction)
   V_reset_obs = L_menpoint × exit_width × exit_depth  (from experiment)

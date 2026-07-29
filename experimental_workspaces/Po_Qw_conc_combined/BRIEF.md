@@ -8,7 +8,7 @@ date: 2026-04-28
 ## Purpose
 
 Cross-experiment synthesis across three parameter sweeps (Po, Qw, [SDS]) on V5-30 geometry devices.
-This is the authoritative analysis document for the SDS/silicone-oil system characterisation.
+This is the authoritative analysis document for the SDS/sunflower-oil system characterisation.
 
 ## Key conclusions
 

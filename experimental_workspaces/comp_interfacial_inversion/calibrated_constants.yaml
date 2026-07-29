@@ -1,4 +1,4 @@
-# Calibrated interfacial constants -- SDS / silicone-oil, device V5-8-1
+# Calibrated interfacial constants -- SDS / sunflower-oil, device V5-8-1
 # Generated: 2026-07-13 by comp_interfacial_inversion/analysis.py
 # Source data: experimental_workspaces/po_sweep/data/stage_timings.csv
 # Update the 'provisional' block when a pendant-drop gamma arrives.

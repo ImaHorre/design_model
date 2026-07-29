@@ -1023,7 +1023,7 @@ report = f"""# V5-30 Device Consistency Report — Batch 050526
 
 **Generated:** {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}
 **Devices tested:** 1B, 3D, 4C (same design, same production batch)
-**Conditions:** SDS continuous phase, silicone oil dispersed, 5 ml/hr, 300 mbar
+**Conditions:** SDS continuous phase, sunflower oil dispersed, 5 ml/hr, 300 mbar
 **Positions measured:** DFU1–DFU10 (10 positions per device)
 
 ---
@@ -1058,7 +1058,7 @@ down to the devices themselves.
 | Production batch | 050526 |
 | Testing date | 060526 |
 | Continuous phase | SDS |
-| Dispersed phase | Silicone Oil (SO) |
+| Dispersed phase | Sunflower Oil (SO) |
 | Cont. flow rate (Qw) | 5 ml/hr |
 | Disp. pressure (Po) | 300 mbar |
 | DFU positions tested | DFU1–DFU10 |

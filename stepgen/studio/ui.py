@@ -467,6 +467,9 @@ def _render_diagnosis(st, study: Study, scored: list[ScoredRow]) -> None:
 
     # ── buildable, blocked only by our weakest theory ───────────────────────
     if diag.theory_limited:
+        from stepgen.studio.diagnosis import ca_gamma_robustness
+
+        lo, hi = diag.gamma_range[0] * 1e3, diag.gamma_range[1] * 1e3
         st.markdown("#### Build-and-see candidates")
         st.info(
             f"**{len(diag.theory_limited)} designs are green on everything "
@@ -476,21 +479,40 @@ def _render_diagnosis(st, study: Study, scored: list[ScoredRow]) -> None:
             f"while we run at λ ≈ 0.015, and never approached within 7× on a "
             f"Peak device. The verdict stays red because an unmeasured risk "
             f"should not be quietly downgraded, but whether these work is a "
-            f"question the model cannot settle. Building one is how the gate "
-            f"stops being a guess.")
-        st.dataframe(
-            pd.DataFrame([
-                {"Config": scored[i].metrics.label,
-                 "Family": scored[i].metrics.family,
-                 "Exit Ca": scored[i].metrics.regime_Ca,
-                 "Throughput mL/hr": scored[i].metrics.throughput_mlhr,
-                 "ΔP spread %": scored[i].metrics.uniformity_pct}
-                for i in sorted(diag.theory_limited,
-                                key=lambda j: scored[j].metrics.regime_Ca or 0)
-            ]),
-            width="stretch", hide_index=True,
-            height=min(70 + 35 * len(diag.theory_limited), 400),
-        )
+            f"question the model cannot settle.")
+
+        if diag.gamma_dependent_ca or diag.robustly_red_ca:
+            st.caption(
+                f"Exit Ca scales as 1/γ, and γ has never been measured for this "
+                f"fluid system (configs here assume 5, 15 and 0 mN/m). Each "
+                f"verdict below is re-checked across **{lo:g}–{hi:g} mN/m** — "
+                f"free, because γ enters only this diagnostic and never the flow "
+                f"solve. **{len(diag.robustly_red_ca)}** stay red at every "
+                f"plausible γ and should be believed; "
+                f"**{len(diag.gamma_dependent_ca)}** are red only at part of the "
+                f"band and are the real shortlist.")
+
+        order = diag.gamma_dependent_ca or diag.theory_limited
+        rows = []
+        for i in order:
+            rb = ca_gamma_robustness(scored[i], study.scoring,
+                                     gamma_ref=diag.gamma_ref,
+                                     gamma_range=diag.gamma_range)
+            rows.append({
+                "Config": scored[i].metrics.label,
+                "Family": scored[i].metrics.family,
+                "Exit Ca": scored[i].metrics.regime_Ca,
+                "Clears above γ (mN/m)": (None if rb is None or rb.gamma_to_clear_red is None
+                                          else round(rb.gamma_to_clear_red * 1e3, 2)),
+                "Throughput mL/hr": scored[i].metrics.throughput_mlhr,
+                "ΔP spread %": scored[i].metrics.uniformity_pct,
+            })
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True,
+                     height=min(70 + 35 * len(rows), 400))
+        st.caption("“Clears above γ” is the interfacial tension at which this "
+                   "design would stop being red. Lower is a better bet — a "
+                   "design needing 6 mN/m is far more likely to be in regime "
+                   "than one needing 19.")
 
     # ── which gate is in the way ────────────────────────────────────────────
     shown = [f for f in diag.failures if f.n_red or f.n_sole_cause]

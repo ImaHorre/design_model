@@ -9,7 +9,7 @@ at matching (Po, Qw) conditions wherever available.
 
 CMC of SDS ≈ 0.24%.  Behaviour below CMC changes qualitatively.
 
-Interfacial tension estimates (SDS/water vs silicone oil, literature):
+Interfacial tension estimates (SDS/water vs sunflower oil, literature):
   2.0%  → γ ≈  6 mN/m   (above CMC)
   1.0%  → γ ≈  6 mN/m   (above CMC)
   0.5%  → γ ≈  7 mN/m   (above CMC)

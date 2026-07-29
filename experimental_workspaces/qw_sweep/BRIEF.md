@@ -1,7 +1,7 @@
 ---
 study-type: experimental
 device: V5-8-1 (ID B, V5-30 geometry)
-emulsion: Silicone oil / 2% SDS-water
+emulsion: Sunflower oil / 2% SDS-water
 date: 2026-04
 parameter-varied: Qw (5–20 mL/hr) × Po (200–600 mbar)
 fixed: [SDS]=2%

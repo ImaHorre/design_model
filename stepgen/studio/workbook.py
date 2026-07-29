@@ -470,12 +470,7 @@ def _diagnosis_html(diag: Diagnosis | None) -> str:
     # resting on something measurable passes; the only objection comes from a
     # threshold no Peak device has been within an order of magnitude of.
     if diag.theory_limited:
-        items = "".join(
-            f"<li><code>{html.escape(lbl)}</code></li>"
-            for lbl in diag.theory_limited_labels[:12]
-        )
-        more = (f'<li class="muted">…and {len(diag.theory_limited_labels) - 12} '
-                f'more</li>' if len(diag.theory_limited_labels) > 12 else "")
+        lo, hi = diag.gamma_range[0] * 1e3, diag.gamma_range[1] * 1e3
         head += (
             '<h3>Build-and-see candidates — green on everything except exit Ca</h3>'
             '<p class="muted">These pass every gate that rests on geometry, '
@@ -484,10 +479,52 @@ def _diagnosis_html(diag: Diagnosis | None) -> str:
             'literature at λ ≈ 1 while we run at λ ≈ 0.015, and which no Peak '
             'device has operated within 7× of. The verdict stays red — an '
             'unmeasured risk must not be quietly downgraded — but whether these '
-            'work is a question the model cannot settle. Building one is how the '
-            'gate stops being a guess.</p>'
-            f'<ul class="candidates">{items}{more}</ul>'
+            'work is a question the model cannot settle.</p>'
         )
+
+        # γ has never been measured, so Ca is a verdict resting on a guess.
+        # Split by whether the verdict survives the plausible band.
+        if diag.gamma_dependent_ca or diag.robustly_red_ca:
+            head += (
+                f'<p class="muted">Exit Ca scales as 1/γ, and the interfacial '
+                f'tension of this fluid system has never been measured — the '
+                f'configs in this repo variously assume 5, 15 and 0 mN/m. Each '
+                f'Ca verdict below is therefore re-evaluated across a plausible '
+                f'band of <b>{lo:g}–{hi:g} mN/m</b>. That costs nothing: γ enters '
+                f'the model only in this diagnostic and never in the flow solve, '
+                f'so the whole band follows analytically from the one solved '
+                f'value.</p>'
+            )
+            if diag.gamma_dependent_labels:
+                items = "".join(
+                    f"<li><code>{html.escape(lbl)}</code></li>"
+                    for lbl in diag.gamma_dependent_labels[:12])
+                more = (f'<li class="muted">…and '
+                        f'{len(diag.gamma_dependent_labels) - 12} more</li>'
+                        if len(diag.gamma_dependent_labels) > 12 else "")
+                head += (
+                    f'<h4>Red only at part of the γ band — the real shortlist '
+                    f'({len(diag.gamma_dependent_labels)})</h4>'
+                    f'<p class="muted">Ordered by how little γ it takes to clear, '
+                    f'best first. These are red because of a constant nobody has '
+                    f'measured, not because of anything about the design.</p>'
+                    f'<ul class="candidates">{items}{more}</ul>'
+                )
+            if diag.robustly_red_ca:
+                head += (
+                    f'<h4>Red at every plausible γ ({len(diag.robustly_red_ca)})'
+                    f'</h4><p class="muted">These stay above the ceiling even at '
+                    f'{hi:g} mN/m. Their Ca verdict survives our ignorance about '
+                    f'γ, so believe it — they are genuinely out of regime.</p>'
+                )
+        else:
+            items = "".join(
+                f"<li><code>{html.escape(lbl)}</code></li>"
+                for lbl in diag.theory_limited_labels[:12])
+            more = (f'<li class="muted">…and '
+                    f'{len(diag.theory_limited_labels) - 12} more</li>'
+                    if len(diag.theory_limited_labels) > 12 else "")
+            head += f'<ul class="candidates">{items}{more}</ul>'
 
     # ── which gate is in the way ────────────────────────────────────────────
     shown = [f for f in diag.failures if f.n_red or f.n_sole_cause][:8]
