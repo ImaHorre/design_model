@@ -24,8 +24,8 @@ wafer. Phase 5 is promoted to run alongside it. Details in Phase 2's "What actua
 | 0 | Housekeeping + threshold correction | S | **done** (`e390764`) |
 | 1 | Decide layer — value axes, margin, confidence, validity | M | **done** (`f47df07`) |
 | 2 | Intent layer + constraint diagnosis | M | **done** (`7b7649f` + Ca-audit follow-up) |
-| 3 | Design visualiser (to-scale SVG) | M | **next** |
-| **M1** | **Deep-DFU sweep session** | — | **gated on 3** |
+| 3 | Design visualiser (to-scale SVG) | M | **done** (MVP — see below) |
+| **M1** | **Deep-DFU sweep session** | — | **ungated — next** |
 | 5 | Boundary-probe studies + calibration loop | M | **promoted — run with M1** |
 | 4 | Workbook as memory | M | not started |
 | 6 | Form-driven UI | M | not started |
@@ -416,6 +416,58 @@ Going into a deep-DFU session without it means trusting packing numbers we canno
   loop at correct relative scale.
 - The zoom's called-out dimensions match the compiled config exactly.
 - Test: rendered geometry totals reconcile against `CommonMetrics.area_used_cm2` and `N_dfu`.
+
+### Landed — MVP, 2026-07-30
+
+**The split that made it universal.** `stepgen/viz/schematic.py` is a topology-agnostic
+drawing engine (primitives in device metres, SVG emission, LOD, dimensioning, legend,
+scale bar, pan/zoom). Each family declares its *shape* in ~40 lines behind
+`Family.render_schematic(compiled, view)`, emitted from the compiled object the solver
+consumes. A config file alone cannot drive this: YAML holds parameters to a shape, not a
+shape, so a renderer reading only YAML would be a second packing model free to disagree
+with the first — precisely the failure this phase exists to catch. Families that declare
+nothing get an honest fallback (die + junction, labelled "topology not declared") rather
+than an invented topology.
+
+**Live, because drawing needs no solve.** `compile()` + layout is ~1–4 ms against ~522 ms
+for `solve()`. The UI's new Layout tab reads the *live* sidebar YAML and only compiles, so
+the drawing tracks edits with no re-run and works before a study has ever been run. A
+regression test asserts the preview path never calls `solve()` — the premise the whole tab
+rests on.
+
+**Packing capacity — the layout model inverted.** `Family.packing_capacity(compiled)`
+answers "what does this die hold", not just "does this fit". Growing the footprint now
+visibly buys DFUs instead of merely turning a gate green. Serpentine 1,000/5,445 (18%);
+radial 3,115/3,324 (94%); manifold 800/12,662 (6%) — that last against the real V5-30's
+11,550, which is the order-of-magnitude tripwire for the family whose arm pitch was wrong
+by 10–20×.
+
+**A correction the drawing forces.** `num_lanes = ceil(Mcl / lane_length)` does not contain
+`turn_radius`. Tightening the turn compacts the stack so an overflowing design *fits*; it
+never adds a lane. Both halves are pinned by test. At the V5 default the ratio is 0.11
+(500 µm turn carrying a 4,500 µm bundle), and the drawing says so.
+
+**Honesty.** Every schematic carries an `inventions` list — the fold arc (2·r_turn is
+reserved but no turn path or pressure drop is modelled), the nominal exit length (the model
+treats the exit as a cross-section with no length), depths annotated not drawn. Rendered in
+an amber box under each figure; tests assert every view declares inventions and that they
+reach the HTML.
+
+Tests: `tests/test_studio_schematic.py`, 47 new, all passing. Full suite 494 passed; the
+same 5 pre-existing failures (3 `test_cli` png, 2 `test_design_search`) remain — verified
+identical in a clean worktree at `a1a23d3`, not assumed.
+
+**MVP limits, deliberately left:**
+- Workbook embeds drawings for starred rows + the first `MAX_SCHEMATIC_ROWS` (60) at
+  ~28 KB/row; uncapped, a 216-point study would add ~6 MB to a ~750 KB chapter. Capped rows
+  say so and point at the UI.
+- LOD is fixed at render time, so browser zoom on the device view reveals no new detail —
+  that is what the zoom view is for. Zoom-responsive LOD needs a client-side redraw.
+- No minimum bend radius as a *fab constraint*: `turn_radius` is drawn and live but has no
+  floor, so nothing stops the packing model using an unbuildable turn.
+- The acceptance item "rendered geometry totals reconcile against `area_used_cm2`" is
+  covered indirectly (lane count and fit reconcile against `compute_layout`), not as a
+  direct area cross-check.
 
 ---
 

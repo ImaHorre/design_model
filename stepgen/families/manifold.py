@@ -365,6 +365,70 @@ class ManifoldFamily(Family):
             label=label,
         )
 
+    # -- geometry rendering ------------------------------------------------
+    def packing_capacity(self, compiled: ManifoldCompiled):
+        """
+        DFU capacity of the comb, along both of its two independent axes.
+
+        The comb packs in two directions and both can bind:
+
+        * **across the spine** — how many arms the feed length holds, at the
+          honest arm pitch ``arm_w + 2·L_dfu + 2·W_cp + wall``.  This is the
+          number that was wrong by 10-20x before the 2026-07-13 rewrite (the
+          old pitch ignored the DFUs entirely), which is precisely why it is
+          worth drawing.
+        * **along each arm** — how many DFU pairs fit the usable side at the
+          junction pitch.
+        """
+        from stepgen.viz.schematic import PackingCapacity
+
+        pitch_arm = (compiled.arm_width_m + 2.0 * compiled.rung_len_m
+                     + 2.0 * compiled.cp_base_m + compiled.wall_width_m)
+        if pitch_arm <= 0 or compiled.pitch_m <= 0:
+            return None
+
+        usable = compiled.square_side_m - 2.0 * compiled.border_m
+        arms_max = int(math.floor(compiled.feed_length_m / pitch_arm))
+        # arm reach must leave room for the spine itself
+        arm_reach = max(usable - compiled.main_width_m, 0.0)
+        per_face_max = int(math.floor(arm_reach / compiled.pitch_m))
+        n_per_arm_max = 2 * per_face_max
+
+        n_current = compiled.M * compiled.n
+        n_max = max(arms_max * n_per_arm_max, 0)
+
+        arm_len = (compiled.n / 2.0) * compiled.pitch_m
+        stack = compiled.M * pitch_arm
+        if stack > compiled.feed_length_m:
+            limited_by = "spine length (arm stack overflows)"
+        elif arm_len > arm_reach:
+            limited_by = "arm reach (arms overrun the die)"
+        else:
+            limited_by = "spine length (arm stack)"
+
+        return PackingCapacity(
+            n_current=n_current,
+            n_max=n_max,
+            utilisation=(n_current / n_max) if n_max else float("inf"),
+            limited_by=limited_by,
+            fits=(stack <= compiled.feed_length_m and arm_len <= arm_reach),
+            detail={
+                "arms_current": float(compiled.M),
+                "arms_max": float(arms_max),
+                "arm_pitch_um": pitch_arm * 1e6,
+                "rungs_per_arm": float(compiled.n),
+                "rungs_per_arm_max": float(n_per_arm_max),
+                "arm_length_mm": arm_len * 1e3,
+                "arm_reach_mm": arm_reach * 1e3,
+            },
+        )
+
+    def render_schematic(self, compiled: ManifoldCompiled, view: str = "device"):
+        """Comb manifold in the die square, or a zoomed pair of arm faces."""
+        if view == "zoom":
+            return _manifold_zoom(compiled)
+        return _manifold_device(compiled, self.packing_capacity(compiled))
+
 
 def build_comb_network(
     c: ManifoldCompiled, *, Po_Pa: float, Qw_m3s: float = 0.0, P_out_Pa: float = 0.0
@@ -619,4 +683,196 @@ def solve_manifold(
             "Q_per_dfu_nL_hr": q_mean * 1e12 * 3600.0,
             "Q_total_uL_hr": q_total * 1e9 * 3600.0,
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Schematics (Phase 3)
+# ---------------------------------------------------------------------------
+
+def _arm_pitch(c: ManifoldCompiled) -> float:
+    """
+    ``arm_w + 2·L_dfu + 2·W_cp + wall`` — the honest arm-to-arm pitch.
+
+    Identical to the expression :meth:`ManifoldFamily.compile` uses for
+    ``pitch_arm`` when it builds ``r_prim``.  This is the number the 2026-07-13
+    rewrite corrected: the previous pitch omitted the DFU protrusions entirely
+    and overestimated how many arms fit by 10-20x.  Drawing it to scale is the
+    check that catches a repeat of that.
+    """
+    return (c.arm_width_m + 2.0 * c.rung_len_m
+            + 2.0 * c.cp_base_m + c.wall_width_m)
+
+
+def _manifold_device(c: ManifoldCompiled, capacity=None):
+    """
+    Whole-device view: the primary spine with M arms, each carrying n/2 DFUs
+    per face, drawn at the true arm pitch.
+    """
+    from stepgen.viz.schematic import Dim, Label, Rect, Schematic, Zone
+
+    side = c.square_side_m
+    bd = c.border_m
+    pitch_arm = _arm_pitch(c)
+    per_face = max(c.n // 2, 0)
+    arm_len = per_face * c.pitch_m
+    stack = c.M * pitch_arm
+    usable = side - 2.0 * bd
+    arm_reach = max(usable - c.main_width_m, 0.0)
+
+    x_spine = bd
+    x_arm = x_spine + c.main_width_m
+
+    prims: list = [Rect(0.0, 0.0, side, side, "die", dashed=True)]
+    # the primary spine, running up the left edge of the usable area
+    prims.append(Rect(x_spine, bd, c.main_width_m, min(stack, c.feed_length_m),
+                      "spine", label="spine"))
+
+    for i in range(c.M):
+        y0 = bd + i * pitch_arm
+        inside = (y0 + pitch_arm) <= (bd + c.feed_length_m + 1e-12)
+        over_x = arm_len > arm_reach
+
+        y = y0
+        prims.append(Rect(x_arm, y, min(arm_len, arm_reach), c.cp_base_m, "cont_phase"))
+        y += c.cp_base_m
+        prims.append(Zone(x_arm, y, min(arm_len, arm_reach), c.rung_len_m, "dfu",
+                          count=per_face, unit_w=c.upstream_width_m,
+                          unit_h=c.rung_len_m, pitch=c.pitch_m, axis="x",
+                          label=(f"{per_face:,}" if per_face > 240 and i == 0 else None)))
+        y += c.rung_len_m
+        prims.append(Rect(x_arm, y, min(arm_len, arm_reach), c.arm_width_m,
+                          "arm", dashed=not inside))
+        y += c.arm_width_m
+        prims.append(Zone(x_arm, y, min(arm_len, arm_reach), c.rung_len_m, "dfu",
+                          count=per_face, unit_w=c.upstream_width_m,
+                          unit_h=c.rung_len_m, pitch=c.pitch_m, axis="x"))
+        y += c.rung_len_m
+        prims.append(Rect(x_arm, y, min(arm_len, arm_reach), c.cp_base_m, "cont_phase"))
+        y += c.cp_base_m
+        prims.append(Rect(x_arm, y, min(arm_len, arm_reach), c.wall_width_m, "wall"))
+
+        if not inside or over_x:
+            prims.append(Rect(x_arm, y0, min(arm_len, arm_reach), pitch_arm, "overflow"))
+
+    prims += [
+        Dim(x_arm - side * 0.012, bd, x_arm - side * 0.012, bd + pitch_arm,
+            f"arm pitch {pitch_arm * 1e6:.0f} um"),
+        Dim(x_arm, bd - side * 0.025, x_arm + min(arm_len, arm_reach), bd - side * 0.025,
+            f"arm {arm_len * 1e3:.1f} mm"),
+        Label(side / 2, side - bd * 0.4,
+              f"{c.M} arms x {c.n} rungs = {c.M * c.n:,} DFUs"),
+    ]
+
+    notes = [
+        f"Arm pitch {pitch_arm * 1e6:.0f} um = arm {c.arm_width_m * 1e6:.0f} + "
+        f"2x DFU {c.rung_len_m * 1e6:.0f} + 2x cp {c.cp_base_m * 1e6:.0f} + "
+        f"wall {c.wall_width_m * 1e6:.0f}. The DFU protrusions are "
+        f"{2 * c.rung_len_m / pitch_arm * 100:.0f}% of it.",
+        f"Arm stack {stack * 1e3:.1f} mm against {c.feed_length_m * 1e3:.1f} mm "
+        f"of spine.",
+        f"Arms reach {arm_len * 1e3:.1f} mm against {arm_reach * 1e3:.1f} mm "
+        f"available.",
+    ]
+    if stack > c.feed_length_m:
+        notes.append(f"Arm stack overflows the spine by "
+                     f"{(stack - c.feed_length_m) * 1e3:.1f} mm.")
+    if arm_len > arm_reach:
+        notes.append(f"Arms overrun the die by {(arm_len - arm_reach) * 1e3:.1f} mm.")
+
+    return Schematic(
+        family="manifold", view="device", prims=prims,
+        extent=(0.0, 0.0, max(side, x_arm + arm_len), max(side, bd + stack)),
+        title="Manifold (comb) - whole device",
+        subtitle=f"{c.M} arms - {c.n} rungs/arm - die {side * 1e3:.1f} mm",
+        notes=notes,
+        inventions=[
+            "Arms are drawn on one side of the spine only, in the order the "
+            "ladder solves them. The model treats the comb as M identical arms "
+            "off one spine and does not fix which side each sits on.",
+            "The continuous-phase return path and outlet manifold are drawn as "
+            "the packing allowance the model reserves, not as routed channels — "
+            "no route is modelled.",
+        ],
+        fits=(stack <= c.feed_length_m and arm_len <= arm_reach),
+        capacity=capacity,
+    )
+
+
+def _manifold_zoom(c: ManifoldCompiled, n_show: int | None = None):
+    """
+    Zoomed view of one arm: both DFU faces, the cp legs and the wall.
+
+    ``n_show`` defaults to whatever keeps the drawing roughly square — the arm
+    pitch is typically tens of times the junction pitch, so a fixed count would
+    render as an unreadable sliver.
+    """
+    from stepgen.viz.schematic import Dim, Label, Rect, Schematic
+
+    if n_show is None:
+        n_show = int(round(_arm_pitch(c) * 1.35 / c.pitch_m)) if c.pitch_m > 0 else 5
+    n = int(min(max(n_show, 4), 40))
+    span = n * c.pitch_m
+    w, pitch = c.upstream_width_m, c.pitch_m
+    wall_gap = pitch - w
+    exit_len = c.rung_len_m * 0.08          # drawing-only; see inventions
+
+    prims: list = []
+    y = 0.0
+    prims.append(Rect(-pitch * 0.5, y, span + pitch, c.cp_base_m, "cont_phase",
+                      label="continuous phase"))
+    y += c.cp_base_m
+    for i in range(n):                       # lower face
+        x = i * pitch
+        prims.append(Rect(x, y, w, c.rung_len_m - exit_len, "dfu"))
+        prims.append(Rect(x + (w - c.exit_width_m) / 2.0, y, c.exit_width_m,
+                          exit_len, "exit"))
+    y += c.rung_len_m
+    prims.append(Rect(-pitch * 0.5, y, span + pitch, c.arm_width_m, "arm", label="arm"))
+    y += c.arm_width_m
+    for i in range(n):                       # upper face
+        x = i * pitch
+        prims.append(Rect(x, y + exit_len, w, c.rung_len_m - exit_len, "dfu"))
+        prims.append(Rect(x + (w - c.exit_width_m) / 2.0, y, c.exit_width_m,
+                          exit_len, "exit"))
+    y += c.rung_len_m
+    prims.append(Rect(-pitch * 0.5, y, span + pitch, c.cp_base_m, "cont_phase"))
+    y += c.cp_base_m
+    prims.append(Rect(-pitch * 0.5, y, span + pitch, c.wall_width_m, "wall",
+                      label="wall to next arm"))
+    top = y + c.wall_width_m
+
+    prims += [
+        Dim(0.0, -c.cp_base_m * 0.6, pitch, -c.cp_base_m * 0.6,
+            f"pitch {pitch * 1e6:.0f} um"),
+        Dim(0.0, -c.cp_base_m * 1.3, w, -c.cp_base_m * 1.3, f"w_up {w * 1e6:.1f} um"),
+        Dim(w, -c.cp_base_m * 2.0, pitch, -c.cp_base_m * 2.0,
+            f"wall {wall_gap * 1e6:.1f} um"),
+        Dim(-pitch * 0.75, 0.0, -pitch * 0.75, top, f"arm pitch {_arm_pitch(c) * 1e6:.0f} um"),
+        Dim(-pitch * 0.30, c.cp_base_m, -pitch * 0.30, c.cp_base_m + c.rung_len_m,
+            f"L_dfu {c.rung_len_m * 1e6:.0f} um"),
+        Label(span * 0.5, top + c.cp_base_m * 0.9,
+              f"exit {c.exit_width_m * 1e6:.0f} x {c.exit_depth_m * 1e6:.0f} um "
+              f"(depth out of plane)", size=0.9),
+    ]
+
+    return Schematic(
+        family="manifold", view="zoom", prims=prims,
+        extent=(-pitch * 1.0, -c.cp_base_m * 2.6, span + pitch * 0.6,
+                top + c.cp_base_m * 1.6),
+        title="Manifold - one arm cross-section at true scale",
+        subtitle=f"{n} adjacent DFUs per face - arm pitch {_arm_pitch(c) * 1e6:.0f} um",
+        notes=[
+            f"DFU protrusions ({c.rung_len_m * 1e6:.0f} um each face) are "
+            f"{2 * c.rung_len_m / _arm_pitch(c) * 100:.0f}% of the arm pitch — "
+            f"they, not the arm, set how many arms fit.",
+            f"Wall between DFUs is {wall_gap * 1e6:.1f} um at "
+            f"{w * 1e6:.1f} um upstream width.",
+        ],
+        inventions=[
+            "The junction exit is drawn with a nominal length (8% of the DFU). "
+            "The model treats the exit as a cross-section - width x depth.",
+            "Both faces are drawn with aligned DFUs; the model does not specify "
+            "whether the two faces are staggered.",
+        ],
     )

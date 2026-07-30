@@ -62,6 +62,41 @@ _VALUE_KEYS = [k for k, _ in _COLUMNS]
 
 
 # ---------------------------------------------------------------------------
+# Layout preview (Phase 3) — compile-only, so it can redraw live
+# ---------------------------------------------------------------------------
+# Drawing a design needs `compile()` (~1 ms warm) and nothing else; `solve()`
+# costs ~500 ms *per point*. Keeping the two apart is what lets the schematic
+# track the YAML as you type while the scored table stays behind a Run button.
+
+def schematic_for_point(point, view: str = "device"):
+    """
+    Compile one :class:`StudyPoint` and draw it — no solve.
+
+    Returns ``(schematic, capacity)``.  Pure function, no Streamlit: the tests
+    call it directly.
+    """
+    from stepgen.families import get_family
+
+    family = get_family(point.family)
+    compiled = family.compile(
+        point.params,
+        fluids=point.fluids,
+        footprint=point.footprint,
+        manufacturing=point.manufacturing,
+    )
+    return family.render_schematic(compiled, view), family.packing_capacity(compiled)
+
+
+def _svg_block_height(sch, width_px: int) -> int:
+    """Pixel height for a components.html block: drawing + chrome + note lists."""
+    aspect = sch.height_m / max(sch.width_m, 1e-12)
+    # the emitter pads the extent by 6% of the larger dimension on every side
+    drawing = width_px * min(max(aspect, 0.25), 2.2) * 1.14
+    notes = 22 * (len(sch.notes) + len(sch.inventions)) + (70 if sch.inventions else 0)
+    return int(drawing + notes + 120)
+
+
+# ---------------------------------------------------------------------------
 # Pure helpers (no Streamlit runtime required — unit-testable)
 # ---------------------------------------------------------------------------
 
@@ -249,7 +284,9 @@ def render(initial_path: str | None = None) -> None:
 
     run_text = st.session_state.get("run_text")
     if not run_text:
-        st.info("Pick or paste a study on the left, then press **Run study**.")
+        st.info("Pick or paste a study on the left, then press **Run study** — "
+                "or just look at the live layout below, which needs no run.")
+        _render_layout(st, text, source_path)
         _families_hint(st)
         return
 
@@ -259,10 +296,11 @@ def render(initial_path: str | None = None) -> None:
         st.error(f"Could not run this study: {exc}")
         return
 
-    _render_results(st, data)
+    _render_results(st, data, live_text=text, live_source=source_path)
 
 
-def _render_results(st, data: dict[str, Any]) -> None:
+def _render_results(st, data: dict[str, Any], *, live_text: str | None = None,
+                    live_source: str | None = None) -> None:
     study: Study = data["study"]
     result: StudyResult = data["result"]
     scored: list[ScoredRow] = data["scored"]
@@ -286,8 +324,8 @@ def _render_results(st, data: dict[str, Any]) -> None:
     c3.metric("🟠 Orange", n_orange)
     c4.metric("🔴 Red", n_red)
 
-    tab_decide, tab_diag, tab_table, tab_plots, tab_prov = st.tabs(
-        ["Decision", "Diagnosis", "Scored comparison", "Plots",
+    tab_decide, tab_diag, tab_layout, tab_table, tab_plots, tab_prov = st.tabs(
+        ["Decision", "Diagnosis", "Layout", "Scored comparison", "Plots",
          "Provenance & export"])
 
     with tab_decide:
@@ -296,14 +334,115 @@ def _render_results(st, data: dict[str, Any]) -> None:
     with tab_diag:
         _render_diagnosis(st, study, scored)
 
+    with tab_layout:
+        # Deliberately driven by the *live* sidebar text, not the run text:
+        # the drawing costs a compile, so it can track edits without a re-run.
+        _render_layout(st, live_text if live_text is not None else "", live_source)
+
     with tab_table:
-        _render_table(st, scored, df, cats)
+        _render_table(st, scored, df, cats, study)
 
     with tab_plots:
         _render_plots(st, data["plots"])
 
     with tab_prov:
         _render_provenance(st, result, study)
+
+
+def _render_layout(st, text: str, source_path: str | None) -> None:
+    """
+    The live layout tab — a to-scale drawing of whichever design point you pick.
+
+    This reads the **live** sidebar YAML and only ever calls ``compile()``, so it
+    redraws as you edit without waiting on a solve.  Change the die square, the
+    junction pitch or the arm count and the picture follows immediately; the
+    scored numbers stay behind the Run button, because those cost 500 ms a point.
+    """
+    import streamlit.components.v1 as components
+    from stepgen.viz.schematic import to_interactive_html
+
+    st.markdown("#### Layout — live, to scale")
+    st.caption("Drawn from the compiled config the solver consumes, so it cannot "
+               "drift from the packing maths. Compile only — no solve — so it "
+               "tracks your edits without a re-run.")
+
+    if not (text or "").strip():
+        st.info("Nothing to draw yet.")
+        return
+
+    try:
+        study = load_study_text(text, source_path=source_path)
+    except Exception as exc:
+        st.warning(f"Config does not parse yet: {exc}")
+        return
+
+    points = study.points
+    if not points:
+        st.warning("This study expands to no design points.")
+        return
+
+    # ── pick a family, then a point within it ───────────────────────────────
+    fams = sorted({p.family for p in points})
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        fam_name = st.selectbox("Family", fams, key="layout_family")
+    subset = [p for p in points if p.family == fam_name]
+    with c2:
+        labels = [p.label for p in subset]
+        idx = st.selectbox(
+            f"Design point ({len(subset)} in this family)",
+            range(len(subset)), format_func=lambda i: labels[i], key="layout_point",
+        )
+    point = subset[idx]
+
+    try:
+        device, capacity = schematic_for_point(point, "device")
+        zoom, _ = schematic_for_point(point, "zoom")
+    except Exception as exc:
+        st.error(f"Could not draw this point: {exc}")
+        return
+
+    # ── the generative readout: what the die holds, not just pass/fail ──────
+    if capacity:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("DFUs configured", f"{capacity.n_current:,}")
+        m2.metric("DFUs the die holds", f"{capacity.n_max:,}",
+                  help=f"Limited by {capacity.limited_by}.")
+        m3.metric("Area used", f"{capacity.utilisation:.0%}"
+                  if capacity.utilisation != float("inf") else "n/a")
+        m4.metric("Fits", "yes" if capacity.fits else "no")
+        if capacity.n_max > capacity.n_current:
+            st.caption(
+                f"This footprint has room for **{capacity.n_max - capacity.n_current:,} "
+                f"more DFUs** at the current pitch — limited by {capacity.limited_by}."
+            )
+        elif not capacity.fits:
+            st.caption(f"Over capacity — limited by {capacity.limited_by}.")
+
+    width = 620
+    left, right = st.columns(2)
+    with left:
+        components.html(
+            to_interactive_html(device, width_px=width, uid="lay-device"),
+            height=_svg_block_height(device, width), scrolling=True,
+        )
+    with right:
+        components.html(
+            to_interactive_html(zoom, width_px=width, uid="lay-zoom"),
+            height=_svg_block_height(zoom, width), scrolling=True,
+        )
+
+    with st.expander("Packing detail"):
+        if capacity and capacity.detail:
+            st.dataframe(
+                pd.DataFrame(
+                    [(k, v) for k, v in capacity.detail.items()],
+                    columns=["quantity", "value"],
+                ),
+                hide_index=True, width="stretch",
+            )
+        else:
+            st.caption("This family does not report a packing capacity.")
 
 
 def _render_decision(st, scored: list[ScoredRow], study: Study) -> None:
@@ -583,7 +722,7 @@ def _render_diagnosis(st, study: Study, scored: list[ScoredRow]) -> None:
     )
 
 
-def _render_table(st, scored, df, cats) -> None:
+def _render_table(st, scored, df, cats, study: Study | None = None) -> None:
     fam_opts = sorted({s.metrics.family for s in scored})
     verdict_opts = ["green", "orange", "red"]
 
@@ -617,10 +756,10 @@ def _render_table(st, scored, df, cats) -> None:
               for i, s in enumerate(scored)]
     pick = st.selectbox("Point", labels, index=0)
     idx = labels.index(pick)
-    _render_drilldown(st, scored[idx])
+    _render_drilldown(st, scored[idx], study)
 
 
-def _render_drilldown(st, sr: ScoredRow) -> None:
+def _render_drilldown(st, sr: ScoredRow, study: Study | None = None) -> None:
     m = sr.metrics
     left, mid, right = st.columns(3)
     with left:
@@ -657,6 +796,29 @@ def _render_drilldown(st, sr: ScoredRow) -> None:
         st.markdown("**Raw metrics**")
         raw = {k: v for k, v in (m.raw or {}).items() if not k.startswith("_")}
         st.json(raw or {"(no raw metrics)": None}, expanded=False)
+
+    # ── to-scale schematic for this exact row ───────────────────────────────
+    if study is not None:
+        point = next((p for p in study.points if p.label == m.label), None)
+        if point is not None:
+            import streamlit.components.v1 as components
+            from stepgen.viz.schematic import to_interactive_html
+            try:
+                device, _cap = schematic_for_point(point, "device")
+                zoom, _ = schematic_for_point(point, "zoom")
+            except Exception as exc:
+                st.caption(f"No schematic for this row: {exc}")
+                return
+            st.markdown("**Layout**")
+            lc, rc = st.columns(2)
+            with lc:
+                components.html(
+                    to_interactive_html(device, width_px=560, uid="dd-device"),
+                    height=_svg_block_height(device, 560), scrolling=True)
+            with rc:
+                components.html(
+                    to_interactive_html(zoom, width_px=560, uid="dd-zoom"),
+                    height=_svg_block_height(zoom, 560), scrolling=True)
 
 
 def _render_plots(st, plots: list[dict[str, Any]]) -> None:

@@ -216,6 +216,48 @@ class RadialFamily(Family):
             label=label,
         )
 
+    # -- geometry rendering ------------------------------------------------
+    def packing_capacity(self, compiled: RadialCompiled):
+        """
+        DFU capacity of the radial array.
+
+        Two different limits, and which one binds is worth seeing.  At the
+        configured radius the array holds ``N = 2πR/pitch`` spokes — that is not
+        a choice, it is the circumference.  The *die* limit is the largest wheel
+        the square holds, ``R_max = side/2``, giving ``N_max = 2πR_max/pitch``.
+
+        So unlike the serpentine, ``n_current`` here is already the maximum for
+        its radius: growing the die only helps by permitting a bigger wheel.
+        """
+        from stepgen.viz.schematic import PackingCapacity
+
+        if compiled.pitch_m <= 0:
+            return None
+        r_max = compiled.square_side_m / 2.0
+        n_here = int(2.0 * math.pi * compiled.radius_m / compiled.pitch_m)
+        n_max = int(2.0 * math.pi * r_max / compiled.pitch_m)
+        fits = (2.0 * compiled.radius_m) <= compiled.square_side_m
+
+        return PackingCapacity(
+            n_current=n_here,
+            n_max=n_max,
+            utilisation=(n_here / n_max) if n_max else float("inf"),
+            limited_by="circumference at this radius (die caps the radius)",
+            fits=fits,
+            detail={
+                "radius_mm": compiled.radius_m * 1e3,
+                "max_radius_mm": r_max * 1e3,
+                "pitch_um": compiled.pitch_m * 1e6,
+                "circumference_mm": 2.0 * math.pi * compiled.radius_m * 1e3,
+            },
+        )
+
+    def render_schematic(self, compiled: RadialCompiled, view: str = "device"):
+        """Radial wheel in the die square, or a zoomed arc of adjacent spokes."""
+        if view == "zoom":
+            return _radial_zoom(compiled)
+        return _radial_device(compiled, self.packing_capacity(compiled))
+
 
 def solve_radial(
     c: RadialCompiled,
@@ -343,4 +385,134 @@ def solve_radial(
             "Q_total_uL_hr": q_total * 1e9 * 3600.0,
             "Q_per_dfu_nL_hr": q_per_dfu * 1e12 * 3600.0,
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Schematics (Phase 3)
+# ---------------------------------------------------------------------------
+
+def _hub_radius(c: RadialCompiled) -> float:
+    """
+    ``r_hub = R·(w_up + t_min)/pitch`` — §11.2.
+
+    The same expression :func:`solve_radial` uses.  Drawing it from anywhere
+    else would let the picture and the hydraulics disagree about where the
+    channels begin, which is exactly what the schematic exists to prevent.
+    """
+    return c.radius_m * (c.upstream_width_m + c.t_min_m) / c.pitch_m
+
+
+def _radial_device(c: RadialCompiled, capacity=None):
+    """Whole-device view: the wheel inside the die square."""
+    from stepgen.viz.schematic import AnnularZone, Circle, Dim, Label, Rect, Schematic
+
+    side = c.square_side_m
+    cx = cy = side / 2.0
+    R = c.radius_m
+    r_hub = _hub_radius(c)
+    n_dfu = int(2.0 * math.pi * R / c.pitch_m) if c.pitch_m > 0 else 0
+    fits = (2.0 * R) <= side
+
+    prims: list = [Rect(0.0, 0.0, side, side, "die", dashed=True)]
+
+    # the spoke array — true-scale annulus, individual spokes while resolvable
+    prims.append(AnnularZone(
+        cx, cy, r_hub, R, 0.0, 2.0 * math.pi, "dfu",
+        count=n_dfu, unit_w=c.upstream_width_m,
+        label=(f"{n_dfu:,} spokes" if n_dfu > 240 else None),
+    ))
+    # the forced-manifold core: below r_hub there is no room for walls
+    prims.append(Circle(cx, cy, r_hub, "hub"))
+    prims.append(Circle(cx, cy, c.inlet_radius_m, "oil_main", label="inlet"))
+
+    prims += [
+        Dim(cx, cy, cx + R, cy, f"R {R * 1e3:.2f} mm"),
+        Dim(cx, cy - r_hub, cx, cy, f"r_hub {r_hub * 1e3:.2f} mm"),
+        Label(cx, cy + R + side * 0.03,
+              f"{n_dfu:,} DFUs at {c.pitch_m * 1e6:.0f} um pitch"),
+    ]
+
+    notes = [
+        f"N = 2piR/pitch = {n_dfu:,}; the count is the circumference, not a "
+        f"free choice.",
+        f"Channels exist only beyond r_hub = {r_hub * 1e3:.2f} mm "
+        f"({r_hub / R * 100:.0f}% of R) — inside it the wall thickness cannot "
+        f"fit between neighbours, so the core is a forced open manifold.",
+        f"Effective channel length L_eff = R - r_hub = {(R - r_hub) * 1e3:.2f} mm.",
+    ]
+    if not fits:
+        notes.append(
+            f"Wheel diameter {2 * R * 1e3:.1f} mm exceeds the {side * 1e3:.1f} mm die."
+        )
+
+    span = max(2.0 * R, side)
+    m = (side - span) / 2.0
+    return Schematic(
+        family="radial", view="device", prims=prims,
+        extent=(min(0.0, m), min(0.0, m), max(side, cx + R), max(side, cy + R)),
+        title="Radial - whole device",
+        subtitle=f"R {R * 1e3:.2f} mm in a {side * 1e3:.1f} mm die",
+        notes=notes,
+        inventions=[
+            "Spokes are drawn straight and radial at uniform angular pitch. The "
+            "model assumes exactly this, so the drawing adds nothing — but it "
+            "also means no inlet routing to the hub is shown, because none is "
+            "modelled.",
+            "The collection reservoir outside the rim is not drawn; the model "
+            "treats the exit as discharging to a fixed outlet pressure.",
+        ],
+        fits=fits,
+        capacity=capacity,
+    )
+
+
+def _radial_zoom(c: RadialCompiled, n_show: int = 7):
+    """Zoomed rim arc: a few adjacent spokes and their exits, at true scale."""
+    from stepgen.viz.schematic import AnnularZone, Dim, Label, Schematic
+
+    R = c.radius_m
+    pitch, w = c.pitch_m, c.upstream_width_m
+    wall = pitch - w
+    show_len = min(max(pitch * 6.0, 0.3e-3), max(R - _hub_radius(c), 1e-4))
+
+    # Local frame: rim at y = 0, centre far below at (0, -R).
+    half = (n_show * pitch / R) / 2.0
+    prims: list = [AnnularZone(
+        0.0, -R, R - show_len, R,
+        math.pi / 2 - half, math.pi / 2 + half,
+        "dfu", count=n_show, unit_w=w,
+    )]
+
+    x_span = n_show * pitch / 2.0
+    prims += [
+        Dim(-x_span, -show_len * 1.18, -x_span + pitch, -show_len * 1.18,
+            f"pitch {pitch * 1e6:.0f} um"),
+        Dim(-x_span, -show_len * 1.35, -x_span + w, -show_len * 1.35,
+            f"w_up {w * 1e6:.1f} um"),
+        Dim(-x_span + w, -show_len * 1.52, -x_span + pitch, -show_len * 1.52,
+            f"wall {wall * 1e6:.1f} um"),
+        Dim(x_span * 1.12, -show_len, x_span * 1.12, 0.0,
+            f"{show_len * 1e3:.2f} mm of {(R - _hub_radius(c)) * 1e3:.2f} mm"),
+        Label(0.0, show_len * 0.22,
+              f"exit {c.exit_width_m * 1e6:.0f} x {c.exit_depth_m * 1e6:.0f} um "
+              f"(depth out of plane) - rim at R = {R * 1e3:.2f} mm", size=0.9),
+    ]
+
+    return Schematic(
+        family="radial", view="zoom", prims=prims,
+        extent=(-x_span * 1.35, -show_len * 1.7, x_span * 1.35, show_len * 0.35),
+        title="Radial - rim spokes at true scale",
+        subtitle=f"{n_show} adjacent spokes - pitch {pitch * 1e6:.0f} um",
+        notes=[
+            f"Wall between spokes at the rim is {wall * 1e6:.1f} um "
+            f"(min feature {c.t_min_m * 1e6:.1f} um).",
+            f"Spokes converge inward: the wall vanishes at r_hub, which is what "
+            f"sets it at {_hub_radius(c) * 1e3:.2f} mm.",
+        ],
+        inventions=[
+            "Only the outer {:.0%} of each spoke is shown; the array continues "
+            "inward to r_hub.".format(show_len / max(R - _hub_radius(c), 1e-12)),
+            "Exit depth is annotated, not drawn: this is a plan view.",
+        ],
     )

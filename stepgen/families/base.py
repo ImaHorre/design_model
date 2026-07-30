@@ -18,6 +18,8 @@ Interface (`Family`)
     metric_confidence(cm) how far each metric of a row can be trusted
     grid_from_intent(...) a droplet/throughput target -> this family's geometry
                           block (leaves may be lists = swept axes)
+    render_schematic(...) compiled config -> a to-scale drawing (Phase 3)
+    packing_capacity(...) compiled config -> how many DFUs the die actually holds
 
 `evaluate()` is a convenience that chains compile + solve.
 
@@ -30,6 +32,7 @@ Registry
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import Any
@@ -237,6 +240,96 @@ class Family(ABC):
             f"family '{self.name}' cannot generate a grid from an intent; "
             f"write its geometry block explicitly"
         )
+
+    # -- geometry rendering (Phase 3) --------------------------------------
+
+    def render_schematic(self, compiled: Any, view: str = "device"):
+        """
+        Draw *this compiled design* to scale.
+
+        Returns a :class:`stepgen.viz.schematic.Schematic`.  ``view`` is
+        ``"device"`` (the whole die) or ``"zoom"`` (a few adjacent DFUs at true
+        scale, with the junction dimensions called out).
+
+        The argument is the **compiled** config — the very object ``solve()``
+        consumes — and never the raw study params.  That is deliberate and is
+        the one rule this method must keep: a drawing derived from the YAML
+        instead would be a second packing model, free to disagree with the one
+        that produced the numbers.  The manifold arm pitch was wrong by 10-20x
+        and every derived metric still looked plausible; the drawing is only
+        able to catch that class of error while it shares the solver's geometry.
+
+        Anything drawn for legibility that the model does not actually compute
+        must be declared in ``Schematic.inventions``, which is rendered under
+        the picture.
+
+        The default implementation is a deliberately crude, honest fallback
+        built from the shared contract alone — see :meth:`_fallback_schematic`.
+        A family that has not declared its topology gets a drawing that says so
+        rather than one that invents a shape.
+        """
+        return self._fallback_schematic(compiled, view)
+
+    def _fallback_schematic(self, compiled: Any, view: str = "device"):
+        """
+        The topology-agnostic fallback: die square, occupied-area block and the
+        junction at true scale, explicitly labelled as topology-unknown.
+
+        Everything here comes from fields every family fills, so any new family
+        gets a partial drawing for free — and one that cannot mislead, because
+        it draws no topology at all.
+        """
+        from stepgen.viz.schematic import Label, Rect, Schematic
+
+        side = float(getattr(compiled, "square_side_m", 0.0) or 0.0)
+        if not side:
+            fp = getattr(compiled, "footprint", None)
+            area = float(getattr(fp, "footprint_area_cm2", 0.0) or 0.0) * 1e-4
+            side = math.sqrt(area) if area > 0 else 10e-3
+
+        prims: list[Any] = []
+        notes = [
+            f"{self.name} has not declared a topology for the visualiser; "
+            f"only the die square and the junction are drawn."
+        ]
+
+        if view == "zoom":
+            w = float(getattr(compiled, "exit_width_m", 0.0) or 30e-6)
+            h = float(getattr(compiled, "exit_depth_m", 0.0) or 10e-6)
+            prims.append(Rect(0.0, 0.0, w, h, "exit", label="exit"))
+            prims.append(Label(w / 2, -h, f"exit {w*1e6:.0f} x {h*1e6:.0f} µm"))
+            return Schematic(
+                family=self.name, view="zoom", prims=prims,
+                extent=(-w * 0.5, -h * 2.0, w * 1.5, h * 2.0),
+                title=f"{self.name} — junction (topology not declared)",
+                notes=notes,
+                inventions=["No topology declared: neighbouring DFUs are not drawn."],
+            )
+
+        prims.append(Rect(0.0, 0.0, side, side, "die", dashed=True))
+        prims.append(Label(side / 2, side / 2, "topology not declared", size=1.2))
+        return Schematic(
+            family=self.name, view="device", prims=prims,
+            extent=(0.0, 0.0, side, side),
+            die_side_m=side,
+            title=f"{self.name} — die outline only",
+            notes=notes,
+            inventions=["No topology declared: no channels are drawn."],
+        )
+
+    def packing_capacity(self, compiled: Any):
+        """
+        How many DFUs this footprint holds, versus how many are configured.
+
+        Returns a :class:`stepgen.viz.schematic.PackingCapacity`, or ``None``
+        where the family cannot answer.  This inverts the historical layout
+        model, which only ever *checked* a written ``N`` against the die: it
+        tells you what the area could hold, so enlarging the die visibly buys
+        DFUs rather than merely turning a gate green.
+
+        Layout is microseconds, so this is free to recompute on every redraw.
+        """
+        return None
 
     @abstractmethod
     def compile(

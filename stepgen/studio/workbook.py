@@ -610,13 +610,99 @@ def _margin_cell(sr: ScoredRow) -> str:
             f'{html.escape(weak)}&nbsp;·&nbsp;{html.escape(label)}</span></td>')
 
 
-def _table_html(scored: list[ScoredRow], best: set[int]) -> str:
+#: Maximum drill-down rows that carry an embedded schematic.
+#: Each drawing pair costs ~28 KB of inline SVG, so a 216-point intent study
+#: would add ~6 MB to a chapter that is otherwise ~750 KB.  The starred (best)
+#: rows are always drawn; the rest fill the remaining budget in table order, and
+#: any row that misses out says so rather than silently showing nothing.
+MAX_SCHEMATIC_ROWS = 60
+
+
+def _schematic_rows(scored: list[ScoredRow], best: set[int]) -> set[int]:
+    """Which row indices get an embedded drawing — best first, then in order."""
+    chosen = set(i for i in best if i < len(scored))
+    for i in range(len(scored)):
+        if len(chosen) >= MAX_SCHEMATIC_ROWS:
+            break
+        chosen.add(i)
+    return chosen
+
+
+def _panzoom_js() -> str:
+    """One copy of the schematic pan/zoom initialiser for the whole chapter."""
+    from stepgen.viz.schematic import panzoom_js
+    return panzoom_js()
+
+
+def _schematic_omitted(drawable: bool) -> str:
+    """Say why a row has no drawing, rather than leaving a silent gap."""
+    if not drawable:
+        return ""
+    return (
+        f'<div style="grid-column:1/-1"><h4>Layout — to scale</h4>'
+        f'<p class="muted">Omitted to bound chapter size — only the best rows and '
+        f'the first {MAX_SCHEMATIC_ROWS} are drawn. Open this study in '
+        f'<code>stepgen studio-ui</code> to see any point drawn live.</p></div>'
+    )
+
+
+def _schematic_html(sr: ScoredRow, study) -> str:
+    """
+    To-scale device + zoom drawings for one row's drill-down.
+
+    Compiles the matching :class:`StudyPoint` — the same object the solver used
+    — and draws it.  Returns ``""`` when the point cannot be found or the family
+    declines to draw, so a chapter never fails over a picture.
+    """
+    if study is None:
+        return ""
+    point = next((p for p in getattr(study, "points", []) if p.label == sr.metrics.label),
+                 None)
+    if point is None:
+        return ""
+    try:
+        from stepgen.families import get_family
+        from stepgen.viz.schematic import schematic_block
+
+        family = get_family(point.family)
+        compiled = family.compile(
+            point.params, fluids=point.fluids, footprint=point.footprint,
+            manufacturing=point.manufacturing,
+        )
+        cap = family.packing_capacity(compiled)
+        blocks = "".join(
+            f'<div style="flex:1;min-width:330px">'
+            f'{schematic_block(family.render_schematic(compiled, v), width_px=430, uid=f"sch-{v}-{id(sr)}")}'
+            f'</div>'
+            for v in ("device", "zoom")
+        )
+    except Exception as exc:                      # never break a chapter over a drawing
+        return f'<div><h4>Layout</h4><p class="muted">no schematic: {html.escape(str(exc))}</p></div>'
+
+    cap_html = ""
+    if cap:
+        more = cap.n_max - cap.n_current
+        cap_html = (
+            f'<p class="muted" style="margin:2px 0 8px">'
+            f'{cap.n_current:,} DFUs configured &middot; this footprint holds '
+            f'{cap.n_max:,} ({cap.utilisation:.0%} used) &middot; limited by '
+            f'{html.escape(cap.limited_by)}'
+            + (f' &middot; room for {more:,} more' if more > 0 else "")
+            + '</p>'
+        )
+    return (f'<div style="grid-column:1/-1"><h4>Layout — to scale</h4>{cap_html}'
+            f'<div style="display:flex;gap:18px;flex-wrap:wrap">{blocks}</div></div>')
+
+
+def _table_html(scored: list[ScoredRow], best: set[int], study=None) -> str:
     head = (["#", "Config", "Family", "Verdict"] + [c[1] for c in _COLUMNS]
             + ["Margin (weakest link)", "Build", "Valid", "Reasons"])
     thead = "".join(
         f'<th onclick="sortTable({i})">{html.escape(h)}</th>'
         for i, h in enumerate(head)
     )
+
+    draw_rows = _schematic_rows(scored, best) if study is not None else set()
 
     rows_html: list[str] = []
     for i, sr in enumerate(scored):
@@ -651,13 +737,16 @@ def _table_html(scored: list[ScoredRow], best: set[int]) -> str:
         rows_html.append(
             f'<tr class="mainrow" onclick="toggleDrill({i})">' + "".join(cells) + "</tr>"
         )
-        rows_html.append(_drilldown_row(i, sr, len(head)))
+        rows_html.append(_drilldown_row(i, sr, len(head),
+                                        study if i in draw_rows else None,
+                                        drawable=(study is not None)))
 
     return (f'<table id="scoretable"><thead><tr>{thead}</tr></thead>'
             f'<tbody>{"".join(rows_html)}</tbody></table>')
 
 
-def _drilldown_row(i: int, sr: ScoredRow, ncols: int) -> str:
+def _drilldown_row(i: int, sr: ScoredRow, ncols: int, study=None,
+                   *, drawable: bool = False) -> str:
     m = sr.metrics
     params = json.dumps(m.params, indent=2, default=str)
     raw = {k: v for k, v in (m.raw or {}).items() if not k.startswith("_")}
@@ -670,6 +759,7 @@ def _drilldown_row(i: int, sr: ScoredRow, ncols: int) -> str:
         f'<div><h4>Score reasons</h4><ul>{reasons}</ul>'
         f'<h4>Notes</h4><ul>{notes}</ul></div>'
         f'<div><h4>Raw metrics</h4><pre>{html.escape(raw_txt)}</pre></div>'
+        f'{_schematic_html(sr, study) if study is not None else _schematic_omitted(drawable)}'
         f'</div>'
     )
     return (f'<tr id="drill{i}" class="drill" style="display:none">'
@@ -877,7 +967,7 @@ Verdict is <b>worst-category-wins</b> across every applicable gate; grey = N-A f
 fraction of the green→red span, discounted by how much the model is trusted for that
 number. <b>Valid</b> is orange when the design sits outside the envelope the model has
 been checked in — never green there, and never red on those grounds alone.</p>
-{_table_html(scored, best)}
+{_table_html(scored, best, result.study)}
 
 <h2>Standard plots</h2>
 {plots_html}
@@ -885,6 +975,7 @@ been checked in — never green there, and never red on those grounds alone.</p>
 {_provenance_html(result, refs)}
 
 <script>{_JS}</script>
+<script>{_panzoom_js()}</script>
 </body></html>
 """
     out_path.write_text(doc, encoding="utf-8")

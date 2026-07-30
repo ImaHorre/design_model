@@ -246,6 +246,74 @@ class SerpentineFamily(Family):
             label=label,
         )
 
+    # -- geometry rendering ------------------------------------------------
+    def packing_capacity(self, compiled):
+        """
+        Largest DFU count this die holds at the current lane geometry.
+
+        Inverts :func:`stepgen.design.layout.compute_layout`.  That function
+        goes ``N -> Mcl -> num_lanes -> total_height -> fits?``; here we ask how
+        many lanes fit the die height, and convert back to a rung count::
+
+            n_lanes_max = floor((H_useful - pair_w) / lane_pitch) + 1
+            N_max       = n_lanes_max * floor(lane_length / pitch)
+
+        Note what this exposes: ``num_lanes`` depends on ``Mcl`` and
+        ``lane_length`` only — **not** on ``turn_radius``.  Shrinking the turn
+        radius lowers ``total_height`` and so helps an overflowing stack fit,
+        but it never adds a lane.  The drawing and this readout agree on that,
+        which is the point.
+        """
+        from stepgen.design.layout import compute_layout
+        from stepgen.viz.schematic import PackingCapacity
+
+        fp, geom = compiled.footprint, compiled.geometry
+        lay = compute_layout(compiled)
+
+        area_m2 = fp.footprint_area_cm2 * 1e-4
+        H = math.sqrt(area_m2 / fp.footprint_aspect_ratio)
+        H_useful = H - 2.0 * fp.reserve_border
+
+        pitch = geom.rung.pitch
+        n_current = int(geom.Nmc_override or 0) or int(round(geom.main.Mcl / pitch))
+
+        if lay.lane_pitch <= 0 or pitch <= 0 or lay.lane_length <= 0:
+            return None
+
+        lanes_max = int(math.floor((H_useful - lay.lane_pair_width) / lay.lane_pitch)) + 1
+        lanes_max = max(lanes_max, 0)
+        per_lane = int(math.floor(lay.lane_length / pitch))
+        n_max = max(lanes_max * per_lane, 0)
+
+        if lanes_max <= 0:
+            limited_by = "die height — a single lane pair does not fit"
+        elif lay.num_lanes > lanes_max:
+            limited_by = "die height (lane stack overflows)"
+        else:
+            limited_by = "die height (lane stack)"
+
+        return PackingCapacity(
+            n_current=n_current,
+            n_max=n_max,
+            utilisation=(n_current / n_max) if n_max else float("inf"),
+            limited_by=limited_by,
+            fits=bool(lay.fits_footprint),
+            detail={
+                "lanes_current": float(lay.num_lanes),
+                "lanes_max": float(lanes_max),
+                "dfu_per_lane": float(per_lane),
+                "lane_length_mm": lay.lane_length * 1e3,
+                "lane_pitch_mm": lay.lane_pitch * 1e3,
+                "turn_radius_um": fp.turn_radius * 1e6,
+            },
+        )
+
+    def render_schematic(self, compiled, view: str = "device"):
+        """Serpentine device fold, or a zoomed group of adjacent DFUs."""
+        if view == "zoom":
+            return _serpentine_zoom(compiled)
+        return _serpentine_device(compiled, self.packing_capacity(compiled))
+
 
 def solve_config(
     config,
@@ -321,4 +389,190 @@ def solve_config(
         no_crossing=None,  # N-A for serpentine (single folded pair, planar by construction)
         notes=notes,
         raw=row,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Schematics (Phase 3)
+# ---------------------------------------------------------------------------
+# Both functions read the compiled ``DeviceConfig`` — the object the solver
+# consumes — so the drawing cannot drift from the packing maths.
+
+def _serpentine_device(config, capacity=None):
+    """
+    Whole-device view: the folded lane stack inside the die square.
+
+    Lane block heights are the real ones (``Mcw`` for each main, ``mcl`` for the
+    rung array between them), the fold is drawn as an annular sector at the true
+    ``turn_radius``, and lanes that overflow the die are tinted and dashed.
+    """
+    from stepgen.viz.schematic import Arc, Dim, Label, Rect, Schematic, Zone
+
+    fp, geom = config.footprint, config.geometry
+
+    area_m2 = fp.footprint_area_cm2 * 1e-4
+    chip_W = math.sqrt(area_m2 * fp.footprint_aspect_ratio)
+    chip_H = math.sqrt(area_m2 / fp.footprint_aspect_ratio)
+    bd = fp.reserve_border
+    tr = fp.turn_radius
+
+    Mcw, mcl = geom.main.Mcw, geom.rung.mcl
+    mcw, pitch = geom.rung.mcw, geom.rung.pitch
+
+    lane_len = max(chip_W - 2.0 * bd, 0.0)
+    pair_w = 2.0 * Mcw + mcl + fp.lane_spacing
+    lane_pitch = pair_w + 2.0 * tr
+    n_total = int(geom.Nmc_override or 0) or int(round(geom.main.Mcl / pitch))
+    n_lanes = max(math.ceil(geom.main.Mcl / lane_len), 1) if lane_len > 0 else 1
+    per_lane_cap = int(math.floor(lane_len / pitch)) if pitch > 0 else 0
+
+    prims: list = [Rect(0.0, 0.0, chip_W, chip_H, "die", dashed=True)]
+    remaining = n_total
+
+    for i in range(n_lanes):
+        y0 = bd + i * lane_pitch
+        inside = (y0 + pair_w) <= (chip_H - bd + 1e-12)
+        here = min(remaining, per_lane_cap) if per_lane_cap else 0
+        remaining -= here
+
+        prims.append(Rect(bd, y0, lane_len, Mcw, "oil_main", dashed=not inside))
+        prims.append(Zone(
+            bd, y0 + Mcw, lane_len, mcl, "dfu",
+            count=here, unit_w=mcw, unit_h=mcl, pitch=pitch, axis="x",
+            label=(f"{here:,} DFUs" if here > 240 else None),
+        ))
+        prims.append(Rect(bd, y0 + Mcw + mcl, lane_len, Mcw, "water_main", dashed=not inside))
+
+        if not inside:
+            prims.append(Rect(bd, y0, lane_len, pair_w, "overflow"))
+
+        # the fold — drawn at the true turn radius, alternating ends
+        if i < n_lanes - 1:
+            cy = y0 + pair_w + tr
+            if i % 2 == 0:
+                prims.append(Arc(bd + lane_len, cy, tr, tr + pair_w,
+                                 -math.pi / 2, math.pi / 2, "turn"))
+            else:
+                prims.append(Arc(bd, cy, tr, tr + pair_w,
+                                 math.pi / 2, 3 * math.pi / 2, "turn"))
+
+    total_h = (n_lanes - 1) * lane_pitch + pair_w
+    fits = total_h <= (chip_H - 2.0 * bd)
+
+    # dimension the first lane so the block heights are checkable
+    prims.append(Dim(bd - chip_W * 0.012, bd, bd - chip_W * 0.012, bd + Mcw,
+                     f"Mcw {Mcw * 1e6:.0f} um"))
+    prims.append(Dim(bd - chip_W * 0.045, bd + Mcw, bd - chip_W * 0.045, bd + Mcw + mcl,
+                     f"mcl {mcl * 1e3:.2f} mm"))
+    if n_lanes > 1:
+        prims.append(Dim(bd + lane_len * 0.5, bd + pair_w,
+                         bd + lane_len * 0.5, bd + lane_pitch,
+                         f"2*r_turn {2 * tr * 1e6:.0f} um"))
+    prims.append(Label(bd + lane_len / 2, chip_H - bd * 0.4,
+                       f"{n_lanes} lane{'s' if n_lanes != 1 else ''} - "
+                       f"{n_total:,} DFUs - pitch {pitch * 1e6:.0f} um"))
+
+    notes = [
+        f"{n_lanes} lane pair(s) of {lane_len * 1e3:.1f} mm; stack height "
+        f"{total_h * 1e3:.1f} mm against {(chip_H - 2 * bd) * 1e3:.1f} mm usable.",
+        f"Turn radius {tr * 1e6:.0f} um against a {pair_w * 1e6:.0f} um lane pair "
+        f"(ratio {tr / pair_w:.2f}) - below ~0.5 the fold is tighter than the "
+        f"channel bundle it carries.",
+    ]
+    if not fits:
+        notes.append(f"Overflows the die by {(total_h - (chip_H - 2 * bd)) * 1e3:.1f} mm.")
+    if per_lane_cap and n_total > per_lane_cap * n_lanes:
+        notes.append(
+            f"{n_total:,} DFUs exceeds the {per_lane_cap * n_lanes:,} that these "
+            f"lanes hold at {pitch * 1e6:.0f} um pitch."
+        )
+
+    return Schematic(
+        family="serpentine", view="device", prims=prims,
+        extent=(0.0, 0.0, chip_W, max(chip_H, total_h + 2 * bd)),
+        title="Serpentine - whole device",
+        subtitle=f"die {chip_W * 1e3:.1f} x {chip_H * 1e3:.1f} mm",
+        notes=notes,
+        inventions=[
+            "The fold is drawn as an annular sector at the configured turn "
+            "radius. The model reserves 2*r_turn of lane pitch for it but does "
+            "not model the turn's channel path, its length or its pressure drop.",
+            "Rungs are shown filling each lane in order; the model treats the "
+            "ladder as one sequence and does not assign rungs to lanes.",
+        ],
+        fits=fits,
+        capacity=capacity,
+    )
+
+
+def _serpentine_zoom(config, n_show: int | None = None):
+    """
+    Zoomed DFU group: adjacent rungs at true scale, dimensioned.
+
+    Draws what a plan view can honestly show.  Exit *depth* is out of plane, so
+    it is annotated rather than drawn — a plan view that rendered depth as a
+    length would be inventing geometry.
+
+    ``n_show`` defaults to whatever keeps the drawing roughly square.  Rungs are
+    typically 15-30x longer than the pitch is wide, so a fixed count would give
+    a 7:1 sliver on a real V5 geometry — the aspect ratio has to follow the
+    geometry, not the other way round.
+    """
+    from stepgen.viz.schematic import Dim, Label, Rect, Schematic
+
+    geom = config.geometry
+    Mcw, mcl = geom.main.Mcw, geom.rung.mcl
+    mcw, pitch = geom.rung.mcw, geom.rung.pitch
+    exit_w = geom.junction.exit_width
+    exit_d = geom.junction.exit_depth
+    wall = pitch - mcw
+
+    if n_show is None:
+        drawn_h = 2.0 * Mcw + 1.65 * mcl
+        n_show = int(round(drawn_h / pitch)) - 1 if pitch > 0 else 5
+    n = int(min(max(n_show, 4), 40))
+    span = n * pitch
+    exit_len = mcl * 0.08          # drawing-only; see inventions
+
+    prims: list = [
+        Rect(-pitch * 0.5, -Mcw, span + pitch, Mcw, "oil_main", label="oil main"),
+    ]
+    for i in range(n):
+        x = i * pitch
+        prims.append(Rect(x, 0.0, mcw, mcl - exit_len, "dfu"))
+        prims.append(Rect(x + (mcw - exit_w) / 2.0, mcl - exit_len, exit_w, exit_len, "exit"))
+    prims.append(Rect(-pitch * 0.5, mcl, span + pitch, Mcw, "water_main",
+                      label="continuous phase / collection"))
+
+    prims += [
+        Dim(0.0, -mcl * 0.10, pitch, -mcl * 0.10, f"pitch {pitch * 1e6:.0f} um"),
+        Dim(0.0, -mcl * 0.22, mcw, -mcl * 0.22, f"w_up {mcw * 1e6:.1f} um"),
+        Dim(mcw, -mcl * 0.34, pitch, -mcl * 0.34, f"wall {wall * 1e6:.1f} um"),
+        Dim(-pitch * 0.30, 0.0, -pitch * 0.30, mcl, f"rung {mcl * 1e3:.2f} mm"),
+        Dim((n - 1) * pitch + (mcw - exit_w) / 2.0, mcl + mcl * 0.06,
+            (n - 1) * pitch + (mcw + exit_w) / 2.0, mcl + mcl * 0.06,
+            f"exit w {exit_w * 1e6:.0f} um"),
+        Label(span * 0.5, mcl * 1.30,
+              f"exit depth {exit_d * 1e6:.0f} um (out of plane) - "
+              f"main depth {geom.main.Mcd * 1e6:.0f} um", size=0.9),
+    ]
+
+    return Schematic(
+        family="serpentine", view="zoom", prims=prims,
+        extent=(-pitch * 0.6, -Mcw - mcl * 0.45, span + pitch * 0.6, mcl + Mcw + mcl * 0.2),
+        title="Serpentine - DFU group at true scale",
+        subtitle=f"{n} adjacent rungs - pitch {pitch * 1e6:.0f} um - "
+                 f"exit {exit_w * 1e6:.0f} x {exit_d * 1e6:.0f} um",
+        notes=[
+            f"Wall between rungs is {wall * 1e6:.1f} um at {mcw * 1e6:.1f} um upstream "
+            f"width - the pitch is {pitch / mcw:.1f}x the channel width.",
+            f"Exit is {exit_w / mcw:.1f}x the upstream width "
+            f"({'widening' if exit_w > mcw else 'narrowing'} into the step).",
+        ],
+        inventions=[
+            "The junction exit is drawn with a nominal length (8% of the rung). "
+            "The model treats the exit as a cross-section - width x depth - and "
+            "assigns it no length.",
+            "Exit and main depths are annotated, not drawn: this is a plan view.",
+        ],
     )
