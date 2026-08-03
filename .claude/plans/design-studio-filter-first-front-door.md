@@ -474,3 +474,96 @@ Until then, any new consumer of `compute_rung_resistance` reintroduces the 25%.
    (`t_cycle` proportional to `1/Q` to 0.2% across 200-800 mbar), but it is unresolved and
    it is the one thing that would change how the throughput column should be read. Settling
    it needs a high-speed re-shoot at 400-1000 mbar, not more modelling.
+
+---
+
+## Decision 10 — a constraint on a value the USER PINNED is a report; a constraint on a value the TOOL CHOSE is a gate
+
+**Added**: 2026-08-03, from a live run. **Status**: agreed, partially implemented.
+**Generalises**: decision 9 (bend radius / wall-at-turn "reported, not gated").
+
+### The bug that exposed it
+
+`stepgen/studio/scoring.py` evaluated the `manufacturable` sub-gate unconditionally:
+
+```python
+evaluate = (required == "required") or (gate_key == "manufacturable" and val is not None)
+```
+
+Every other sub-gate is opt-in via `required`. This one was not, so a main depth the
+user had **explicitly typed** (400 µm) sitting above the fab cap (200 µm) turned all
+88 rows red. The run's verdict became a restatement of one config line, and the
+diagnosis compounded it: it reported "within fab caps is the sole reason", then priced
+relaxing the cap to 300 µm as *"nothing changes — this is not what is binding"*, which
+is true and useless, because 300 is still below 400.
+
+Fixed in `dd80c45` for this one gate. Verdicts went from 0 green / 0 orange / 88 red to
+0 green / 22 orange / 66 red, and the diagnosis started naming ΔP flatness as the
+binding constraint on 29 designs and finding 13 that pass everything except exit Ca.
+
+### The rule
+
+> A gate exists to stop the **tool** proposing something the user would not want.
+> It does not exist to overrule a choice the user has already made.
+
+- **Generated / swept value** outside a constraint → the search is proposing something
+  unbuildable → **red**. This is the gate doing its job.
+- **User-pinned value** outside a constraint → the user has decided → **report it, do
+  not fail the row.** The tool's job is to say "this is outside the cap", not to bury
+  the question that was actually asked.
+
+The failure mode this prevents is specific and severe: **one veto masks every other
+constraint.** A run where everything is red for a single known reason cannot tell you
+what else is wrong, so the user learns nothing from a sweep they paid for.
+
+### Why this is not just "make the gates optional"
+
+Making every gate opt-in loses the protection on generated grids, which is where gates
+earn their place — the intent layer really can propose a 500 µm-deep main and it really
+should be stopped. The distinction has to be **per value**, not per gate.
+
+### The machinery already exists and is unused
+
+`stepgen/studio/intent.py` already records provenance per block:
+
+```python
+plan.user_supplied.append(block)     # came from the user's YAML
+plan.generated.append(block)         # the intent layer invented it
+```
+
+Nothing consumes this at scoring time. `ScoredRow` has no idea which of its inputs the
+user chose. That is the gap.
+
+Note the two study shapes:
+- **hand-written study** (no `intent:`) — *every* geometry value is user-supplied by
+  definition, so essentially all geometry constraints should be reports
+- **intent-generated study** — only the blocks in `plan.user_supplied` are pinned; the
+  rest are the tool's proposals and stay gated
+
+### Work item
+
+1. Carry provenance to scoring. Either thread `Study.intent_plan` into `score_row`, or
+   put a `pinned: set[str]` on the row. A hand-written study marks all geometry pinned.
+2. Apply the rule uniformly to every sub-gate in the `build` composite
+   (`fits_square`, `manufacturable`, `no_crossing`) and to the threshold gates that
+   score a *geometric* quantity, not just `manufacturable` — that one was fixed
+   individually in `dd80c45` and is currently the only one obeying the rule.
+3. Keep the explicit override: `build: { manufacturable: required }` forces gating even
+   on a pinned value, for the case where the user wants the cap enforced against their
+   own numbers.
+4. **UI consequence (feeds D2).** The gates panel needs three states, not two:
+   *gate* / *report* / *off*, with pinned values defaulting to **report** and a visible
+   marker saying why ("you set this"). Decision 4 already promises every gate is
+   demotable to "show, don't gate"; this makes the default correct instead of relying on
+   the user to notice and demote.
+5. **Diagnosis consequence.** `diagnose()` must not price relaxing a constraint that
+   only a *pinned* value breaches — that is what produced the "relax 200 → 300 µm:
+   nothing changes" line. If the breach is pinned, the honest output is "you set depth
+   to 400 µm, which is above the 200 µm cap", not a relaxation ladder that cannot reach.
+
+### Test to write
+
+A hand-written study whose geometry breaches every fab cap must still produce
+non-red verdicts driven by the *physics* gates, and must name the breach in a chip. The
+same study with `manufacturable: required` must go red. Neither currently has coverage —
+`dd80c45` was verified by running the real config, not by a test.
