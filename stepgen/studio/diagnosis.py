@@ -399,8 +399,31 @@ def ca_gamma_robustness(
 
 
 def study_gamma(study: Study) -> float:
-    """The interfacial tension a study was solved at [N/m], 0 if none given."""
+    """
+    The interfacial tension a study was solved at [N/m], 0 if none given.
+
+    ``fluids:`` may be a single block **or a list of blocks** — the list form is
+    how a study carries several fluid systems (o/w and w/o, say) without the
+    Cartesian product crossing their viscosities into combinations that do not
+    exist.  Reading it as a dict raised ``AttributeError`` *after* every point
+    had been solved, losing the whole run to a summary step.
+
+    With several blocks there is no single study γ.  Returning 0 disables the
+    γ-robustness overlay rather than asserting one system's γ over another's —
+    Ca ∝ 1/γ, so the wrong γ would produce a confident and wrong verdict.  The
+    per-row γ on ``CommonMetrics.gamma_Nm`` is the right source when the caller
+    can use it.
+    """
     fluids = (study.raw or {}).get("fluids") or {}
+    if isinstance(fluids, list):
+        gammas = set()
+        for block in fluids:
+            if isinstance(block, dict):
+                try:
+                    gammas.add(float(block.get("gamma", 0.0) or 0.0))
+                except (TypeError, ValueError):
+                    continue
+        return gammas.pop() if len(gammas) == 1 else 0.0
     try:
         return float(fluids.get("gamma", 0.0) or 0.0)
     except (TypeError, ValueError):

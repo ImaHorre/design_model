@@ -52,6 +52,16 @@ _COLUMNS: list[tuple[str, str]] = [
     ("frequency_hz", "Freq (Hz)"),
     ("uniformity_pct", "ΔP flatness (%)"),
     ("operating_Po_mbar", "Po (mbar)"),
+    # Qw and the emulsion fraction it produces: both are *inputs* when
+    # operating.Qw_mlhr is given and *solved outputs* when
+    # operating.target_emulsion_pct is, so they have to be visible either way —
+    # a derived operating point that never appears in the table is one nobody
+    # can audit.
+    ("Qw_mlhr", "Qw (mL/hr)"),
+    ("emulsion_pct", "Emulsion (%)"),
+    ("dP_rung_mbar", "ΔP rung (mbar)"),
+    ("t_stage1_s", "t Stage-1 (s)"),
+    ("t_cycle_s", "t cycle (s)"),
     ("regime_Ca", "Exit Ca"),
     ("hub_budget_pct", "Hub ΔP (%)"),
     ("area_used_cm2", "Area (cm²)"),

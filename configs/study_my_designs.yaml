@@ -88,9 +88,13 @@ serpentine:
 # `mu_dispersed` is the phase driven by Po (the one forming droplets).
 # `gamma` is UNMEASURED for this system; Ca ∝ 1/γ, so it alone decides the Ca
 # verdict. The runner reports which designs flip across 3–20 mN/m.
+# NOTE: `emulsion_ratio` is deliberately NOT here. It is inert on this path —
+# nothing in the studio or serpentine solve reads it — and the emulsion fraction
+# is set by operating.target_emulsion_pct below. Leaving it in a fluids block
+# reads like a control that does nothing.
 fluids:
-  - { mu_dispersed: 0.06,    mu_continuous: 0.00089, gamma: 0.005, phase_system: o/w, emulsion_ratio: 0.10 }
-  - { mu_dispersed: 0.00089, mu_continuous: 0.06,    gamma: 0.005, phase_system: w/o, emulsion_ratio: 0.10 }
+  - { mu_dispersed: 0.06,    mu_continuous: 0.00089, gamma: 0.005, phase_system: o/w }
+  - { mu_dispersed: 0.00089, mu_continuous: 0.06,    gamma: 0.005, phase_system: w/o }
 
 footprint:
   square_side_mm: 100.0
@@ -127,8 +131,8 @@ operating:
   # 198.7 mL/hr — a 12x spread. A single fixed Qw cannot be near-correct for all
   # of them, so the fixed-Qw comparison is partly a comparison of emulsion
   # fractions rather than of designs.
-  # Qw_mlhr: 5.0
-  target_emulsion_pct: 10
+  Qw_mlhr: 5.0
+  # target_emulsion_pct: 10
 
 scoring:
   uniformity_pct:    { green: 15,   orange: 30 }
