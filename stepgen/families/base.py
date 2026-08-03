@@ -129,6 +129,17 @@ class CommonMetrics:
     frequency_hz: float | None = None       # mean droplet frequency [Hz]
     uniformity_pct: float | None = None     # ΔP spread across DFUs [%] (lower=flatter)
     operating_Po_mbar: float | None = None  # drive pressure [mbar]
+
+    # ── cycle / pressure diagnostics (2026-08-03) ───────────────────────────
+    # All three derive from the one network rung flow Q, so they cannot disagree
+    # with each other or with throughput.  See stage1_physics for the validation.
+    dP_rung_mbar: float | None = None       # mean ΔP across an active rung [mbar]
+    t_stage1_s: float | None = None         # meniscus reset → junction edge [s]
+    t_cycle_s: float | None = None          # full droplet cycle, V_drop/Q [s]
+    stage1_fraction: float | None = None    # t_S1/t_cycle = V_reset/V_drop (geometric)
+    #: lowest Po at which every DFU produces [mbar]; None unless explicitly computed
+    #: (needs a Po scan — see serpentine.production_threshold_mbar)
+    Po_min_production_mbar: float | None = None
     regime_Ca: float | None = None          # exit capillary number (diagnostic)
     hub_budget_pct: float | None = None     # radial: hub ΔP as % of supply (lower=better; N-A elsewhere)
     area_used_cm2: float | None = None      # occupied chip area [cm²]

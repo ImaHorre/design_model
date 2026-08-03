@@ -315,6 +315,65 @@ class SerpentineFamily(Family):
         return _serpentine_device(compiled, self.packing_capacity(compiled))
 
 
+def production_threshold_mbar(
+    config,
+    *,
+    Qw_mlhr: float,
+    Po_max_mbar: float = 2000.0,
+    active_fraction_min: float = 1.0,
+    coarse_step_mbar: float = 50.0,
+    tol_mbar: float = 5.0,
+) -> float | None:
+    """
+    Lowest drive pressure at which *every* DFU produces — the minimum P for
+    production.
+
+    A rung is ACTIVE only once its ΔP clears the oil→water capillary threshold
+    (``droplet_model.dP_cap_ow_mbar``); below that it is OFF or REVERSE.  Because
+    the ladder is not flat, the far end of the device clears last, so the
+    threshold for *full* production is set by the worst-placed DFU rather than by
+    the mean ΔP.  That is exactly the number a build needs to be driven above.
+
+    Coarse scan up to the first pressure meeting *active_fraction_min*, then
+    bisect down to *tol_mbar*.  Returns ``None`` if the device never reaches the
+    required active fraction at or below *Po_max_mbar*.
+
+    Costs ~40 network solves, and the answer is a property of the *design* at a
+    given Qw — it does not depend on the operating Po.  Call it once per design,
+    not once per swept pressure point; that is why ``solve_config`` leaves it off
+    unless asked (``with_production_threshold=True``).
+    """
+    from stepgen.design.sweep import evaluate_candidate
+
+    def active_at(po: float) -> float:
+        try:
+            return float(evaluate_candidate(
+                config, Po_in_mbar=po, Qw_in_mlhr=Qw_mlhr,
+            )["active_fraction"])
+        except Exception:
+            return 0.0
+
+    po = coarse_step_mbar
+    hit: float | None = None
+    while po <= Po_max_mbar:
+        if active_at(po) >= active_fraction_min:
+            hit = po
+            break
+        po += coarse_step_mbar
+    if hit is None:
+        return None
+
+    lo = max(hit - coarse_step_mbar, 0.0)
+    hi = hit
+    while hi - lo > tol_mbar:
+        mid = 0.5 * (lo + hi)
+        if active_at(mid) >= active_fraction_min:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def solve_config(
     config,
     *,
@@ -322,6 +381,7 @@ def solve_config(
     Qw_mlhr: float,
     params: dict[str, Any] | None = None,
     label: str = "",
+    with_production_threshold: bool = False,
 ) -> CommonMetrics:
     """
     Solve a serpentine ``DeviceConfig`` at (Po, Qw) and map the validated
@@ -368,6 +428,32 @@ def solve_config(
     q_oil = row.get("Q_oil_total", None)
     throughput = float(q_oil) * _M3S_TO_MLHR if q_oil is not None else None
 
+    # ── cycle timings, all off the one network rung flow ────────────────────
+    # t_S1    = V_reset / Q   (V_reset = sqrt(w·h)·w·h)
+    # t_cycle = V_drop  / Q   (conservation: one droplet per cycle)
+    # Validated against the V5-8-1 Po sweep — t_S1 to -2% at 200/300 mbar,
+    # t_cycle to ~6% with no pressure drift.  See stage1_physics.
+    dP_rung_mbar = t_stage1 = t_cycle = stage1_fraction = None
+    dP_rung_Pa = row.get("dP_avg", 0.0) or 0.0
+    q_rung = row.get("Q_per_rung_avg", 0.0) or 0.0
+    if dP_rung_Pa > 0:
+        dP_rung_mbar = dP_rung_Pa / 100.0
+    if q_rung > 0:
+        from stepgen.models.stage_wise_v3 import StageWiseV3Config
+        from stepgen.models.stage_wise_v3.stage1_physics import solve_stage1_physics
+
+        from stepgen.models.droplets import refill_volume
+
+        v3_cfg = getattr(config, "stage_wise_v3", None) or StageWiseV3Config()
+        t_stage1 = solve_stage1_physics(dP_rung_Pa, q_rung, config, v3_cfg).t_displacement
+        # Per-cycle volume must match the one behind `frequency_hz`
+        # (droplets.droplet_frequency = Q / (V_drop + V_refill)) or t_cycle and
+        # 1/frequency_hz would silently disagree whenever a config enables refill.
+        V_cycle = math.pi / 6.0 * float(row["D_pred"]) ** 3 + refill_volume(config)
+        t_cycle = V_cycle / q_rung
+        if t_cycle > 0 and math.isfinite(t_stage1):
+            stage1_fraction = t_stage1 / t_cycle
+
     return CommonMetrics(
         family="serpentine",
         label=label,
@@ -378,6 +464,14 @@ def solve_config(
         frequency_hz=float(row.get("f_pred_mean", 0.0)),
         uniformity_pct=float(row.get("dP_spread_pct", math.nan)),
         operating_Po_mbar=float(row["Po_in_mbar"]),
+        dP_rung_mbar=dP_rung_mbar,
+        t_stage1_s=t_stage1,
+        t_cycle_s=t_cycle,
+        stage1_fraction=stage1_fraction,
+        Po_min_production_mbar=(
+            production_threshold_mbar(config, Qw_mlhr=Qw_mlhr)
+            if with_production_threshold else None
+        ),
         regime_Ca=regime_Ca,
         exit_width_um=exit_w * 1e6,
         exit_depth_um=exit_d * 1e6,

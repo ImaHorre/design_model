@@ -498,6 +498,7 @@ def _parse_stage_wise_v3(d: dict[str, Any]) -> Optional["StageWiseV3Config"]:
     return StageWiseV3Config(
         enabled=bool(d.get("enabled", True)),
         stage1_viscosity_correction=float(d.get("stage1_viscosity_correction", 1.0)),
+        stage1_reset_length_mode=str(d.get("stage1_reset_length_mode", "geometric")),
         stage1_reset_length_factor=float(d.get("stage1_reset_length_factor", 1.0)),
         enable_stage1_capillary_correction=bool(d.get("enable_stage1_capillary_correction", False)),
         enable_outer_phase_necking=bool(d.get("enable_outer_phase_necking", True)),
