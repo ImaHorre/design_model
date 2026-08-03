@@ -30,6 +30,13 @@ family: serpentine
 # length_mm and N. The `{ <<: *rung, ... }` form below merges inside the dict
 # and keeps the rest.
 _main: &main
+  length_mm: 120          # TODO routed main-channel length — the DFU-bearing run.
+                          # N is DERIVED from this: N = length / pitch. Because
+                          # the pitch differs per design below, each design gets
+                          # a different N from the same length — that is the
+                          # point of fixing L: same channel run, and the exit
+                          # geometry decides how many DFUs fit in it.
+                          # Do NOT also set rung.N — that raises.
   depth_um:  400          # TODO main channel depth.
                           # NOTE 400 > manufacturing.max_main_depth_um (200), so
                           # every design will report manufacturable = False.
@@ -40,24 +47,9 @@ _main: &main
 _rung: &rung
   length_mm: 4            # TODO rung (DFU) length
   upstream_width_um: 40   # default only — overridden per design below
-  N: 1000                 # TODO DFU count.
-                          # OR delete this and put `length_mm:` under main
-                          # instead — N and the routed main length are the same
-                          # fact through the pitch (N = length / pitch), so give
-                          # whichever you actually know and the other follows.
-                          # Setting BOTH raises, rather than silently picking
-                          # one, because when they disagree there is no way to
-                          # tell which you meant.
-                          #
-                          #   N: 1000        at pitch 120 µm  ->  Mcl = 120 mm
-                          #   main.length_mm: 120             ->  N   = 1000
-                          #
-                          # Careful when the pitch varies per design: a fixed
-                          # main length then gives each design a DIFFERENT N
-                          # (120 mm gives N=1000 at 120 µm pitch but N=400 at
-                          # 300 µm), whereas a fixed N gives each a different
-                          # main length. Both are legitimate comparisons — but
-                          # they answer different questions, so pick on purpose.
+  # N is NOT set here — it comes from main.length_mm / pitch. To pin the DFU
+  # count instead and let the main length vary, add `N: <count>` here and delete
+  # `length_mm` from main above. Setting both raises.
 
 # ── THE EXIT DESIGNS — junction and upstream width vary per design ───────────
 # Rung depth == exit depth (single etch), so the rung cross-section is
