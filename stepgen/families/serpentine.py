@@ -557,8 +557,21 @@ def ca_gated_summary(
     import pandas as pd
 
     if design_keys is None:
-        design_keys = [c for c in frame.columns
-                       if c.startswith("p.") or c == "family"]
+        # Group by the label with its _Po<n> segment removed, NOT by the p.*
+        # columns.  p.* carries the family geometry only, so a study that holds
+        # geometry fixed and varies the FLUID SYSTEM has identical p.* on every
+        # row — o/w and w/o then collapse into one group and the reported
+        # throughput silently comes from whichever phase happened to reach the
+        # higher pressure.  The label already encodes geometry, exit and fluids
+        # (studio.study._label_for + _disambiguate), so stripping Po from it is
+        # the one key that identifies a design under every sweep shape.
+        import re
+
+        frame = frame.assign(
+            _design=frame["label"].astype(str).str.replace(
+                r"_Po\d+(?=__|$)", "", regex=True)
+        )
+        design_keys = ["_design"]
     design_keys = [c for c in design_keys if c in frame.columns]
     if not design_keys:
         frame = frame.assign(_design="all")

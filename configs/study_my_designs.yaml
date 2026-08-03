@@ -1,25 +1,21 @@
-# study_my_designs.yaml — comparing DESIGNS YOU ALREADY HAVE
+# study_my_designs.yaml — four DFU exit designs on one fixed ladder
 # ─────────────────────────────────────────────────────────────────────────────
-# Run with:
+# Run:
 #     python scripts/compare_designs.py configs/study_my_designs.yaml
-#     stepgen study configs/study_my_designs.yaml        # scored HTML workbook
 #
-# THIS IS NOT A SWEEP. `serpentine:` below is a LIST — each entry is one whole
-# design, kept intact. There is no Cartesian product across designs, so adding a
-# fourth design adds 1 design, not 3 more combinations.
+# Shape of this file: the ladder geometry is written ONCE as a YAML anchor
+# (&ladder) and merged into each design (<<: *ladder), so the only thing that
+# differs between the four designs is the junction exit. Change the ladder in
+# one place and all four move together.
 #
-# The one thing that IS swept is `operating.Po_mbar`. Every design is solved at
-# every pressure, which is what gives you throughput-vs-P and lets the Ca gate
-# pick each design's own ceiling.
+# NOT A SWEEP over designs. `serpentine:` is a LIST — lists are concatenated,
+# only dicts are Cartesian-producted. Four designs cost four points.
 #
-#   designs x pressures = points.   3 designs x 6 pressures = 18 solves, seconds.
-#
-# Sweep Po more finely than you think you need — the Ca gate can only quote
-# pressures you actually simulated, so coarse steps leave headroom on the table
-# (reported as `Po_next_failed`).
+# What IS swept: operating.Po_mbar and the fluid system. So:
+#     4 designs x 7 pressures x 2 fluid systems = 56 points, a few seconds.
 # ─────────────────────────────────────────────────────────────────────────────
 
-title: "TODO — what question are these designs answering?"
+title: "Four DFU exit designs — operating window, throughput and Ca regime"
 
 decide:
   axes: [throughput, flatness, drive_pressure, margin]
@@ -27,57 +23,59 @@ decide:
 
 family: serpentine
 
+# ── THE FIXED LADDER — edit these once ───────────────────────────────────────
+# Not read by the model directly; merged into each design below.
+_ladder: &ladder
+  main:
+    depth_um:  200        # TODO main channel depth
+    width_um:  1000       # TODO main channel width
+  rung:
+    length_mm: 2          # TODO rung (DFU) length
+    upstream_width_um: 25 # TODO rung width upstream of the junction.
+                          # MUST exceed exit_depth_um or the rectangular
+                          # resistance model is invalid (manifold errors; the
+                          # serpentine path currently returns a wrong number).
+    N: 1000               # TODO DFU count
+
+# ── THE FOUR EXIT DESIGNS — only the junction differs ────────────────────────
+serpentine:
+  - <<: *ladder
+    junction: { exit_width_um: 30, exit_depth_um: 10, pitch_um: 120 }   # TODO
+  - <<: *ladder
+    junction: { exit_width_um: 45, exit_depth_um: 15, pitch_um: 120 }   # TODO
+  - <<: *ladder
+    junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }   # TODO
+  - <<: *ladder
+    junction: { exit_width_um: 80, exit_depth_um: 25, pitch_um: 120 }   # TODO
+
+# ── FLUID SYSTEMS — a LIST of whole blocks, so A/B stay paired ───────────────
+# Do NOT write `mu_dispersed: [0.06, 0.00089]` with a matching list for
+# mu_continuous — those cross, and half the points become fluids that do not
+# exist (mu_dispersed = mu_continuous). One block per real fluid system.
+#
+# `mu_dispersed` is the phase driven by Po (the one forming droplets).
+# `gamma` is UNMEASURED for this system; Ca ∝ 1/γ, so it alone decides the Ca
+# verdict. The runner reports which designs flip across 3–20 mN/m.
 fluids:
-  mu_dispersed:  0.06       # Pa·s — sunflower oil (SO). Confirm against the actual lot.
-  mu_continuous: 0.00089    # Pa·s — 2% SDS water
-  gamma:         0.005      # N/m  — UNMEASURED. Ca ∝ 1/γ, so this number alone
-                            # decides the Ca gate. The runner reports the verdict
-                            # across 3–20 mN/m; if it flips inside that band, the
-                            # gate is telling you about γ, not about the design.
-  emulsion_ratio: 0.10
-  phase_system:  o/w
+  - { mu_dispersed: 0.06,    mu_continuous: 0.00089, gamma: 0.005, phase_system: o/w, emulsion_ratio: 0.10 }
+  - { mu_dispersed: 0.00089, mu_continuous: 0.06,    gamma: 0.005, phase_system: w/o, emulsion_ratio: 0.10 }
 
 footprint:
-  square_side_mm: 100.0     # die square for the fits-in-square gate
+  square_side_mm: 100.0
   reserve_border_mm: 2.0
 
 manufacturing:
-  max_main_depth_um: 200.0  # current fab cap — raise deliberately, not by accident
+  max_main_depth_um: 200.0
   max_main_width_um: 2000.0
   min_wall_um: 5.0
 
 operating:
-  # Swept. Add points around where you expect the Ca gate to bite.
+  # Sweep finer than feels necessary — the Ca gate can only quote a pressure
+  # you actually simulated, so coarse steps leave real throughput unclaimed
+  # (reported as Po_next_failed).
   Po_mbar: [100, 200, 300, 400, 500, 700, 1000]
   Qw_mlhr: 5.0
 
-# ── YOUR DESIGNS — one list entry each ───────────────────────────────────────
-# Copy a block, change the numbers, done. Delete the examples.
-#
-#   main.depth_um / width_um    the oil main (distribution channel)
-#   rung.length_mm              rung length — the flatness lever. Long+narrow
-#                               rungs raise R_rung, which flattens the ladder.
-#   rung.upstream_width_um      rung width upstream of the junction. Must exceed
-#                               the exit depth for the rectangular-resistance
-#                               model to hold.
-#   rung.N                      DFU count
-#   junction.exit_width_um/depth_um   the step exit. NOTE: the droplet power law
-#                               is calibrated at depth 1/5/10 µm — past ~12 µm
-#                               droplet size and frequency are extrapolated and
-#                               flagged. Throughput is unaffected (it is Σ Q_rung
-#                               and carries no droplet model).
-#   junction.pitch_um           DFU spacing along the main
-
-serpentine:
-  - main:     { depth_um: 200, width_um: 1000 }
-    rung:     { length_mm: 2, upstream_width_um: 25, N: 1000 }
-    junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }
-
-  - main:     { depth_um: 100, width_um: 500 }
-    rung:     { length_mm: 4, upstream_width_um: 25, N: 1000 }
-    junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }
-
-# ── scoring thresholds (used by `stepgen study`'s workbook) ───────────────────
 scoring:
   uniformity_pct:    { green: 15,   orange: 30 }
   operating_Po_mbar: { green: 500,  orange: 1000 }
@@ -85,7 +83,5 @@ scoring:
   regime_Ca:         { green: 0.0125, orange: 0.03 }
   build:             { from: manufacturing, fits_square: required }
 
-# Overlay a device we have real data for, to see where the new designs sit
-# relative to something measured.
 reference:
   - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }

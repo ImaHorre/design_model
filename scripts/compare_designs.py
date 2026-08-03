@@ -55,6 +55,12 @@ GAMMA_BAND = (0.003, 0.020)
 CA_MEASURED_MAX = 0.0017
 
 
+def _fluid_key(fluids: dict) -> tuple:
+    """Identity of a fluid system, for counting distinct ones in a study."""
+    return (fluids.get("phase_system"), fluids.get("mu_dispersed"),
+            fluids.get("mu_continuous"), fluids.get("gamma"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -73,8 +79,10 @@ def main() -> int:
     study = load_study(args.study)
     print(f"{study.title}\n")
     n_designs = len({p.label.rsplit("_Po", 1)[0] for p in study.points})
-    n_press = len(study.points) // n_designs if n_designs else 0
-    print(f"  {n_designs} designs x {n_press} pressures = {len(study.points)} points")
+    n_press = len({p.operating.get("Po_mbar") for p in study.points})
+    n_fluid = len({_fluid_key(p.fluids) for p in study.points})
+    print(f"  {n_designs} designs x {n_press} pressures x {n_fluid} fluid system(s) "
+          f"= {len(study.points)} points")
 
     result = run_study(study, progress=True)
     frame = result.frame
@@ -82,7 +90,14 @@ def main() -> int:
         for _, bad in frame[frame["error"].notna()].iterrows():
             print(f"  ! {bad.get('label', '?')}: {bad['error']}")
 
-    gamma_ref = float((study.raw.get("fluids", {}) or {}).get("gamma", 0.0) or 0.0)
+    # gamma may vary across points when `fluids:` is a list of whole blocks. The
+    # gamma-robustness column only means something against a single reference, so
+    # compute it when the study uses one gamma and say so plainly when it does not.
+    gammas = {float(p.fluids.get("gamma", 0.0) or 0.0) for p in study.points}
+    gamma_ref = gammas.pop() if len(gammas) == 1 else 0.0
+    if not gamma_ref:
+        print("  ! gamma varies across points (or is 0) — the gamma-robustness "
+              "column is skipped; split the study by fluid system to get it")
 
     # ── per operating point ─────────────────────────────────────────────────
     cols = ["label", "operating_Po_mbar", "dP_rung_mbar", "uniformity_pct",
