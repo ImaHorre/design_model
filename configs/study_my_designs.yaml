@@ -23,30 +23,70 @@ decide:
 
 family: serpentine
 
-# ── THE FIXED LADDER — edit these once ───────────────────────────────────────
-# Not read by the model directly; merged into each design below.
-_ladder: &ladder
-  main:
-    depth_um:  200        # TODO main channel depth
-    width_um:  1000       # TODO main channel width
-  rung:
-    length_mm: 2          # TODO rung (DFU) length
-    upstream_width_um: 25 # TODO rung width upstream of the junction.
-                          # MUST exceed exit_depth_um or the rectangular
-                          # resistance model is invalid (manifold errors; the
-                          # serpentine path currently returns a wrong number).
-    N: 1000               # TODO DFU count
+# ── THE SHARED LADDER — edit these once ──────────────────────────────────────
+# Two separate anchors, NOT one, so a design can override a single rung field.
+# `<<:` merge is SHALLOW: writing `rung: { upstream_width_um: 40 }` under a
+# `<<: *ladder` design would REPLACE the whole rung block and silently drop
+# length_mm and N. The `{ <<: *rung, ... }` form below merges inside the dict
+# and keeps the rest.
+_main: &main
+  depth_um:  400          # TODO main channel depth.
+                          # NOTE 400 > manufacturing.max_main_depth_um (200), so
+                          # every design will report manufacturable = False.
+                          # Deliberate if you are testing whether the fab cap is
+                          # what binds; raise the cap below if it is not.
+  width_um:  2000         # TODO main channel width
 
-# ── THE FOUR EXIT DESIGNS — only the junction differs ────────────────────────
+_rung: &rung
+  length_mm: 4            # TODO rung (DFU) length
+  upstream_width_um: 40   # default only — overridden per design below
+  N: 1000                 # TODO DFU count.
+                          # OR delete this and put `length_mm:` under main
+                          # instead — N and the routed main length are the same
+                          # fact through the pitch (N = length / pitch), so give
+                          # whichever you actually know and the other follows.
+                          # Setting BOTH raises, rather than silently picking
+                          # one, because when they disagree there is no way to
+                          # tell which you meant.
+                          #
+                          #   N: 1000        at pitch 120 µm  ->  Mcl = 120 mm
+                          #   main.length_mm: 120             ->  N   = 1000
+                          #
+                          # Careful when the pitch varies per design: a fixed
+                          # main length then gives each design a DIFFERENT N
+                          # (120 mm gives N=1000 at 120 µm pitch but N=400 at
+                          # 300 µm), whereas a fixed N gives each a different
+                          # main length. Both are legitimate comparisons — but
+                          # they answer different questions, so pick on purpose.
+
+# ── THE EXIT DESIGNS — junction and upstream width vary per design ───────────
+# Rung depth == exit depth (single etch), so the rung cross-section is
+# upstream_width_um (w) x exit_depth_um (h). The rectangular resistance model
+# needs h/w < 1, and its correction factor is only trustworthy up to about
+# h/w = 0.8. Above h/w = 1.587 it raises; BETWEEN 1.0 and 1.587 it returns a
+# silently wrong number. So:
+#
+#     upstream_width_um  >=  1.25 x exit_depth_um       (hard floor)
+#     upstream_width_um  >=  2    x exit_depth_um       (comfortable)
+#
+# Widening the rung lowers its resistance, which makes the ladder LESS flat —
+# so this is a real tradeoff against uniformity_pct, not a free parameter.
+#
+# TO ADD A DESIGN: copy any one of these four blocks and change the numbers.
+# Each list entry is one whole design; they are never crossed with each other.
 serpentine:
-  - <<: *ladder
-    junction: { exit_width_um: 30, exit_depth_um: 10, pitch_um: 120 }   # TODO
-  - <<: *ladder
-    junction: { exit_width_um: 45, exit_depth_um: 15, pitch_um: 120 }   # TODO
-  - <<: *ladder
+  - main: *main
+    rung: { <<: *rung, upstream_width_um: 40 }                          # h/w 0.50
     junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }   # TODO
-  - <<: *ladder
-    junction: { exit_width_um: 80, exit_depth_um: 25, pitch_um: 120 }   # TODO
+  - main: *main
+    rung: { <<: *rung, upstream_width_um: 60 }                          # h/w 0.50
+    junction: { exit_width_um: 90, exit_depth_um: 30, pitch_um: 180 }   # TODO
+  - main: *main
+    rung: { <<: *rung, upstream_width_um: 80 }                          # h/w 0.50
+    junction: { exit_width_um: 120, exit_depth_um: 40, pitch_um: 240 }  # TODO
+  - main: *main
+    rung: { <<: *rung, upstream_width_um: 100 }                         # h/w 0.50
+    junction: { exit_width_um: 150, exit_depth_um: 50, pitch_um: 300 }  # TODO
 
 # ── FLUID SYSTEMS — a LIST of whole blocks, so A/B stay paired ───────────────
 # Do NOT write `mu_dispersed: [0.06, 0.00089]` with a matching list for
@@ -73,7 +113,12 @@ operating:
   # Sweep finer than feels necessary — the Ca gate can only quote a pressure
   # you actually simulated, so coarse steps leave real throughput unclaimed
   # (reported as Po_next_failed).
-  Po_mbar: [100, 200, 300, 400, 500, 700, 1000]
+  # Spans BOTH fluid systems, which have very different windows:
+  #   o/w  produces from ~31 mbar, Ca ceiling  93–195 mbar  → the low end matters
+  #   w/o  produces from ~50 mbar, Ca ceiling 374–678 mbar  → the high end matters
+  # A range starting at 100 mbar missed the o/w window entirely and returned
+  # "no SE window" for the two largest exits.
+  Po_mbar: [25, 40, 60, 80, 100, 150, 200, 300, 500, 700, 1000]
   Qw_mlhr: 5.0
 
 scoring:

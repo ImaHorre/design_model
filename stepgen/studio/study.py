@@ -123,6 +123,10 @@ def _label_for(family: str, params: dict[str, Any], operating: dict[str, Any]) -
         bits.append(f"U{int(rung['upstream_width_um'])}")
     if "N" in rung:
         bits.append(f"N{int(rung['N'])}")
+    elif "length_mm" in main:
+        # N was given as a main length instead; keep the axis visible in the
+        # label or two designs differing only in length would collide.
+        bits.append(f"Lm{main['length_mm']:g}")
     # manifold axes (arms count + rungs per arm)
     arms = params.get("arms", {}) if isinstance(params.get("arms"), dict) else {}
     if "count" in arms:

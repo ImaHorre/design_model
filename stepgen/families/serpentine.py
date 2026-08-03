@@ -182,12 +182,40 @@ class SerpentineFamily(Family):
         Mcw = float(_leaf(params, "main", "width_um", default=1000.0)) * 1e-6
         rung_len = float(_leaf(params, "rung", "length_mm", default=4.0)) * 1e-3
         upstream_w = float(_leaf(params, "rung", "upstream_width_um", default=15.0)) * 1e-6
-        N = int(_leaf(params, "rung", "N", default=1000))
         constriction = float(_leaf(params, "rung", "constriction_ratio", default=1.0))
 
-        # Rung depth == exit depth (single-etch step). Mcl derived from N × pitch
-        # so the count is exact (Nmc_override pins it too).
-        Mcl = N * pitch
+        # ── DFU count: give N, or give the main length and let N follow ──────
+        # N and the routed main length are the same fact stated two ways, tied
+        # by the pitch.  Design work knows one or the other depending on where
+        # it started — a DFU-count target, or a channel that has to fit a run of
+        # given length — so accept either and derive the other.  Giving both is
+        # an error rather than a silent precedence rule, because when they
+        # disagree there is no way to know which the user meant.
+        N_in = _leaf(params, "rung", "N")
+        L_in = _leaf(params, "main", "length_mm")
+        if N_in is not None and L_in is not None:
+            raise ValueError(
+                "specify either rung.N or main.length_mm, not both — they are the "
+                f"same quantity through the pitch (N = length / pitch). Got N={N_in}, "
+                f"length_mm={L_in}, pitch={pitch * 1e6:g} µm, which implies "
+                f"N={int(float(L_in) * 1e-3 // pitch)}."
+            )
+        if L_in is not None:
+            Mcl = float(L_in) * 1e-3
+            N = int(Mcl // pitch)
+            if N < 1:
+                raise ValueError(
+                    f"main.length_mm={L_in} is shorter than one pitch "
+                    f"({pitch * 1e6:g} µm) — no DFU fits."
+                )
+            # Mcl stays the length as given, not N × pitch: the channel really is
+            # that long, and the leftover under one pitch still carries fluid and
+            # still costs pressure drop.
+        else:
+            N = int(N_in) if N_in is not None else 1000
+            # Rung depth == exit depth (single-etch step). Mcl derived from
+            # N × pitch so the count is exact (Nmc_override pins it too).
+            Mcl = N * pitch
 
         # ── fluids ──────────────────────────────────────────────────────────
         fl = FluidConfig(
