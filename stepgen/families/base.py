@@ -151,6 +151,12 @@ class CommonMetrics:
     exit_width_um: float | None = None      # junction exit width [µm]
     exit_depth_um: float | None = None      # junction exit depth [µm]
     lambda_visc: float | None = None        # µ_continuous / µ_dispersed
+    #: the γ this row's ``regime_Ca`` was computed at [N/m].  Carried per row,
+    #: not read from the study, because a study may hold several fluid systems
+    #: with different interfacial tensions — and since Ca ∝ 1/γ exactly, the
+    #: γ-robustness of a Ca verdict is meaningless against the wrong γ.
+    gamma_Nm: float | None = None
+    phase_system: str | None = None         # "o/w" / "w/o" — which phase is dispersed
 
     notes: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)

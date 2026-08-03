@@ -72,6 +72,10 @@ def main() -> int:
     ap.add_argument("--min-production", action="store_true",
                     help="Also solve each design's minimum pressure for 100%% DFU "
                          "production (~40 extra solves per design).")
+    ap.add_argument("--phase", type=str, default=None, metavar="o/w|w/o",
+                    help="Show only this phase system. A VIEW over the same solve — "
+                         "all fluid systems are still run, so one command still "
+                         "produces one auditable result set.")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="Write both tables as CSV here.")
     args = ap.parse_args()
@@ -90,14 +94,30 @@ def main() -> int:
         for _, bad in frame[frame["error"].notna()].iterrows():
             print(f"  ! {bad.get('label', '?')}: {bad['error']}")
 
-    # gamma may vary across points when `fluids:` is a list of whole blocks. The
-    # gamma-robustness column only means something against a single reference, so
-    # compute it when the study uses one gamma and say so plainly when it does not.
+    # Filter AFTER solving, never before: the phase view is a view, so the run
+    # stays one auditable solve of everything the config declares.
+    if args.phase:
+        if "phase_system" not in frame.columns:
+            print(f"  ! --phase given but rows carry no phase_system; ignoring")
+        else:
+            keep = frame["phase_system"].astype(str) == args.phase
+            if not keep.any():
+                have = sorted(set(frame["phase_system"].dropna().astype(str)))
+                print(f"  ! no rows with phase_system == {args.phase!r}; have {have}")
+                return 2
+            frame = frame[keep]
+            print(f"  showing phase_system == {args.phase!r} "
+                  f"({len(frame)} of {len(result.frame)} rows)")
+
+    # gamma is carried per row (CommonMetrics.gamma_Nm), so a study may hold
+    # several fluid systems at different interfacial tensions and each row's
+    # robustness is still evaluated against its own gamma. This is only a
+    # fallback for the single-gamma case.
     gammas = {float(p.fluids.get("gamma", 0.0) or 0.0) for p in study.points}
     gamma_ref = gammas.pop() if len(gammas) == 1 else 0.0
-    if not gamma_ref:
-        print("  ! gamma varies across points (or is 0) — the gamma-robustness "
-              "column is skipped; split the study by fluid system to get it")
+    if len(gammas) > 1 or (not gamma_ref and "gamma_Nm" not in frame.columns):
+        print("  ! gamma varies across fluid systems — per-row gamma is used for "
+              "the robustness column")
 
     # ── per operating point ─────────────────────────────────────────────────
     cols = ["label", "operating_Po_mbar", "dP_rung_mbar", "uniformity_pct",
@@ -117,7 +137,7 @@ def main() -> int:
     print(f"PER DESIGN — gated at exit Ca <= {args.ca_max:g}"
           + (f"  (gamma = {gamma_ref * 1e3:.1f} mN/m)" if gamma_ref else ""))
     print("=" * 110)
-    gcols = [c for c in ["label", "Po_gated_mbar", "throughput_gated",
+    gcols = [c for c in ["label", "Po_gated_mbar", "throughput_gated", "gamma_Nm",
                          "frequency_gated_hz", "regime_Ca_gated",
                          "Po_next_failed", "passes_at_gamma_lo"] if c in gated.columns]
     print(gated[gcols].to_string(index=False, float_format=lambda v: f"{v:.4g}"))

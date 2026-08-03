@@ -606,8 +606,16 @@ def ca_gated_summary(
         design_keys = ["_design"]
 
     ca = frame["regime_Ca"]
-    # Ca ∝ 1/γ: at the pessimistic end of the band Ca is scaled up by γ_ref/γ_lo
-    scale_lo = (gamma_ref / gamma_range[0]) if gamma_ref else None
+
+    # Ca ∝ 1/γ: at the pessimistic end of the band Ca scales up by γ_row/γ_lo.
+    # Prefer the γ carried on each row — a study may hold several fluid systems
+    # with different interfacial tensions, and scaling every row by one study-level
+    # γ would report the robustness of a verdict nobody computed.  The *_ref
+    # argument stays as the fallback for frames produced before gamma_Nm existed.
+    if "gamma_Nm" in frame.columns and frame["gamma_Nm"].notna().any():
+        row_gamma = frame["gamma_Nm"]
+    else:
+        row_gamma = None
 
     out = []
     for key, grp in frame.groupby([frame[c].astype(str) for c in design_keys], sort=False):
@@ -617,18 +625,22 @@ def ca_gated_summary(
         rec["label"] = grp.iloc[0].get("label", "")
         if len(ok):
             best = ok.loc[ok["operating_Po_mbar"].idxmax()]
+            g = (float(row_gamma.loc[best.name]) if row_gamma is not None
+                 and pd.notna(row_gamma.loc[best.name]) else gamma_ref)
+            scale_lo = (g / gamma_range[0]) if g else None
             rec.update(
                 Po_gated_mbar=float(best["operating_Po_mbar"]),
                 throughput_gated=float(best["throughput_mlhr"]),
                 frequency_gated_hz=float(best.get("frequency_hz", np.nan)),
                 regime_Ca_gated=float(best["regime_Ca"]),
+                gamma_Nm=g or np.nan,
                 passes_at_gamma_lo=(bool(best["regime_Ca"] * scale_lo <= ca_max)
                                     if scale_lo else None),
             )
         else:
             rec.update(Po_gated_mbar=np.nan, throughput_gated=np.nan,
                        frequency_gated_hz=np.nan, regime_Ca_gated=np.nan,
-                       passes_at_gamma_lo=False)
+                       gamma_Nm=np.nan, passes_at_gamma_lo=False)
         rec["Po_next_failed"] = (float(bad["operating_Po_mbar"].min())
                                  if len(bad) else np.nan)
         out.append(rec)
@@ -738,6 +750,8 @@ def solve_config(
         exit_depth_um=exit_d * 1e6,
         lambda_visc=(config.fluids.mu_continuous / config.fluids.mu_dispersed
                      if config.fluids.mu_dispersed else None),
+        gamma_Nm=(gamma if gamma > 0 else None),
+        phase_system=getattr(config.fluids, "phase_system", None),
         area_used_cm2=float(row["footprint_area_used"]) * 1e4,
         fits_square=bool(row["fits_footprint"]),
         manufacturable=manufacturable,
