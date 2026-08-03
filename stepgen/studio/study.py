@@ -136,8 +136,70 @@ def _label_for(family: str, params: dict[str, Any], operating: dict[str, Any]) -
         bits.append(f"U{int(params['upstream_width_um'])}")
     if "target_droplet_um" in params:
         bits.append(f"d{params['target_droplet_um']:g}um")
+    # Junction exit — the axis that changes the physics per point, so it must be
+    # visible in the label.  Without it a study of "same ladder, four different
+    # exits" produced four identical labels, which silently collapsed the rows
+    # of every downstream group-by.
+    junction = params.get("junction", {}) if isinstance(params.get("junction"), dict) else {}
+    if "exit_width_um" in junction or "exit_depth_um" in junction:
+        ew = junction.get("exit_width_um")
+        ed = junction.get("exit_depth_um")
+        bits.append(f"E{ew:g}x{ed:g}" if ew is not None and ed is not None
+                    else f"E{(ew if ew is not None else ed):g}")
     bits.append(f"Po{int(operating.get('Po_mbar', 0))}")
     return "_".join(bits)
+
+
+def _fluid_tag(fluids: dict[str, Any]) -> str:
+    """Compact discriminator for a fluid system: phase + dispersed viscosity."""
+    bits: list[str] = []
+    phase = str(fluids.get("phase_system", "") or "").replace("/", "")
+    if phase:
+        bits.append(phase)
+    mu_d = fluids.get("mu_dispersed")
+    if mu_d is not None:
+        bits.append(f"mud{float(mu_d) * 1e3:g}")
+    mu_c = fluids.get("mu_continuous")
+    if mu_c is not None:
+        bits.append(f"muc{float(mu_c) * 1e3:g}")
+    gamma = fluids.get("gamma")
+    if gamma:
+        bits.append(f"g{float(gamma) * 1e3:g}")
+    return "_".join(bits)
+
+
+def _disambiguate(points: list["StudyPoint"]) -> None:
+    """
+    Make every label unique, in place.
+
+    Geometry and Po go into the label at construction, but the *shared* blocks
+    (fluids above all) do not — so a study that holds geometry fixed and sweeps
+    the fluid system produces one label repeated N times.  Anything that groups
+    or joins on label then silently merges rows that are not the same design.
+
+    Only collided labels are touched, so studies that never sweep fluids keep
+    exactly the labels they had.
+    """
+    from collections import defaultdict
+
+    groups: dict[str, list[StudyPoint]] = defaultdict(list)
+    for p in points:
+        groups[p.label].append(p)
+
+    for label, grp in groups.items():
+        if len(grp) < 2:
+            continue
+        tags = [_fluid_tag(p.fluids) for p in grp]
+        if len(set(tags)) == len(grp):                  # fluids explain it
+            for p, tag in zip(grp, tags):
+                object.__setattr__(p, "label", f"{label}__{tag}")
+            continue
+        # Fluids alone are not enough (footprint/manufacturing also swept, or a
+        # genuine duplicate). Keep the fluid tag where it helps and add an index
+        # so the label is still unique and still says what differs.
+        for i, (p, tag) in enumerate(zip(grp, tags), start=1):
+            suffix = f"{tag}__v{i}" if tag else f"v{i}"
+            object.__setattr__(p, "label", f"{label}__{suffix}")
 
 
 def build_points(raw: dict[str, Any]) -> list[StudyPoint]:
@@ -162,6 +224,7 @@ def build_points(raw: dict[str, Any]) -> list[StudyPoint]:
                 manufacturing=combo.get("manufacturing", {}) or {},
                 operating=operating,
             ))
+    _disambiguate(points)
     return points
 
 
