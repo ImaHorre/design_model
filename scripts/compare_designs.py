@@ -120,7 +120,8 @@ def main() -> int:
               "the robustness column")
 
     # ── per operating point ─────────────────────────────────────────────────
-    cols = ["label", "operating_Po_mbar", "dP_rung_mbar", "uniformity_pct",
+    cols = ["label", "operating_Po_mbar", "Qw_mlhr", "emulsion_pct",
+            "dP_rung_mbar", "uniformity_pct",
             "t_stage1_s", "t_cycle_s", "stage1_fraction", "frequency_hz",
             "throughput_mlhr", "droplet_um", "regime_Ca"]
     per_point = frame[[c for c in cols if c in frame.columns]].copy()

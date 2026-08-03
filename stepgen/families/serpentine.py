@@ -270,13 +270,34 @@ class SerpentineFamily(Family):
         params: dict[str, Any],
         label: str,
     ) -> CommonMetrics:
-        return solve_config(
-            compiled,
-            Po_mbar=float(operating.get("Po_mbar", compiled.operating.Po_in_mbar)),
-            Qw_mlhr=float(operating.get("Qw_mlhr", compiled.operating.Qw_in_mlhr)),
-            params=params,
-            label=label,
-        )
+        Po = float(operating.get("Po_mbar", compiled.operating.Po_in_mbar))
+        target_pct = operating.get("target_emulsion_pct")
+        if target_pct is not None:
+            if operating.get("Qw_mlhr") is not None:
+                raise ValueError(
+                    "specify either operating.Qw_mlhr or operating.target_emulsion_pct, "
+                    "not both — the target DERIVES Qw, so giving both means one of them "
+                    "is silently ignored. Delete Qw_mlhr to solve for it."
+                )
+            Qw = qw_for_emulsion(compiled, Po_mbar=Po, target_pct=float(target_pct))
+        else:
+            Qw = float(operating.get("Qw_mlhr", compiled.operating.Qw_in_mlhr))
+        cm = solve_config(compiled, Po_mbar=Po, Qw_mlhr=Qw,
+                          params=params, label=label)
+
+        # The target is not always reachable: below the capillary threshold no
+        # rung is ACTIVE, so Q_oil ~ 0 and no amount of water makes a 10%
+        # emulsion.  qw_for_emulsion then returns a search bound, which would
+        # otherwise look like a real operating point.  Say so on the row.
+        if target_pct is not None and cm.emulsion_pct is not None:
+            want = float(target_pct)
+            if abs(cm.emulsion_pct - want) > 0.1 * want:
+                cm.notes.append(
+                    f"emulsion target {want:g}% NOT reached — solved Qw={Qw:.4g} mL/hr "
+                    f"gives {cm.emulsion_pct:.3g}%. Below the production threshold the "
+                    f"device makes no dispersed phase, so no Qw can hit the target."
+                )
+        return cm
 
     # -- geometry rendering ------------------------------------------------
     def packing_capacity(self, compiled):
@@ -553,6 +574,68 @@ def highest_passing_swept_Po(
     return max(passing) if passing else None
 
 
+def qw_for_emulsion(
+    config,
+    *,
+    Po_mbar: float,
+    target_pct: float,
+    Qw_bounds_mlhr: tuple[float, float] = (0.01, 1000.0),
+    rtol: float = 1e-3,
+    max_iter: int = 40,
+) -> float:
+    """
+    Continuous-phase flow that yields a *target_pct* dispersed-phase emulsion.
+
+        phi(Qw) = Q_oil(Qw) / (Q_oil(Qw) + Qw)   ->   solve phi(Qw) = target
+
+    Why this is cheap rather than the slow feedback loop it looks like.  Raising
+    Qw raises the water-side back-pressure, which lowers ΔP across every rung and
+    so lowers Q_oil — monotonically.  phi therefore falls monotonically in Qw
+    (numerator down, denominator up), the root is unique, and bisection cannot
+    get lost.  It converges in ~12 solves, ~0.2 s.
+
+    The coupling strength is strongly device-dependent, which is worth knowing
+    before assuming a fixed Qw is harmless.  Over Qw = 0.5 -> 50 mL/hr:
+
+      * wide main (400x2000 µm, N <= 1000):  Q_oil moves  1.1%  — phi ~ Q_oil/Qw
+      * V5-30     (200x1000 µm, N = 11549):  Q_oil moves 51%    — genuinely coupled
+
+    On the first, Qw ~ Q_oil·(1-phi)/phi is nearly exact in one step; on the
+    second it is not, and iterating is the only way to land on the target.
+
+    Note this is a per-(design, Po) quantity: Q_oil rises with Po, so holding Qw
+    fixed across a pressure sweep means the emulsion fraction drifts across it.
+    """
+    from stepgen.design.sweep import evaluate_candidate
+
+    target = float(target_pct) / 100.0
+    if not 0.0 < target < 1.0:
+        raise ValueError(f"target_emulsion_pct must be in (0, 100); got {target_pct}")
+
+    def phi(qw: float) -> float:
+        row = evaluate_candidate(config, Po_in_mbar=Po_mbar, Qw_in_mlhr=qw)
+        q_oil = float(row.get("Q_oil_total", 0.0) or 0.0) * _M3S_TO_MLHR
+        return q_oil / (q_oil + qw) if (q_oil + qw) > 0 else 0.0
+
+    lo, hi = float(Qw_bounds_mlhr[0]), float(Qw_bounds_mlhr[1])
+    # phi is decreasing: phi(lo) should be ABOVE target, phi(hi) below.
+    if phi(lo) < target:
+        return lo      # even the least water over-dilutes; cannot reach target
+    if phi(hi) > target:
+        return hi      # even the most water cannot dilute enough
+
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        f = phi(mid)
+        if abs(f - target) <= rtol * target:
+            return mid
+        if f > target:
+            lo = mid   # too rich -> need more water
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 def ca_gated_summary(
     frame: "pd.DataFrame",
     *,
@@ -737,6 +820,9 @@ def solve_config(
         frequency_hz=float(row.get("f_pred_mean", 0.0)),
         uniformity_pct=float(row.get("dP_spread_pct", math.nan)),
         operating_Po_mbar=float(row["Po_in_mbar"]),
+        Qw_mlhr=Qw_mlhr,
+        emulsion_pct=(100.0 * throughput / (throughput + Qw_mlhr)
+                      if throughput is not None and (throughput + Qw_mlhr) > 0 else None),
         dP_rung_mbar=dP_rung_mbar,
         t_stage1_s=t_stage1,
         t_cycle_s=t_cycle,

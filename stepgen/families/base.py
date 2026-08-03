@@ -129,6 +129,11 @@ class CommonMetrics:
     frequency_hz: float | None = None       # mean droplet frequency [Hz]
     uniformity_pct: float | None = None     # ΔP spread across DFUs [%] (lower=flatter)
     operating_Po_mbar: float | None = None  # drive pressure [mbar]
+    #: continuous-phase flow this row was solved at [mL/hr].  Recorded because it
+    #: may be *derived* (operating.target_emulsion_pct) rather than given, and a
+    #: solved Qw that never appears in the output is an input nobody can audit.
+    Qw_mlhr: float | None = None
+    emulsion_pct: float | None = None       # Q_disp / (Q_disp + Qw) x 100
 
     # ── cycle / pressure diagnostics (2026-08-03) ───────────────────────────
     # All three derive from the one network rung flow Q, so they cannot disagree

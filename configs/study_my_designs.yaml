@@ -111,7 +111,24 @@ operating:
   # A range starting at 100 mbar missed the o/w window entirely and returned
   # "no SE window" for the two largest exits.
   Po_mbar: [25, 40, 60, 80, 100, 150, 200, 300, 500, 700, 1000]
-  Qw_mlhr: 5.0
+
+  # Continuous-phase flow. Give ONE of these two (giving both raises).
+  #
+  #   Qw_mlhr: 5.0              fixed flow — fast, but the emulsion fraction
+  #                             then differs per design AND drifts across the
+  #                             pressure sweep, which biases the comparison.
+  #
+  #   target_emulsion_pct: 10   solve Qw per (design, fluid, pressure) so every
+  #                             point is at the same 10% dispersed fraction.
+  #                             Costs ~12 extra solves per point (~45 s for this
+  #                             88-point sweep) and removes the bias.
+  #
+  # Why it matters here: at 10% emulsion these four designs need Qw from 16.9 to
+  # 198.7 mL/hr — a 12x spread. A single fixed Qw cannot be near-correct for all
+  # of them, so the fixed-Qw comparison is partly a comparison of emulsion
+  # fractions rather than of designs.
+  # Qw_mlhr: 5.0
+  target_emulsion_pct: 10
 
 scoring:
   uniformity_pct:    { green: 15,   orange: 30 }
