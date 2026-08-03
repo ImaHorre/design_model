@@ -1,0 +1,91 @@
+# study_my_designs.yaml — comparing DESIGNS YOU ALREADY HAVE
+# ─────────────────────────────────────────────────────────────────────────────
+# Run with:
+#     python scripts/compare_designs.py configs/study_my_designs.yaml
+#     stepgen study configs/study_my_designs.yaml        # scored HTML workbook
+#
+# THIS IS NOT A SWEEP. `serpentine:` below is a LIST — each entry is one whole
+# design, kept intact. There is no Cartesian product across designs, so adding a
+# fourth design adds 1 design, not 3 more combinations.
+#
+# The one thing that IS swept is `operating.Po_mbar`. Every design is solved at
+# every pressure, which is what gives you throughput-vs-P and lets the Ca gate
+# pick each design's own ceiling.
+#
+#   designs x pressures = points.   3 designs x 6 pressures = 18 solves, seconds.
+#
+# Sweep Po more finely than you think you need — the Ca gate can only quote
+# pressures you actually simulated, so coarse steps leave headroom on the table
+# (reported as `Po_next_failed`).
+# ─────────────────────────────────────────────────────────────────────────────
+
+title: "TODO — what question are these designs answering?"
+
+decide:
+  axes: [throughput, flatness, drive_pressure, margin]
+  weights: { throughput: 0.4, flatness: 0.3, drive_pressure: 0.2, margin: 0.1 }
+
+family: serpentine
+
+fluids:
+  mu_dispersed:  0.06       # Pa·s — sunflower oil (SO). Confirm against the actual lot.
+  mu_continuous: 0.00089    # Pa·s — 2% SDS water
+  gamma:         0.005      # N/m  — UNMEASURED. Ca ∝ 1/γ, so this number alone
+                            # decides the Ca gate. The runner reports the verdict
+                            # across 3–20 mN/m; if it flips inside that band, the
+                            # gate is telling you about γ, not about the design.
+  emulsion_ratio: 0.10
+  phase_system:  o/w
+
+footprint:
+  square_side_mm: 100.0     # die square for the fits-in-square gate
+  reserve_border_mm: 2.0
+
+manufacturing:
+  max_main_depth_um: 200.0  # current fab cap — raise deliberately, not by accident
+  max_main_width_um: 2000.0
+  min_wall_um: 5.0
+
+operating:
+  # Swept. Add points around where you expect the Ca gate to bite.
+  Po_mbar: [100, 200, 300, 400, 500, 700, 1000]
+  Qw_mlhr: 5.0
+
+# ── YOUR DESIGNS — one list entry each ───────────────────────────────────────
+# Copy a block, change the numbers, done. Delete the examples.
+#
+#   main.depth_um / width_um    the oil main (distribution channel)
+#   rung.length_mm              rung length — the flatness lever. Long+narrow
+#                               rungs raise R_rung, which flattens the ladder.
+#   rung.upstream_width_um      rung width upstream of the junction. Must exceed
+#                               the exit depth for the rectangular-resistance
+#                               model to hold.
+#   rung.N                      DFU count
+#   junction.exit_width_um/depth_um   the step exit. NOTE: the droplet power law
+#                               is calibrated at depth 1/5/10 µm — past ~12 µm
+#                               droplet size and frequency are extrapolated and
+#                               flagged. Throughput is unaffected (it is Σ Q_rung
+#                               and carries no droplet model).
+#   junction.pitch_um           DFU spacing along the main
+
+serpentine:
+  - main:     { depth_um: 200, width_um: 1000 }
+    rung:     { length_mm: 2, upstream_width_um: 25, N: 1000 }
+    junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }
+
+  - main:     { depth_um: 100, width_um: 500 }
+    rung:     { length_mm: 4, upstream_width_um: 25, N: 1000 }
+    junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }
+
+# ── scoring thresholds (used by `stepgen study`'s workbook) ───────────────────
+scoring:
+  uniformity_pct:    { green: 15,   orange: 30 }
+  operating_Po_mbar: { green: 500,  orange: 1000 }
+  throughput_mlhr:   { green: 5,    orange: 1, higher_better: true }
+  regime_Ca:         { green: 0.0125, orange: 0.03 }
+  build:             { from: manufacturing, fits_square: required }
+
+# Overlay a device we have real data for, to see where the new designs sit
+# relative to something measured.
+reference:
+  - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }
