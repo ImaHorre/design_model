@@ -26,7 +26,11 @@ count is exact; the rung depth equals the exit depth (single-etch step).
 from __future__ import annotations
 
 import math
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Sequence
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from stepgen.families.base import CommonMetrics, Family, register_family
 from stepgen.families.intent import (
@@ -372,6 +376,222 @@ def production_threshold_mbar(
         else:
             lo = mid
     return hi
+
+
+@dataclass(frozen=True)
+class CaLimit:
+    """
+    The drive pressure at which a design runs out of step-emulsification, and
+    what it is worth at that pressure.
+
+    Ca rises with Po (v_exit ∝ Q_rung ∝ ΔP), so the SE ceiling is an *upper*
+    bound on operating pressure — and therefore a gate on throughput.  The
+    honest headline number for a design is not its throughput at max pressure,
+    it is ``throughput_mlhr`` here: what it makes at the highest pressure that
+    is still step-emulsification.
+
+    Because γ has never been measured for the Peak fluid system and Ca ∝ 1/γ
+    exactly, the ceiling is a *band*, not a number.  ``Po_lo`` is the
+    pessimistic end (low γ → high Ca → lower usable pressure).  If Po_lo and
+    Po_hi straddle your intended operating point, the design is not gated by
+    physics, it is gated by not having run a pendant-drop measurement.
+    """
+    ca_max: float
+    gamma_ref: float
+    gamma_lo: float
+    gamma_hi: float
+    Po_mbar: float | None          # ceiling at gamma_ref [mbar]
+    Po_lo_mbar: float | None       # ceiling at gamma_lo (pessimistic)
+    Po_hi_mbar: float | None       # ceiling at gamma_hi (optimistic)
+    throughput_mlhr: float | None  # throughput at the gamma_ref ceiling
+    frequency_hz: float | None     # per-DFU frequency at the ceiling
+    regime_Ca: float | None        # realised Ca there (<= ca_max)
+    note: str = ""
+
+
+def ca_limited_operating_point(
+    config,
+    *,
+    Qw_mlhr: float,
+    ca_max: float = 0.0125,
+    gamma_range: tuple[float, float] = (0.003, 0.020),
+    Po_bounds_mbar: tuple[float, float] = (10.0, 2000.0),
+    tol_mbar: float = 5.0,
+) -> CaLimit:
+    """
+    Highest Po whose exit Ca stays at or below *ca_max*, plus what the design
+    delivers there.
+
+    Default ``ca_max = 0.0125`` is the rectangular SE→jetting bound
+    (@montessori2020-step-emulsification).  Both that and the 0.03 axisymmetric
+    bound (@chakraborty2017-step-emulsification) are literature values at
+    λ ≈ 1 while Peak runs λ ≈ 0.015, and the highest exit Ca Peak has *measured*
+    is 0.0017 — so passing this gate means "not obviously out of regime", not
+    "demonstrated".  Pass ``ca_max=CA_MEASURED_MAX`` for the envelope we can
+    actually vouch for.
+
+    Ca is monotonic in Po, so this bisects.  γ never enters the hydraulic solve,
+    so the band ends are obtained by rescaling the ceiling (Ca ∝ 1/γ) rather
+    than re-solving — the three bisections share one Ca(Po) curve.
+    """
+    gamma_ref = float(getattr(config.fluids, "gamma", 0.0) or 0.0)
+    lo_g, hi_g = float(gamma_range[0]), float(gamma_range[1])
+    if gamma_ref <= 0:
+        return CaLimit(ca_max, gamma_ref, lo_g, hi_g, None, None, None, None, None, None,
+                       note="gamma is 0 in this config — exit Ca cannot be computed")
+
+    Po_min, Po_max = float(Po_bounds_mbar[0]), float(Po_bounds_mbar[1])
+
+    def ca_at(po: float) -> float | None:
+        return solve_config(config, Po_mbar=po, Qw_mlhr=Qw_mlhr).regime_Ca
+
+    # Below the oil→water capillary threshold no rung is ACTIVE, so there is no
+    # exit velocity and Ca is undefined — *not* "Ca too high".  The Ca window
+    # therefore starts where production starts; find that floor before bisecting,
+    # or a device whose Po_min happens to sit under its own threshold reports no
+    # SE window at all.
+    floor = Po_min
+    if ca_at(floor) is None:
+        step = max((Po_max - Po_min) / 40.0, tol_mbar)
+        probe = Po_min + step
+        while probe <= Po_max and ca_at(probe) is None:
+            probe += step
+        if probe > Po_max:
+            return CaLimit(ca_max, gamma_ref, lo_g, hi_g, None, None, None, None, None, None,
+                           note=f"no DFU produces at or below {Po_max:g} mbar — "
+                                "exit Ca undefined across the searched range")
+        floor = probe
+
+    def ceiling_for(effective_ca_max: float) -> float | None:
+        """Highest Po with Ca <= effective_ca_max, or None if even the floor fails."""
+        c_min = ca_at(floor)
+        if c_min is None or c_min > effective_ca_max:
+            return None
+        c_max = ca_at(Po_max)
+        if c_max is not None and c_max <= effective_ca_max:
+            return Po_max          # never limited within the searched range
+        lo, hi = floor, Po_max
+        while hi - lo > tol_mbar:
+            mid = 0.5 * (lo + hi)
+            c = ca_at(mid)
+            if c is not None and c <= effective_ca_max:
+                lo = mid
+            else:
+                hi = mid
+        return lo
+
+    Po_ref = ceiling_for(ca_max)
+    # Ca(Po, γ) = Ca(Po, γ_ref)·γ_ref/γ, so requiring Ca ≤ ca_max at γ is the
+    # same as requiring Ca ≤ ca_max·γ/γ_ref on the already-solved γ_ref curve.
+    Po_lo = ceiling_for(ca_max * lo_g / gamma_ref)   # low γ  -> stricter
+    Po_hi = ceiling_for(ca_max * hi_g / gamma_ref)   # high γ -> looser
+
+    thru = freq = ca_here = None
+    note = ""
+    if Po_ref is None:
+        note = (f"exit Ca exceeds {ca_max:g} as soon as the device produces "
+                f"({floor:g} mbar) — no step-emulsification window")
+    else:
+        cm = solve_config(config, Po_mbar=Po_ref, Qw_mlhr=Qw_mlhr)
+        thru, freq, ca_here = cm.throughput_mlhr, cm.frequency_hz, cm.regime_Ca
+        if Po_ref >= Po_max:
+            note = f"Ca stays under {ca_max:g} across the whole search — not Ca-limited below {Po_max:g} mbar"
+
+    return CaLimit(ca_max, gamma_ref, lo_g, hi_g, Po_ref, Po_lo, Po_hi,
+                   thru, freq, ca_here, note)
+
+
+def highest_passing_swept_Po(
+    rows: "pd.DataFrame | Sequence[CommonMetrics]",
+    *,
+    ca_max: float = 0.0125,
+) -> float | None:
+    """
+    Of the pressures actually simulated, the highest whose exit Ca passes.
+
+    The solved ceiling from :func:`ca_limited_operating_point` is continuous;
+    this is the conservative "we only ran 200 and 500, and 500 failed, so quote
+    200" answer.  Quote both: the gap between them is the pressure you could
+    probably use but did not simulate.
+    """
+    import pandas as pd
+
+    if isinstance(rows, pd.DataFrame):
+        ok = rows[(rows["regime_Ca"].notna()) & (rows["regime_Ca"] <= ca_max)]
+        return float(ok["operating_Po_mbar"].max()) if len(ok) else None
+    passing = [r.operating_Po_mbar for r in rows
+               if r.regime_Ca is not None and r.regime_Ca <= ca_max
+               and r.operating_Po_mbar is not None]
+    return max(passing) if passing else None
+
+
+def ca_gated_summary(
+    frame: "pd.DataFrame",
+    *,
+    ca_max: float = 0.0125,
+    gamma_ref: float | None = None,
+    gamma_range: tuple[float, float] = (0.003, 0.020),
+    design_keys: Sequence[str] | None = None,
+) -> "pd.DataFrame":
+    """
+    Gate an already-solved study frame at a Ca ceiling and report what each
+    design is worth at its own highest passing pressure.
+
+    **This re-solves nothing.**  ``regime_Ca`` is a solved field and γ enters it
+    as an exact 1/γ, so both moving the ceiling and moving γ are arithmetic on
+    the existing rows — which is what makes this usable as a live filter control
+    rather than a re-run (see the filter-first studio front door).
+
+    One row per design, with:
+
+    ``Po_gated_mbar``      highest *simulated* Po whose Ca passes
+    ``throughput_gated``   throughput there — the number the design can claim
+    ``Po_next_failed``     lowest simulated Po that failed; the true ceiling lies
+                           between the two, so the gap is unsimulated headroom
+    ``passes_at_gamma_lo`` whether it still passes at the pessimistic γ
+
+    Designs with no passing pressure appear with NaN — they have no
+    step-emulsification window anywhere in the swept range.
+    """
+    import numpy as np
+    import pandas as pd
+
+    if design_keys is None:
+        design_keys = [c for c in frame.columns
+                       if c.startswith("p.") or c == "family"]
+    design_keys = [c for c in design_keys if c in frame.columns]
+    if not design_keys:
+        frame = frame.assign(_design="all")
+        design_keys = ["_design"]
+
+    ca = frame["regime_Ca"]
+    # Ca ∝ 1/γ: at the pessimistic end of the band Ca is scaled up by γ_ref/γ_lo
+    scale_lo = (gamma_ref / gamma_range[0]) if gamma_ref else None
+
+    out = []
+    for key, grp in frame.groupby([frame[c].astype(str) for c in design_keys], sort=False):
+        ok = grp[ca.loc[grp.index].notna() & (ca.loc[grp.index] <= ca_max)]
+        bad = grp[ca.loc[grp.index].notna() & (ca.loc[grp.index] > ca_max)]
+        rec: dict[str, Any] = {c: grp.iloc[0][c] for c in design_keys}
+        rec["label"] = grp.iloc[0].get("label", "")
+        if len(ok):
+            best = ok.loc[ok["operating_Po_mbar"].idxmax()]
+            rec.update(
+                Po_gated_mbar=float(best["operating_Po_mbar"]),
+                throughput_gated=float(best["throughput_mlhr"]),
+                frequency_gated_hz=float(best.get("frequency_hz", np.nan)),
+                regime_Ca_gated=float(best["regime_Ca"]),
+                passes_at_gamma_lo=(bool(best["regime_Ca"] * scale_lo <= ca_max)
+                                    if scale_lo else None),
+            )
+        else:
+            rec.update(Po_gated_mbar=np.nan, throughput_gated=np.nan,
+                       frequency_gated_hz=np.nan, regime_Ca_gated=np.nan,
+                       passes_at_gamma_lo=False)
+        rec["Po_next_failed"] = (float(bad["operating_Po_mbar"].min())
+                                 if len(bad) else np.nan)
+        out.append(rec)
+    return pd.DataFrame(out)
 
 
 def solve_config(
