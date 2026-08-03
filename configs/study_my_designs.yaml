@@ -37,11 +37,12 @@ _main: &main
                           # point of fixing L: same channel run, and the exit
                           # geometry decides how many DFUs fit in it.
                           # Do NOT also set rung.N — that raises.
-  depth_um:  400          # TODO main channel depth.
-                          # NOTE 400 > manufacturing.max_main_depth_um (200), so
-                          # every design will report manufacturable = False.
-                          # Deliberate if you are testing whether the fab cap is
-                          # what binds; raise the cap below if it is not.
+  depth_um:  400          # TODO main channel depth. Explicitly set, so the fab
+                          # cap below REPORTS it ("outside fab caps") rather than
+                          # failing the row — a value you typed is a decision,
+                          # not a search proposing something unbuildable. Add
+                          # `manufacturable: required` to the build gate if you
+                          # want it enforced.
   width_um:  2000         # TODO main channel width
 
 _rung: &rung

@@ -311,10 +311,24 @@ def score_metrics(
         failed: list[str] = []
         for gate_key, (val, human) in gate_map.items():
             required = build_spec.get(gate_key, None)
-            # manufacturable is always evaluated when known; fits_square /
-            # no_crossing only when the study marks them required.
-            evaluate = (required == "required") or (gate_key == "manufacturable" and val is not None)
+            # Every sub-gate is opt-in via `required`, INCLUDING manufacturable.
+            #
+            # It used to be evaluated unconditionally, which meant a fab cap
+            # vetoed geometry the user had explicitly pinned. That inverts who is
+            # deciding: a swept or generated depth of 400 µm against a 200 µm cap
+            # is a search proposing something unbuildable and deserves a red; a
+            # depth of 400 µm the user typed is a decision, and the tool's job is
+            # to tell them it is outside the cap, not to fail every row and bury
+            # the question they actually asked.
+            #
+            # Same treatment as Ca and bend radius: reported, not gated, unless
+            # the study opts in with `build: { manufacturable: required }`.
+            evaluate = (required == "required")
             if not evaluate or val is None:
+                if (gate_key == "manufacturable" and val is False
+                        and required is None):
+                    chips.append(f"⚪ outside fab caps — reported, not gated "
+                                 f"(set build.manufacturable: required to gate)")
                 continue
             if val is False:
                 build_cat = RED
