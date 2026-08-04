@@ -75,6 +75,29 @@ decide:
   axes: [flatness, throughput, drive_pressure, margin]
   weights: { flatness: 0.4, throughput: 0.3, drive_pressure: 0.2, margin: 0.1 }
 
+  # ── what counts as "a design" ────────────────────────────────────────────
+  # A sweep mixes two different kinds of axis: ones that make a different
+  # DEVICE (geometry) and ones that are a way of RUNNING it (pressure, flow,
+  # fluid, and sometimes a geometry axis you are deliberately optimising).
+  # The chapter groups rows by the first kind and ranks each design against
+  # its own conditions, so "best throughput" means "the best way to run this
+  # device" instead of "the biggest device at the highest pressure". It also
+  # reports what one notch of each condition axis measurably moved.
+  #
+  # Default: every varying geometry axis defines a design; operating: and
+  # fluids: are conditions. Override with either of these (group_by wins):
+  #
+  #   group_by: [junction.exit_width_um, junction.exit_depth_um]
+  #       exactly these paths define a design; everything else is a condition.
+  #
+  #   within: [main.length_mm]
+  #       geometry defines a design, except these — swept lengths become an
+  #       axis to optimise over rather than four separate devices.
+  #
+  # Paths are dotted, and namespaced by block: bare paths read the family
+  # geometry (junction.pitch_um), shared blocks are prefixed
+  # (operating.Po_mbar, fluids.gamma).
+
 # ── declarative scoring — traffic lights, worst-category-wins ────────────────
 scoring:
   throughput_mlhr:   { green: 5,   orange: 1,   higher_better: true }

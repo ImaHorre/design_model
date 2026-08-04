@@ -50,6 +50,7 @@ from stepgen.studio.workbook import (
     _COLUMNS,
     _best_indices,
     _build_plots,
+    fmt_metric,
     write_workbook,
 )
 
@@ -58,7 +59,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_DIR = _REPO_ROOT / "configs"
 
 # columns of the scored table that carry a traffic-light category
-_VALUE_KEYS = [k for k, _ in _COLUMNS]
+_VALUE_KEYS = [k for k, _, _ in _COLUMNS]
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +117,7 @@ def scored_dataframe(scored: list[ScoredRow], best: set[int]) -> pd.DataFrame:
             "Family": m.family,
             "Verdict": sr.overall,
         }
-        for key, header in _COLUMNS:
+        for key, header, _ in _COLUMNS:
             row[header] = getattr(m, key, None)
         disc = sr.min_margin_discounted
         row["Margin %"] = None if disc is None else round(disc * 100, 1)
@@ -143,7 +144,7 @@ def category_frame(scored: list[ScoredRow], df: pd.DataFrame) -> pd.DataFrame:
         cats.at[i, "Build"] = build.category if build else "grey"
         validity = sr.cells.get("validity")
         cats.at[i, "Valid"] = validity.category if validity else "grey"
-        for key, header in _COLUMNS:
+        for key, header, _ in _COLUMNS:
             cell = sr.cells.get(key)
             if cell is not None:
                 cats.at[i, header] = cell.category
@@ -737,9 +738,13 @@ def _render_table(st, scored, df, cats, study: Study | None = None) -> None:
     def _apply_style(frame: pd.DataFrame) -> pd.DataFrame:
         return view_cats.map(_style_cell)
 
+    # same per-column formatting as the HTML chapter — one decimal on
+    # percentages and mL/hr, thousands separators on counts — so a number does
+    # not change shape when the same study is read in the other tool
     styler = view.style.apply(_apply_style, axis=None).format(
-        {header: "{:.3g}" for _, header in _COLUMNS
-         if pd.api.types.is_numeric_dtype(df[header])},
+        {header: (lambda s: lambda v: fmt_metric(v, s))(spec)
+         for _, header, spec in _COLUMNS
+         if header in df.columns and pd.api.types.is_numeric_dtype(df[header])},
         na_rep="—",
     )
     st.dataframe(styler, width="stretch", hide_index=True,

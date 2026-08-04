@@ -360,6 +360,49 @@ def decide(
     )
 
 
+def decide_subset(
+    rows: Sequence[ScoredRow],
+    indices: Sequence[int],
+    spec: dict[str, Any] | None = None,
+    goal: str = "",
+    weights_override: dict[str, float] | None = None,
+) -> Decision:
+    """
+    :func:`decide`, restricted to *indices*, with the result re-indexed globally.
+
+    One design run at eleven pressures and four lengths is one *device*, and
+    "best throughput" over the whole study answers a question nobody asked — it
+    names the largest exit at the highest pressure and says nothing about how to
+    operate the other three.  Deciding per design needs the same eligibility,
+    Pareto and composite rules applied to a slice, so this delegates rather than
+    re-implementing them, and maps the local indices back so callers only ever
+    handle one index space.
+
+    Note that the composite is min-max normalised **within the slice** — that is
+    the point: a per-design composite ranks that design's own operating points
+    against each other, not against a bigger device's.
+    """
+    idx = list(indices)
+    sub = [rows[i] for i in idx]
+    local = decide(sub, spec, goal, weights_override)
+
+    def out(j: int | None) -> int | None:
+        return None if j is None else idx[j]
+
+    return Decision(
+        axes=local.axes,
+        weights=local.weights,
+        candidates=[idx[j] for j in local.candidates],
+        all_red=local.all_red,
+        per_axis={k: out(j) for k, j in local.per_axis.items()},
+        pareto=[idx[j] for j in local.pareto],
+        composite={idx[j]: v for j, v in local.composite.items()},
+        all_round=out(local.all_round),
+        safest=out(local.safest),
+        caveats=local.caveats,
+    )
+
+
 def shared_caveats(rows: Sequence[ScoredRow]) -> list[str]:
     """
     Validity breaches that every row shares.

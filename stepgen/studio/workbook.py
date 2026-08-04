@@ -30,10 +30,15 @@ import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from stepgen.studio.diagnosis import Diagnosis, diagnose
-from stepgen.studio.ranking import Decision, ValueAxis, axis_value, decide
+from stepgen.studio.grouping import (
+    Axis, Grouping, build_grouping, format_axis_value, row_axis_values,
+)
+from stepgen.studio.ranking import (
+    Decision, ValueAxis, axis_value, decide, decide_subset,
+)
 from stepgen.studio.run import StudyResult, resolved_constants
 from stepgen.studio.scoring import ScoredRow, score_result
 
@@ -44,28 +49,77 @@ _CONF_LABEL = {
     "extrapolation": ("extrapolated", "#cf222e", "model not checked in this regime"),
 }
 
-# columns shown in the overview table: (scoring/attr key, header, formatter)
-_COLUMNS: list[tuple[str, str]] = [
-    ("throughput_mlhr", "Throughput (mL/hr)"),
-    ("N_dfu", "N DFU"),
-    ("droplet_um", "Droplet (µm)"),
-    ("frequency_hz", "Freq (Hz)"),
-    ("uniformity_pct", "ΔP flatness (%)"),
-    ("operating_Po_mbar", "Po (mbar)"),
+# columns shown in the overview table: (metric key, header, format spec)
+#
+# The format spec is not decoration.  A table that prints 12.6666666 next to
+# 0.000513 in the same column of a 350-row sweep cannot be read at a glance, and
+# a number nobody reads is a number nobody checks.  Percentages and mL/hr get one
+# decimal, counts get thousands separators, and only the genuinely small-scale
+# quantities (Ca, stage times) keep significant-figure formatting.
+_COLUMNS: list[tuple[str, str, str]] = [
+    ("throughput_mlhr", "Throughput (mL/hr)", "f1"),
+    ("N_dfu", "N DFU", "int"),
+    ("droplet_um", "Droplet (µm)", "f1"),
+    ("frequency_hz", "Freq (Hz)", "freq"),
+    ("uniformity_pct", "ΔP flatness (%)", "f1"),
+    ("operating_Po_mbar", "Po (mbar)", "int"),
     # Qw and the emulsion fraction it produces: both are *inputs* when
     # operating.Qw_mlhr is given and *solved outputs* when
     # operating.target_emulsion_pct is, so they have to be visible either way —
     # a derived operating point that never appears in the table is one nobody
     # can audit.
-    ("Qw_mlhr", "Qw (mL/hr)"),
-    ("emulsion_pct", "Emulsion (%)"),
-    ("dP_rung_mbar", "ΔP rung (mbar)"),
-    ("t_stage1_s", "t Stage-1 (s)"),
-    ("t_cycle_s", "t cycle (s)"),
-    ("regime_Ca", "Exit Ca"),
-    ("hub_budget_pct", "Hub ΔP (%)"),
-    ("area_used_cm2", "Area (cm²)"),
+    ("Qw_mlhr", "Qw (mL/hr)", "f1"),
+    ("emulsion_pct", "Emulsion (%)", "f1"),
+    ("dP_rung_mbar", "ΔP rung (mbar)", "f1"),
+    ("t_stage1_s", "t Stage-1 (s)", "g3"),
+    ("t_cycle_s", "t cycle (s)", "g3"),
+    ("regime_Ca", "Exit Ca", "ca"),
+    ("hub_budget_pct", "Hub ΔP (%)", "f1"),
+    ("area_used_cm2", "Area (cm²)", "f1"),
 ]
+
+_FMT_BY_KEY = {key: spec for key, _, spec in _COLUMNS}
+
+#: swept-axis path -> the metric column it makes redundant.  When the study
+#: *sets* Po, the solved ``operating_Po_mbar`` is the same number twice; when the
+#: study sets a target emulsion fraction instead, ``Qw_mlhr`` is solved and has
+#: to stay.  Only an axis that is literally the input is dropped.
+_AXIS_DUPLICATES = {
+    "operating.Po_mbar": "operating_Po_mbar",
+    "operating.Qw_mlhr": "Qw_mlhr",
+}
+
+
+def fmt_metric(value: Any, spec: str = "g3") -> str:
+    """
+    Render one metric under *spec*.
+
+    ``f1`` one decimal · ``int`` thousands-separated whole number · ``freq``
+    whole numbers once past 100 Hz · ``ca`` four decimals (exit Ca spans
+    0.0003–0.7 and the leading zeros are the information) · ``g3`` three
+    significant figures for quantities that cross orders of magnitude.
+    """
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return html.escape(str(value))
+    if f != f:
+        return "—"
+    if spec == "f1":
+        return f"{f:,.1f}"
+    if spec == "int":
+        return f"{f:,.0f}"
+    if spec == "freq":
+        return f"{f:,.0f}" if abs(f) >= 100 else f"{f:,.1f}"
+    if spec == "ca":
+        return f"{f:.4f}" if abs(f) < 1 else f"{f:,.2f}"
+    if spec == "pct0":
+        return f"{f * 100:.0f}%"
+    return f"{f:.3g}"
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +338,7 @@ def _axis_cell(row: ScoredRow, axis: ValueAxis) -> str:
         return "—"
     if axis.key == "margin":
         return f"{value * 100:.0f}%"
-    return f"{value:.4g}{axis.unit}"
+    return f"{fmt_metric(value, _FMT_BY_KEY.get(axis.source, 'g3'))}{axis.unit}"
 
 
 def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
@@ -704,9 +758,332 @@ def _schematic_html(sr: ScoredRow, study) -> str:
             f'<div style="display:flex;gap:18px;flex-wrap:wrap">{blocks}</div></div>')
 
 
-def _table_html(scored: list[ScoredRow], best: set[int], study=None) -> str:
-    head = (["#", "Config", "Family", "Verdict"] + [c[1] for c in _COLUMNS]
-            + ["Margin (weakest link)", "Build", "Valid", "Reasons"])
+# ---------------------------------------------------------------------------
+# Designs vs conditions
+# ---------------------------------------------------------------------------
+
+def _conditions_text(values: dict[str, Any], axes: Sequence[Axis]) -> str:
+    """``Po 1000 mbar · Main length 160 mm · Fluid o/w`` — how a row was run."""
+    return " · ".join(f"{a.label} {a.show(values.get(a.path))}" for a in axes)
+
+
+def _counts(scored: Sequence[ScoredRow], indices: Sequence[int]) -> tuple[int, int, int]:
+    cats = [scored[i].overall for i in indices]
+    return (cats.count("green"), cats.count("orange"), cats.count("red"))
+
+
+def _verdict_bar(scored: Sequence[ScoredRow], indices: Sequence[int]) -> str:
+    g, o, r = _counts(scored, indices)
+    return (f'<span class="vbar">{_light("green")}{g} {_light("orange")}{o} '
+            f'{_light("red")}{r}</span>')
+
+
+def _pick_card_for(
+    axis: ValueAxis,
+    index: int | None,
+    scored: Sequence[ScoredRow],
+    leaves: dict[int, dict[str, Any]],
+    cond_axes: Sequence[Axis],
+) -> str:
+    """A per-axis winner card that also says *at what operating point* it won."""
+    if index is None:
+        return _pick_card(f"Best {axis.label.lower()}", "no comparable row", None)
+    row = scored[index]
+    value = _axis_cell(row, axis)
+    where = html.escape(_conditions_text(leaves.get(index, {}), cond_axes))
+    return (f'<div class="pick"><h4>Best {html.escape(axis.label)}</h4>'
+            f'<div class="pickval">{_light(row.overall)}{value}</div>'
+            f'<div class="pickwhy">at {where}</div>'
+            f'<div class="picksub" title="{html.escape(row.metrics.label)}">'
+            f'row #{index + 1}</div></div>')
+
+
+def _lever_cell(step, key: str) -> str:
+    """One measured effect, coloured by whether it helped or hurt."""
+    eff = step.effect_on(key)
+    if eff is None:
+        return '<td class="num muted">—</td>'
+    text = eff.amount()
+    if eff.delta == 0:
+        return '<td class="num muted" title="unchanged">·</td>'
+    colour = {"better": _CAT_COLOR["green"],
+              "worse": _CAT_COLOR["red"]}.get(eff.direction, "")
+    style = f' style="color:{colour}"' if colour else ""
+    tip = f"median absolute change {eff.delta:+,.4g} over {eff.n} pairs"
+    return f'<td class="num"{style} title="{html.escape(tip)}">{text}</td>'
+
+
+def _levers_table(steps: Sequence[Any], watches: Sequence[Any], title: str) -> str:
+    if not steps:
+        return ""
+    head = "".join(f"<th>{html.escape(w.label)}</th>" for w in watches)
+    body = "".join(
+        f'<tr><td class="lev">{html.escape(s.label)}</td>'
+        f'<td class="num muted">{s.n_pairs}</td>'
+        + "".join(_lever_cell(s, w.key) for w in watches) + "</tr>"
+        for s in steps
+    )
+    return (f'<table class="pareto levers"><thead><tr><th>{html.escape(title)}</th>'
+            f'<th title="matched row pairs behind the median">pairs</th>{head}</tr>'
+            f'</thead><tbody>{body}</tbody></table>')
+
+
+def _advice_html(
+    dec_axes: Sequence[ValueAxis],
+    spans: Sequence[Any],
+    swept_paths: Sequence[str],
+    scored: Sequence[ScoredRow] = (),
+) -> str:
+    """
+    "To push this further, do X — and here is what X costs you."
+
+    Measured first (the study's own numbers, from matched pairs), then the knobs
+    the study did not sweep, which come from the model's scaling structure and
+    the ingested literature and are labelled as such.
+    """
+    from stepgen.studio.levers import (
+        OBJECTIVE_METRIC, best_step_for, structural_levers,
+    )
+
+    cards: list[str] = []
+    for axis in dec_axes:
+        metric = OBJECTIVE_METRIC.get(axis.key)
+        bits: list[str] = []
+
+        step = best_step_for(spans, metric, scored) if metric else None
+        if step is not None:
+            gain = step.effect_on(metric)
+            costs = [e for k, e in step.effects.items()
+                     if k != metric and e.direction == "worse" and e.delta != 0
+                     and (e.rel is None or abs(e.rel) > 0.02)]
+            cost_txt = ("costs " + ", ".join(e.text() for e in costs)
+                        if costs else "no watched metric got worse")
+            bits.append(
+                f'<li><span class="tag measured">measured here</span> '
+                f'<b>{html.escape(step.label)}</b> → {html.escape(gain.text())} '
+                f'<span class="muted">(median of {step.n_pairs} matched pairs)</span>'
+                f'<div class="cost">{html.escape(cost_txt)}</div></li>'
+            )
+
+        for lever in structural_levers(axis.key, swept_paths)[:3]:
+            costs = "".join(f"<li>{html.escape(c)}</li>" for c in lever.costs)
+            bits.append(
+                f'<li><span class="tag model">not swept here</span> '
+                f'<b>{html.escape(lever.headline)}</b> — {html.escape(lever.mechanism)}'
+                f'<div class="cost"><b>Costs:</b><ul>{costs}</ul>'
+                f'<span class="muted">{html.escape(lever.evidence)}</span></div></li>'
+            )
+
+        if not bits:
+            continue
+        cards.append(f'<div class="advice"><h4>To improve {html.escape(axis.label)}</h4>'
+                     f'<ul>{"".join(bits)}</ul></div>')
+
+    if not cards:
+        return ""
+    return ('<h3>How to push this design further</h3>'
+            '<p class="muted">Every direction carries its cost — a lever with no '
+            'downside would already be the default. "Measured here" is this study\'s '
+            'own matched-pair result; "not swept here" comes from the model\'s scaling '
+            'and the cited literature, and has not been evaluated in this run.</p>'
+            f'<div class="advicegrid">{"".join(cards)}</div>')
+
+
+def _design_sections_html(
+    scored: list[ScoredRow],
+    grouping: Grouping,
+    leaves: dict[int, dict[str, Any]],
+    decisions: dict[str, Decision],
+    compare_html: str = "",
+) -> str:
+    """One decision panel per design, each ranking that design's own conditions."""
+    from stepgen.studio.levers import WATCHED, measured_levers
+
+    if not grouping.groups:
+        return ""
+
+    swept = [a.path for a in grouping.condition_axes]
+    sections: list[str] = []
+    for group in grouping.groups:
+        dec = decisions[group.gid]
+        cards = "".join(
+            _pick_card_for(axis, dec.per_axis.get(axis.key), scored, leaves,
+                           grouping.condition_axes)
+            for axis in dec.axes
+        )
+
+        extra = []
+        if dec.all_round is not None:
+            extra.append(
+                f'<b>All-round</b> (weighted composite within this design): '
+                f'{html.escape(_conditions_text(leaves.get(dec.all_round, {}), grouping.condition_axes))} '
+                f'<span class="muted">row #{dec.all_round + 1}, '
+                f'{scored[dec.all_round].overall}</span>')
+        if dec.safest is not None:
+            m = scored[dec.safest].min_margin_discounted or 0.0
+            extra.append(
+                f'<b>Safest</b> (discounted margin {m * 100:.0f}%): '
+                f'{html.escape(_conditions_text(leaves.get(dec.safest, {}), grouping.condition_axes))} '
+                f'<span class="muted">row #{dec.safest + 1}</span>')
+        if dec.all_red:
+            extra.append('<span class="warn">Every point of this design scored red — '
+                         'the picks above are least-bad, not recommendations.</span>')
+        extra_html = "".join(f"<li>{e}</li>" for e in extra)
+
+        spans = measured_levers(scored, group.indices, leaves,
+                                grouping.condition_axes, mode="span")
+        notches = measured_levers(scored, group.indices, leaves,
+                                  grouping.condition_axes, mode="adjacent")
+        watches = [w for w in WATCHED
+                   if any(s.effect_on(w.key) is not None for s in spans + notches)]
+        levers_html = _levers_table(spans, watches, "Lever — full range")
+        if notches and len(notches) > len(spans):
+            levers_html += (
+                '<details class="notches"><summary>notch by notch '
+                f'({len(notches)} steps)</summary>'
+                + _levers_table(notches, watches, "Lever — one notch")
+                + '</details>')
+        if levers_html:
+            levers_html = (
+                '<h3>What moves this design</h3>'
+                '<p class="muted">Median change over row pairs that differ on this '
+                'axis and nothing else. Green helped, red hurt; ΔP flatness is in '
+                'percentage points, everything else relative.</p>' + levers_html)
+
+        g, o, r = _counts(scored, group.indices)
+        sections.append(
+            f'<details class="dgroup" id="grp-{group.gid}" open>'
+            f'<summary><span class="gid">{group.gid}</span> '
+            f'<b>{html.escape(group.label(grouping.design_axes))}</b> '
+            f'<span class="muted">{len(group.indices)} points</span> '
+            f'{_verdict_bar(scored, group.indices)}</summary>'
+            f'<div class="gbody">'
+            f'<p><button class="btn" onclick="filterToDesign(\'{group.gid}\')">'
+            f'Show only this design in the table ↓</button></p>'
+            f'<div class="picks">{cards}</div>'
+            f'<ul class="decnotes">{extra_html}</ul>'
+            f'{levers_html}'
+            f'{_advice_html(dec.axes, spans, swept, scored)}'
+            f'</div></details>'
+        )
+
+    return ('<section class="decision">'
+            f'<h2>Per-design decisions — {len(grouping.groups)} designs</h2>'
+            '<p class="muted">Each design is ranked against <b>its own</b> operating '
+            'points, so "best throughput" here means the best way to run this device '
+            f'— not the biggest device. Designs are defined by: '
+            f'{html.escape(", ".join(a.label for a in grouping.design_axes)) or "—"} '
+            f'({html.escape(grouping.source)}). Explored inside each: '
+            f'{html.escape(", ".join(a.label for a in grouping.condition_axes)) or "nothing"}.</p>'
+            f'{compare_html}{"".join(sections)}</section>')
+
+
+def _design_compare_html(
+    scored: list[ScoredRow],
+    grouping: Grouping,
+    leaves: dict[int, dict[str, Any]],
+    decisions: dict[str, Decision],
+    dec_axes: Sequence[ValueAxis],
+) -> str:
+    """One row per design: its own best on each axis, side by side."""
+    if not grouping.is_split:
+        return ""
+    head = ("".join(f"<th>{html.escape(a.label)}</th>" for a in grouping.design_axes)
+            # never .lower() a label — it turns "ΔP spread" into "δp spread"
+            + "".join(f"<th>Best {html.escape(a.label)}</th>" for a in dec_axes))
+    body = []
+    for group in grouping.groups:
+        dec = decisions[group.gid]
+        cells = [f'<td>{html.escape(a.show(group.values.get(a.path)))}</td>'
+                 for a in grouping.design_axes]
+        for axis in dec_axes:
+            i = dec.per_axis.get(axis.key)
+            if i is None:
+                cells.append("<td>—</td>")
+                continue
+            where = _conditions_text(leaves.get(i, {}), grouping.condition_axes)
+            cells.append(f'<td title="{html.escape(where)}">{_axis_cell(scored[i], axis)}'
+                         f'<span class="tier">{html.escape(where)}</span></td>')
+        body.append(f'<tr><td><b>{group.gid}</b></td>{"".join(cells)}</tr>')
+    return (
+        '<h3>Design vs design — each at its own best</h3>'
+        '<p class="muted">Every cell is that design run at whichever of its own '
+        'operating points wins that column, with the point named underneath. Reading '
+        'across a row shows what one device can and cannot do at once; reading down a '
+        'column compares devices fairly, each at its own best.</p>'
+        f'<table class="pareto compare"><thead><tr><th>Design</th>{head}</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table>'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Filter bar + overview table
+# ---------------------------------------------------------------------------
+
+def _filters_html(grouping: Grouping, axes: Sequence[Axis]) -> str:
+    """Client-side filters — one control per axis that actually varies."""
+    controls: list[str] = []
+    if grouping.is_split:
+        opts = "".join(
+            f'<option value="{html.escape(g.gid)}">{html.escape(g.gid)} — '
+            f'{html.escape(g.label(grouping.design_axes))}</option>'
+            for g in grouping.groups)
+        controls.append(
+            '<label>Design<select id="f-gid" data-key="gid" onchange="applyFilters()">'
+            f'<option value="">All designs</option>{opts}</select></label>')
+
+    for j, axis in enumerate(axes):
+        opts = "".join(f'<option value="{html.escape(str(v))}">'
+                       f'{html.escape(axis.show(v))}</option>' for v in axis.values)
+        controls.append(
+            f'<label>{html.escape(axis.header())}'
+            f'<select data-key="a{j}" onchange="applyFilters()">'
+            f'<option value="">Any</option>{opts}</select></label>')
+
+    controls.append(
+        '<label>Verdict<select data-key="verdict" onchange="applyFilters()">'
+        '<option value="">Any</option><option value="green">green</option>'
+        '<option value="orange">orange</option><option value="red">red</option>'
+        '</select></label>')
+    controls.append(
+        '<label>Search<input id="f-text" type="search" placeholder="label, reason…" '
+        'oninput="applyFilters()"></label>')
+    controls.append('<button class="btn" onclick="resetFilters()">Reset</button>')
+    controls.append('<span id="filtercount" class="muted"></span>')
+    return f'<div class="filters" id="filters">{"".join(controls)}</div>'
+
+
+def _table_html(
+    scored: list[ScoredRow],
+    best: set[int],
+    study=None,
+    grouping: Grouping | None = None,
+    leaves: dict[int, dict[str, Any]] | None = None,
+) -> str:
+    leaves = leaves or {}
+    axes: list[Axis] = []
+    if grouping is not None:
+        axes = list(grouping.design_axes) + list(grouping.condition_axes)
+
+    # A column of dashes is a column nobody reads: drop metrics no family in this
+    # study can compute (hub ΔP in a serpentine-only run) and metrics that merely
+    # repeat a swept axis already shown to their left.
+    duplicated = {_AXIS_DUPLICATES[a.path] for a in axes if a.path in _AXIS_DUPLICATES}
+    columns = [
+        (key, header, spec) for key, header, spec in _COLUMNS
+        if key not in duplicated
+        and any(getattr(sr.metrics, key, None) is not None for sr in scored)
+    ]
+
+    families = sorted({sr.metrics.family for sr in scored})
+    head = ["#"]
+    if grouping is not None and grouping.is_split:
+        head.append("Design")
+    head += [a.header() for a in axes]
+    if len(families) > 1:
+        head.append("Family")
+    head += ["Verdict"] + [c[1] for c in columns] + \
+            ["Margin (weakest link)", "Build", "Valid", "Reasons"]
     thead = "".join(
         f'<th onclick="sortTable({i})">{html.escape(h)}</th>'
         for i, h in enumerate(head)
@@ -717,21 +1094,40 @@ def _table_html(scored: list[ScoredRow], best: set[int], study=None) -> str:
     rows_html: list[str] = []
     for i, sr in enumerate(scored):
         m = sr.metrics
-        star = "★ " if i in best else ""
-        cells = [
-            f'<td data-v="{i}">{i + 1}</td>',
-            f'<td data-v="{html.escape(m.label)}"><b>{star}{html.escape(m.label)}</b></td>',
-            f'<td data-v="{html.escape(m.family)}">{html.escape(m.family)}</td>',
+        vals = leaves.get(i, {})
+        gid = grouping.group_of.get(i, "") if grouping is not None else ""
+
+        attrs = [f'data-gid="{html.escape(gid)}"',
+                 f'data-verdict="{sr.overall}"',
+                 f'data-txt="{html.escape((m.label + " " + " ".join(sr.chips)).lower())}"']
+        for j, axis in enumerate(axes):
+            attrs.append(f'data-a{j}="{html.escape(str(vals.get(axis.path)))}"')
+
+        star = '<span class="star" title="best all-round">★</span>' if i in best else ""
+        cells = [f'<td data-v="{i}">{i + 1}{star}</td>']
+        if grouping is not None and grouping.is_split:
+            cells.append(f'<td data-v="{html.escape(gid)}"><span class="gid">'
+                         f'{html.escape(gid)}</span></td>')
+        for axis in axes:
+            value = vals.get(axis.path)
+            numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+            sort_v = value if numeric else html.escape(str(value))
+            cells.append(f'<td class="{"num" if numeric else "axv"}" data-v="{sort_v}">'
+                         f'{html.escape(format_axis_value(value, axis.spec))}</td>')
+        if len(families) > 1:
+            cells.append(f'<td data-v="{html.escape(m.family)}">{html.escape(m.family)}</td>')
+        cells.append(
             f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(sr.overall,3) }">'
-            f'{_light(sr.overall)}{sr.overall}</td>',
-        ]
-        for key, _ in _COLUMNS:
+            f'{_light(sr.overall)}{sr.overall}</td>')
+
+        for key, _, spec in columns:
             value = getattr(m, key, None)
             cell = sr.cells.get(key)
             color = _CAT_COLOR.get(cell.category, "") if cell else ""
             sort_v = value if isinstance(value, (int, float)) and value == value else -1e18
             style = f' style="color:{color};font-weight:600"' if cell and cell.category in ("orange", "red") else ""
-            cells.append(f'<td data-v="{sort_v}"{style}>{_fmt(value)}</td>')
+            cells.append(f'<td class="num" data-v="{sort_v}"{style}>'
+                         f'{fmt_metric(value, spec)}</td>')
         cells.append(_margin_cell(sr))
         build_cell = sr.cells.get("build")
         bcat = build_cell.category if build_cell else "grey"
@@ -741,18 +1137,24 @@ def _table_html(scored: list[ScoredRow], best: set[int], study=None) -> str:
         vtip = val_cell.reason if val_cell and val_cell.reason else vcat
         cells.append(f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(vcat,3) }" '
                      f'title="{html.escape(vtip)}">{_light(vcat)}</td>')
+        # Reasons stay on one line: a wrapping chip stack triples the height of
+        # every red row, and in a 350-row table that is the difference between
+        # scanning it and scrolling it. The full text is in the tooltip and,
+        # unabridged, in the drill-down.
         chips = " ".join(f'<span class="chip">{html.escape(c)}</span>' for c in sr.chips)
-        cells.append(f'<td data-v="0">{chips}</td>')
+        cells.append(f'<td data-v="0" class="reasons" '
+                     f'title="{html.escape(" · ".join(sr.chips))}">{chips}</td>')
 
         rows_html.append(
-            f'<tr class="mainrow" onclick="toggleDrill({i})">' + "".join(cells) + "</tr>"
+            f'<tr class="mainrow" {" ".join(attrs)} onclick="toggleDrill({i})">'
+            + "".join(cells) + "</tr>"
         )
         rows_html.append(_drilldown_row(i, sr, len(head),
                                         study if i in draw_rows else None,
                                         drawable=(study is not None)))
 
-    return (f'<table id="scoretable"><thead><tr>{thead}</tr></thead>'
-            f'<tbody>{"".join(rows_html)}</tbody></table>')
+    return (f'<div class="tablewrap"><table id="scoretable"><thead><tr>{thead}</tr></thead>'
+            f'<tbody>{"".join(rows_html)}</tbody></table></div>')
 
 
 def _drilldown_row(i: int, sr: ScoredRow, ncols: int, study=None,
@@ -765,7 +1167,8 @@ def _drilldown_row(i: int, sr: ScoredRow, ncols: int, study=None,
     reasons = "".join(f"<li>{html.escape(c)}</li>" for c in sr.chips) or "<li>all green</li>"
     body = (
         f'<div class="drillgrid">'
-        f'<div><h4>Swept params</h4><pre>{html.escape(params)}</pre></div>'
+        f'<div><h4>Config</h4><code class="cfglabel">{html.escape(m.label)}</code>'
+        f'<h4>Swept params</h4><pre>{html.escape(params)}</pre></div>'
         f'<div><h4>Score reasons</h4><ul>{reasons}</ul>'
         f'<h4>Notes</h4><ul>{notes}</ul></div>'
         f'<div><h4>Raw metrics</h4><pre>{html.escape(raw_txt)}</pre></div>'
@@ -828,27 +1231,78 @@ def _provenance_html(result: StudyResult, refs=None) -> str:
 
 
 _JS = """
+// main rows and their drill-down partner, kept together through sort + filter
+function rowPairs(){
+  var tb=document.getElementById('scoretable').tBodies[0];
+  var out=[];
+  for(var i=0;i<tb.rows.length;i++){
+    var r=tb.rows[i];
+    if(!r.classList.contains('mainrow')) continue;
+    var d=tb.rows[i+1];
+    out.push([r, (d && d.classList.contains('drill')) ? d : null]);
+  }
+  return out;
+}
 function sortTable(col){
   var t=document.getElementById('scoretable');
   var tb=t.tBodies[0];
-  // group main+drill rows
-  var groups=[];
-  for(var i=0;i<tb.rows.length;i+=2){groups.push([tb.rows[i],tb.rows[i+1]]);}
-  var dir=t.getAttribute('data-dir')==='asc'?-1:1;
+  var pairs=rowPairs();
+  var dir=t.getAttribute('data-sort')===String(col)&&t.getAttribute('data-dir')==='asc'?-1:1;
   t.setAttribute('data-dir',dir===1?'asc':'desc');
-  groups.sort(function(a,b){
+  t.setAttribute('data-sort',String(col));
+  pairs.sort(function(a,b){
     var x=a[0].cells[col].getAttribute('data-v');
     var y=b[0].cells[col].getAttribute('data-v');
     var nx=parseFloat(x),ny=parseFloat(y);
     if(!isNaN(nx)&&!isNaN(ny))return (nx-ny)*dir;
     return (''+x).localeCompare(''+y)*dir;
   });
-  groups.forEach(function(g){tb.appendChild(g[0]);tb.appendChild(g[1]);});
+  pairs.forEach(function(g){tb.appendChild(g[0]); if(g[1])tb.appendChild(g[1]);});
 }
 function toggleDrill(i){
   var r=document.getElementById('drill'+i);
+  if(!r) return;
   r.style.display = r.style.display==='none' ? 'table-row' : 'none';
 }
+function applyFilters(){
+  var box=document.getElementById('filters');
+  if(!box) return;
+  var sels=box.querySelectorAll('select');
+  var input=document.getElementById('f-text');
+  var q=(input && input.value ? input.value : '').toLowerCase().trim();
+  var shown=0, total=0;
+  rowPairs().forEach(function(g){
+    var r=g[0], ok=true;
+    for(var i=0;i<sels.length;i++){
+      var s=sels[i];
+      if(!s.value) continue;
+      var key=s.getAttribute('data-key');
+      if(r.getAttribute('data-'+key)!==s.value){ok=false;break;}
+    }
+    if(ok && q && (r.getAttribute('data-txt')||'').indexOf(q)<0) ok=false;
+    total++;
+    r.style.display = ok ? '' : 'none';
+    if(g[1]) g[1].style.display='none';
+    if(ok) shown++;
+  });
+  var c=document.getElementById('filtercount');
+  if(c) c.textContent = shown===total ? (total+' rows') : ('showing '+shown+' of '+total+' rows');
+}
+function resetFilters(){
+  var box=document.getElementById('filters');
+  if(!box) return;
+  box.querySelectorAll('select').forEach(function(s){s.value='';});
+  var input=document.getElementById('f-text');
+  if(input) input.value='';
+  applyFilters();
+}
+function filterToDesign(gid){
+  var s=document.getElementById('f-gid');
+  if(s){ s.value=gid; applyFilters(); }
+  var t=document.getElementById('overview');
+  if(t) t.scrollIntoView({behavior:'smooth'});
+}
+document.addEventListener('DOMContentLoaded', applyFilters);
 function composePlot(j){
   var fig=document.getElementById('plotfig'+j);
   var img=document.getElementById('plotimg'+j);
@@ -868,13 +1322,17 @@ def _css() -> str:
     return """
 :root{color-scheme:light dark;}
 body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-     margin:0;padding:2rem;max-width:1200px;margin:auto;line-height:1.5;}
+     margin:0;padding:2rem;max-width:1460px;margin:auto;line-height:1.5;
+     font-variant-numeric:tabular-nums;}
 h1{margin-bottom:.2rem;} .goal{color:#8b949e;margin-top:0;}
 table{border-collapse:collapse;width:100%;font-size:13px;margin:1rem 0;}
-th,td{border:1px solid #d0d7de;padding:5px 8px;text-align:right;white-space:nowrap;}
-th:nth-child(2),td:nth-child(2){text-align:left;}
+th,td{border:1px solid #d0d7de;padding:5px 8px;text-align:left;white-space:nowrap;}
+td.num,th{white-space:nowrap;}
+td.num{text-align:right;}
+.tablewrap{overflow-x:auto;border-radius:8px;}
 th{background:#f6f8fa;cursor:pointer;position:sticky;top:0;user-select:none;}
-tr.mainrow{cursor:pointer;} tr.mainrow:hover td{background:rgba(127,127,127,.08);}
+tr.mainrow{cursor:pointer;}
+#scoretable tr.mainrow:hover td{background:rgba(9,105,218,.14);}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
 .chip{display:inline-block;background:rgba(207,34,46,.12);border:1px solid rgba(207,34,46,.3);
       border-radius:10px;padding:0 7px;margin:1px;font-size:11px;white-space:nowrap;}
@@ -904,10 +1362,58 @@ ul.candidates code{font-size:11px;}
 .decnotes{font-size:12px;margin:.8rem 0 0;padding-left:1.1rem;}
 .decnotes li{margin:.25rem 0;}
 .muted{font-size:12px;color:#57606a;}
-.tier{font-size:10px;display:block;font-weight:400;}
+.tier{font-size:10px;display:block;font-weight:400;color:#57606a;}
+.warn{color:#bf8700;font-weight:600;}
+.star{color:#bf8700;margin-left:3px;}
+.reasons{max-width:340px;overflow:hidden;text-overflow:ellipsis;}
+#scoretable tbody tr:nth-of-type(4n+1) td{background:rgba(127,127,127,.045);}
+#scoretable td{padding:3px 8px;}
+.cfglabel{font-size:11px;word-break:break-all;display:block;margin:.2rem 0 .6rem;}
+
+/* ── filter bar ─────────────────────────────────────────────────────────── */
+.filters{display:flex;flex-wrap:wrap;gap:.6rem .9rem;align-items:flex-end;
+  border:1px solid #d0d7de;border-radius:10px;padding:.7rem .9rem;margin:.8rem 0;
+  background:rgba(127,127,127,.05);position:sticky;top:0;z-index:5;
+  backdrop-filter:blur(6px);}
+.filters label{display:flex;flex-direction:column;font-size:11px;color:#57606a;gap:2px;}
+.filters select,.filters input{font-size:12px;padding:3px 6px;border-radius:6px;
+  border:1px solid #d0d7de;background:transparent;color:inherit;max-width:230px;}
+.btn{font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid #d0d7de;
+  background:transparent;color:inherit;cursor:pointer;}
+.btn:hover{background:rgba(127,127,127,.12);}
+
+/* ── design groups ──────────────────────────────────────────────────────── */
+.gid{display:inline-block;background:#0969da;color:#fff;border-radius:5px;
+  padding:0 6px;font-size:11px;font-weight:700;margin-right:.4rem;}
+details.dgroup{border:1px solid #d0d7de;border-radius:8px;margin:.8rem 0;padding:.2rem .8rem;}
+details.dgroup>summary{cursor:pointer;padding:.5rem 0;font-size:13px;}
+details.dgroup>summary::marker{color:#8b949e;}
+.gbody{padding:.2rem 0 .8rem;}
+.vbar{margin-left:.6rem;font-size:12px;color:#57606a;}
+.pickval{font-size:15px;font-weight:700;margin:.15rem 0;}
+table.compare td .tier{max-width:260px;white-space:normal;}
+table.levers td.lev{font-weight:600;}
+details.notches{margin:.4rem 0 0;font-size:12px;}
+details.notches summary{cursor:pointer;color:#57606a;}
+
+/* ── improvement advice ─────────────────────────────────────────────────── */
+.advicegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem;}
+.advice{border:1px solid #d0d7de;border-radius:8px;padding:.6rem .8rem;}
+.advice h4{margin:.1rem 0 .5rem;font-size:13px;}
+.advice ul{margin:0;padding-left:1.1rem;font-size:12px;}
+.advice>ul>li{margin-bottom:.7rem;}
+.cost{color:#57606a;font-size:11.5px;margin-top:.2rem;}
+.cost ul{padding-left:1rem;margin:.15rem 0;}
+.tag{display:inline-block;border-radius:9px;padding:0 6px;font-size:10px;
+  font-weight:700;text-transform:uppercase;letter-spacing:.02em;margin-right:.3rem;}
+.tag.measured{background:rgba(26,127,55,.15);color:#1a7f37;}
+.tag.model{background:rgba(130,80,223,.15);color:#8250df;}
+
 @media (prefers-color-scheme:dark){
   th{background:#161b22;} th,td{border-color:#30363d;} .goal,figcaption{color:#8b949e;}
-  .decision,.pick{border-color:#30363d;} .picksub,.pickwhy,.muted{color:#8b949e;}
+  .decision,.pick,.advice,.filters,details.dgroup{border-color:#30363d;}
+  .picksub,.pickwhy,.muted,.tier,.cost,.vbar,.filters label{color:#8b949e;}
+  .filters select,.filters input,.btn{border-color:#30363d;}
 }
 """
 
@@ -936,6 +1442,19 @@ def write_workbook(
     if diagnosis is None:
         diagnosis = diagnose(result.study, scored, price=price)
 
+    # ── designs vs the conditions they were run at ──────────────────────────
+    # Row order out of run_study is point order, so a StudyPoint and its scored
+    # row share an index — no label join, and nothing to go stale if labels
+    # change.  Guarded anyway: a family that failed to solve still produces a row.
+    points = list(result.study.points)
+    grouping = build_grouping(result.study, points) if len(points) == len(scored) \
+        else build_grouping(result.study, points[:0])
+    all_axes = list(grouping.design_axes) + list(grouping.condition_axes)
+    leaves = {i: row_axis_values(p, all_axes) for i, p in enumerate(points)} \
+        if len(points) == len(scored) else {}
+    decisions = {g.gid: decide_subset(scored, g.indices, result.study.decide, goal)
+                 for g in grouping.groups}
+
     # resolve click-in reference overlays (modelled / experimental / chapter)
     from stepgen.studio.references import resolve_references
     refs = resolve_references(result.study)
@@ -956,6 +1475,7 @@ def write_workbook(
 <h1>{html.escape(result.study.title)}</h1>
 <p class="goal">Deciding on: <b>{html.escape(", ".join(a.key for a in dec.axes))}</b> ·
   Families: {html.escape(", ".join(result.study.families))} ·
+  {len(grouping.groups)} design{"s" if len(grouping.groups) != 1 else ""} ·
   {len(scored)} configs</p>
 <p class="legend">
   <span>{_light("green")}green {n_green}</span>
@@ -966,18 +1486,23 @@ def write_workbook(
 
 {_intent_html(result.study)}
 
+{_design_sections_html(scored, grouping, leaves, decisions,
+                       _design_compare_html(scored, grouping, leaves, decisions, dec.axes))}
+
 {_decision_html(scored, dec)}
 
 {_diagnosis_html(diagnosis)}
 
-<h2>Overview — scored comparison</h2>
-<p style="font-size:12px;color:#57606a">Click a header to sort; click a row to drill in.
-Verdict is <b>worst-category-wins</b> across every applicable gate; grey = N-A for that family.
+<h2 id="overview">Overview — scored comparison</h2>
+<p style="font-size:12px;color:#57606a">Filter with the bar below; click a header to sort;
+click a row to drill in. Verdict is <b>worst-category-wins</b> across every applicable gate;
+grey = N-A for that family.
 <b>Margin</b> is how far the weakest applicable metric sits from its red boundary, as a
 fraction of the green→red span, discounted by how much the model is trusted for that
 number. <b>Valid</b> is orange when the design sits outside the envelope the model has
 been checked in — never green there, and never red on those grounds alone.</p>
-{_table_html(scored, best, result.study)}
+{_filters_html(grouping, all_axes)}
+{_table_html(scored, best, result.study, grouping, leaves)}
 
 <h2>Standard plots</h2>
 {plots_html}

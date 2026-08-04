@@ -21,6 +21,22 @@ decide:
   axes: [throughput, flatness, drive_pressure, margin]
   weights: { throughput: 0.4, flatness: 0.3, drive_pressure: 0.2, margin: 0.1 }
 
+  # ── what counts as "a design" ──────────────────────────────────────────────
+  # Without this, every geometry axis that varies would split the report — and
+  # since main.length_mm is now swept below, the four exit designs would arrive
+  # as sixteen. `group_by` names the axes that make a design a different DEVICE.
+  # Everything else that varies (main length, pressure, fluid) is a CONDITION,
+  # explored inside each design, and the workbook ranks each design against its
+  # own conditions: "best throughput" then means the best way to run THIS exit,
+  # not simply the biggest exit at the highest pressure.
+  #
+  # Move main.length_mm into this list to get 16 design groups instead of 4.
+  group_by:
+    - junction.exit_width_um
+    - junction.exit_depth_um
+    - junction.pitch_um
+    - rung.upstream_width_um
+
 family: serpentine
 
 # ── THE SHARED LADDER — edit these once ──────────────────────────────────────
@@ -30,13 +46,25 @@ family: serpentine
 # length_mm and N. The `{ <<: *rung, ... }` form below merges inside the dict
 # and keeps the rest.
 _main: &main
-  length_mm: 120          # TODO routed main-channel length — the DFU-bearing run.
+  length_mm: [20, 40, 80, 160]
+                          # Routed main-channel length — the DFU-bearing run,
+                          # SWEPT: 2, 4, 8 and 16 cm.
                           # N is DERIVED from this: N = length / pitch. Because
                           # the pitch differs per design below, each design gets
                           # a different N from the same length — that is the
-                          # point of fixing L: same channel run, and the exit
-                          # geometry decides how many DFUs fit in it.
+                          # point: same channel run, and the exit geometry
+                          # decides how many DFUs fit in it. At pitch 120 µm the
+                          # 2–16 cm range is N = 166 → 1333 DFUs; at pitch
+                          # 300 µm it is N = 66 → 533.
                           # Do NOT also set rung.N — that raises.
+                          #
+                          # This is a CONDITION, not a design axis (see
+                          # decide.group_by above): each of the four exits is
+                          # judged at whichever length suits the objective, and
+                          # the workbook reports what changing it costs. Expect
+                          # the classic trade — a longer ladder carries more oil
+                          # and droops more, so throughput and ΔP flatness pull
+                          # against each other along this axis.
   depth_um:  400          # TODO main channel depth. Explicitly set, so the fab
                           # cap below REPORTS it ("outside fab caps") rather than
                           # failing the row — a value you typed is a decision,
