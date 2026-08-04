@@ -328,3 +328,28 @@ def test_workbook_renders_per_design_panels_and_filters(tmp_path):
     # the mashed label is gone from the table, but still auditable in the drill-down
     assert 'data-gid="D1"' in doc
     assert "Config</h4>" in doc
+
+
+def test_swept_lengths_and_derived_N_are_stated_in_the_decision_layer(tmp_path):
+    """
+    N and main length must be readable without scrolling into the wide table.
+
+    Both were only ever columns; the panel a reader looks at first named neither,
+    which made "best throughput at 144 mL/hr" a number with no ladder attached.
+    """
+    from stepgen.studio import run_study, write_workbook
+
+    study = build_study(_raw(group_by=["junction.exit_width_um"]))
+    result = run_study(study)
+    doc = write_workbook(result, tmp_path / "n.html", price="never") \
+        .read_text(encoding="utf-8")
+
+    # the swept values themselves, not just the axis name
+    assert "Main length: 20, 40 mm" in doc
+    # N is derived, so it is reported as the range each design spans...
+    assert "N 166 → 333 DFUs" in doc
+    # ...and named on each winner, next to the length that produced it
+    assert "Main length 40 mm" in doc
+    assert "N 333 DFUs" in doc
+    assert "<th>Main length (mm)</th>" in doc or "Main length (mm)" in doc
+    assert ">N DFU<" in doc

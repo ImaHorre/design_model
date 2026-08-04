@@ -762,9 +762,45 @@ def _schematic_html(sr: ScoredRow, study) -> str:
 # Designs vs conditions
 # ---------------------------------------------------------------------------
 
-def _conditions_text(values: dict[str, Any], axes: Sequence[Axis]) -> str:
-    """``Po 1000 mbar · Main length 160 mm · Fluid o/w`` — how a row was run."""
-    return " · ".join(f"{a.label} {a.show(values.get(a.path))}" for a in axes)
+def _conditions_text(
+    values: dict[str, Any],
+    axes: Sequence[Axis],
+    row: ScoredRow | None = None,
+) -> str:
+    """
+    ``Main length 160 mm · Po 1000 mbar · N 1,333 DFUs`` — how a row was run.
+
+    N is appended rather than being an axis of its own because nobody sets it:
+    it falls out of main length ÷ pitch, so the same length means a different
+    ladder on every design in this study.  Naming the length without the count
+    it bought makes the winner cards unreadable — 40 mm is 333 DFUs on a 120 µm
+    pitch and 133 on a 300 µm one, and that is the whole comparison.
+    """
+    bits = [f"{a.label} {a.show(values.get(a.path))}" for a in axes]
+    n = getattr(row.metrics, "N_dfu", None) if row is not None else None
+    if n is not None:
+        bits.append(f"N {int(n):,} DFUs")
+    return " · ".join(bits)
+
+
+def _axis_values_text(axis: Axis) -> str:
+    """``Main length: 20, 40, 80, 160 mm`` / ``Po: 25 … 1,000 mbar (11 values)``."""
+    shown = [format_axis_value(v, axis.spec) for v in axis.values]
+    if len(shown) <= 6:
+        return f"{axis.label}: {', '.join(shown)} {axis.unit}".strip()
+    span = f"{shown[0]} … {shown[-1]} {axis.unit}".strip()
+    return f"{axis.label}: {span} ({len(shown)} values)"
+
+
+def _n_range(scored: Sequence[ScoredRow], indices: Sequence[int]) -> str:
+    """``N 166 → 1,333 DFUs`` across a design's conditions, or "" if fixed/N-A."""
+    counts = sorted({int(scored[i].metrics.N_dfu) for i in indices
+                     if scored[i].metrics.N_dfu is not None})
+    if not counts:
+        return ""
+    if len(counts) == 1:
+        return f"N {counts[0]:,} DFUs"
+    return f"N {counts[0]:,} → {counts[-1]:,} DFUs"
 
 
 def _counts(scored: Sequence[ScoredRow], indices: Sequence[int]) -> tuple[int, int, int]:
@@ -787,10 +823,10 @@ def _pick_card_for(
 ) -> str:
     """A per-axis winner card that also says *at what operating point* it won."""
     if index is None:
-        return _pick_card(f"Best {axis.label.lower()}", "no comparable row", None)
+        return _pick_card(f"Best {axis.label}", "no comparable row", None)
     row = scored[index]
     value = _axis_cell(row, axis)
-    where = html.escape(_conditions_text(leaves.get(index, {}), cond_axes))
+    where = html.escape(_conditions_text(leaves.get(index, {}), cond_axes, row))
     return (f'<div class="pick"><h4>Best {html.escape(axis.label)}</h4>'
             f'<div class="pickval">{_light(row.overall)}{value}</div>'
             f'<div class="pickwhy">at {where}</div>'
@@ -916,14 +952,14 @@ def _design_sections_html(
         if dec.all_round is not None:
             extra.append(
                 f'<b>All-round</b> (weighted composite within this design): '
-                f'{html.escape(_conditions_text(leaves.get(dec.all_round, {}), grouping.condition_axes))} '
+                f'{html.escape(_conditions_text(leaves.get(dec.all_round, {}), grouping.condition_axes, scored[dec.all_round]))} '
                 f'<span class="muted">row #{dec.all_round + 1}, '
                 f'{scored[dec.all_round].overall}</span>')
         if dec.safest is not None:
             m = scored[dec.safest].min_margin_discounted or 0.0
             extra.append(
                 f'<b>Safest</b> (discounted margin {m * 100:.0f}%): '
-                f'{html.escape(_conditions_text(leaves.get(dec.safest, {}), grouping.condition_axes))} '
+                f'{html.escape(_conditions_text(leaves.get(dec.safest, {}), grouping.condition_axes, scored[dec.safest]))} '
                 f'<span class="muted">row #{dec.safest + 1}</span>')
         if dec.all_red:
             extra.append('<span class="warn">Every point of this design scored red — '
@@ -950,12 +986,13 @@ def _design_sections_html(
                 'axis and nothing else. Green helped, red hurt; ΔP flatness is in '
                 'percentage points, everything else relative.</p>' + levers_html)
 
-        g, o, r = _counts(scored, group.indices)
+        n_txt = _n_range(scored, group.indices)
         sections.append(
             f'<details class="dgroup" id="grp-{group.gid}" open>'
             f'<summary><span class="gid">{group.gid}</span> '
             f'<b>{html.escape(group.label(grouping.design_axes))}</b> '
-            f'<span class="muted">{len(group.indices)} points</span> '
+            + (f'<span class="muted">· {html.escape(n_txt)}</span> ' if n_txt else "")
+            + f'<span class="muted">· {len(group.indices)} points</span> '
             f'{_verdict_bar(scored, group.indices)}</summary>'
             f'<div class="gbody">'
             f'<p><button class="btn" onclick="filterToDesign(\'{group.gid}\')">'
@@ -973,8 +1010,13 @@ def _design_sections_html(
             'points, so "best throughput" here means the best way to run this device '
             f'— not the biggest device. Designs are defined by: '
             f'{html.escape(", ".join(a.label for a in grouping.design_axes)) or "—"} '
-            f'({html.escape(grouping.source)}). Explored inside each: '
-            f'{html.escape(", ".join(a.label for a in grouping.condition_axes)) or "nothing"}.</p>'
+            f'({html.escape(grouping.source)}).</p>'
+            '<p class="muted">Explored inside each design — '
+            + (html.escape(" · ".join(_axis_values_text(a)
+                                      for a in grouping.condition_axes))
+               or "nothing")
+            + '. N DFU is not swept: it is derived as main length ÷ pitch, so the '
+              'same length buys a different ladder on every design here.</p>'
             f'{compare_html}{"".join(sections)}</section>')
 
 
@@ -989,6 +1031,8 @@ def _design_compare_html(
     if not grouping.is_split:
         return ""
     head = ("".join(f"<th>{html.escape(a.label)}</th>" for a in grouping.design_axes)
+            + '<th title="derived from main length ÷ pitch, over the swept lengths">'
+              'N DFU</th>'
             # never .lower() a label — it turns "ΔP spread" into "δp spread"
             + "".join(f"<th>Best {html.escape(a.label)}</th>" for a in dec_axes))
     body = []
@@ -996,12 +1040,13 @@ def _design_compare_html(
         dec = decisions[group.gid]
         cells = [f'<td>{html.escape(a.show(group.values.get(a.path)))}</td>'
                  for a in grouping.design_axes]
+        cells.append(f'<td class="num">{html.escape(_n_range(scored, group.indices))}</td>')
         for axis in dec_axes:
             i = dec.per_axis.get(axis.key)
             if i is None:
                 cells.append("<td>—</td>")
                 continue
-            where = _conditions_text(leaves.get(i, {}), grouping.condition_axes)
+            where = _conditions_text(leaves.get(i, {}), grouping.condition_axes, scored[i])
             cells.append(f'<td title="{html.escape(where)}">{_axis_cell(scored[i], axis)}'
                          f'<span class="tier">{html.escape(where)}</span></td>')
         body.append(f'<tr><td><b>{group.gid}</b></td>{"".join(cells)}</tr>')
