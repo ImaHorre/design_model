@@ -1,13 +1,13 @@
-# example_single.yaml
+# v5_30.yaml
 # ─────────────────────────────────────────────────────────────────────────────
-# Single-point simulation config.
-# Geometry matches the stepgen_seed reference implementation.
+# V5-30 — a BUILT device (serpentine, 30 µm exit width). See
+# reference_devices/README.md for the measured GDS geometry, which is ground
+# truth; where this file and that README disagree, this file is wrong.
 #
 # Usage:
-#   stepgen simulate examples/example_single.yaml
-#   stepgen simulate examples/example_single.yaml --Po 300 --Qw 10
-#   stepgen simulate examples/example_single.yaml --Qo 1.7 --Qw 15  # Mode B
-#   stepgen report   examples/example_single.yaml --out-dir plots/
+#   stepgen simulate configs/v5_30.yaml
+#   stepgen simulate configs/v5_30.yaml --Po 300 --Qw 10
+#   stepgen report   configs/v5_30.yaml --out-dir plots/
 #
 # WHAT YOU GET:
 #   simulate  → printed summary: Nmc, active/reverse %, Q_spread/dP_spread, D_pred, frequency
@@ -27,32 +27,44 @@ fluids:
 
 
 geometry:
-  # ── Nmc override ─────────────────────────────────────────────────────────
-  # This device has a very long channel (Mcl=2040 mm, pitch=3 µm) giving
-  # Nmc = 680 000 rungs — the derived value is correct here so no override needed.
+  # ── DFU count ────────────────────────────────────────────────────────────
+  # Nmc is DERIVED: floor(Mcl / pitch) = floor(693 mm / 60 µm). The model
+  # reports 11,549, not the 11,550 the arithmetic suggests — 0.693 / 60e-6 lands
+  # a hair under in binary floating point and the floor takes the hit. One DFU
+  # in 11,550 (0.009%); recorded so nobody re-derives it and thinks it a bug.
   #
-  # If your device has a known rung count that doesn't match Mcl/pitch exactly,
-  # uncomment and set:
-  # Nmc_override: 500
+  # Conor's working figure for this device is 11,565 (ruled 2026-08-04), which
+  # 693 mm reproduces to 0.13%.  The GDS counts 11,154 (10,000 straight + 1,154
+  # curve, residual 0) — 3.7% below.  That gap was examined and closed: 11,565
+  # is the number the model is driven at here, and no reconciliation is being
+  # sought.  Do not re-cut Mcl to the GDS count; comp_deep_dfu_main_mods is
+  # calibrated at 11,550 and stays valid.
   #
-  # Mcl and pitch remain required even with Nmc_override — they set resistances.
+  # No Nmc_override is set, and none is wanted — Mcl and pitch also set the
+  # ladder resistances, so an override that disagreed with them would make the
+  # count and the hydraulics describe different devices.
 
   main:
-    Mcd: 200.0e-6    # 100 µm depth
-    Mcw: 1000.0e-6    # 500 µm width
-    Mcl: 693e-3   # 2040 mm routed length → Nmc = floor(2.04 / 3e-6) = 680 000
+    Mcd: 200.0e-6     # 200 µm depth
+    Mcw: 1000.0e-6    # 1000 µm width  (measured: 1000 µm)
+    Mcl: 693e-3       # 693 mm routed length → Nmc = 11,549 (see note above)
 
   rung:
-    mcd: 10e-6      # 0.3 µm depth
-    mcw: 8e-6      # 1 µm width
-    mcl: 4000.0e-6    # 200 µm length
-    pitch: 60e-6    # 3 µm pitch
+    # The DFU is two widths in series (measured: 3610 µm @ 8 µm + 410 µm @ 30 µm,
+    # 10 µm deep throughout).  This model carries ONE width; mcw is the narrow
+    # section, which is 98.8% of the resistance, and constriction_ratio 0.9 is
+    # its 90% share of the length.  Note 8 µm wide × 10 µm deep — depth exceeds
+    # width on the real device.
+    mcd: 10e-6        # 10 µm depth (= exit depth, single etch)
+    mcw: 8e-6         # 8 µm width  (narrow section)
+    mcl: 4000.0e-6    # 4.0 mm rung length (measured total 4020 µm)
+    pitch: 60e-6      # 60 µm DFU pitch (measured)
     constriction_ratio: 0.9
 
   junction:
     # Sets D_pred via D = k * exit_width^a * exit_depth^b
-    exit_width: 30e-6    # 1 µm
-    exit_depth: 10e-6    # 0.3 µm  → D_pred ≈ 0.3 µm
+    exit_width: 30e-6    # 30 µm
+    exit_depth: 10e-6    # 10 µm  → D_pred ≈ 25 µm
     junction_type: step
 
 
@@ -73,13 +85,20 @@ droplet_model:
   dP_cap_wo_mbar: 30.0   # capillary threshold water→oil [mbar]
 
 
-# ── OPTIONAL — needed for layout_schematic.png in 'stepgen report' ────────────
+# ── OPTIONAL — layout only.  Never feeds the hydraulic solve; it sets
+#    fits_footprint, footprint_area_used and layout_schematic.png. ────────────
 footprint:
+  # V5-30 is a 100 × 100 mm square die, not a 1.5:1 rectangle.
   footprint_area_cm2: 100
-  footprint_aspect_ratio: 1.5
-  lane_spacing: 500.0e-6
+  footprint_aspect_ratio: 1.0
+  # Measured: lane_pitch = 2×1.0 + 4.0 + 1.0 = 7.00 mm, 10 lane pairs, and an
+  # active footprint of 69.0 × 74.0 mm = 51% of the die.
+  wall_width: 1.0e-3
+  active_area_fraction: 0.51
   turn_radius: 500.0e-6
-  reserve_border: 2.0e-3
+  # lane_spacing and reserve_border are gone, not merely unset: neither is part
+  # of the stack-up any more (W1-1/W1-2).  Nothing on this device is 500 µm, and
+  # the die it cannot route in is the 49% measured above, not a 2 mm edge.
 
 
 # ── OPTIONAL — only affects 'hard OK' flag, not the simulation ────────────────

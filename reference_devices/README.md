@@ -66,13 +66,24 @@ the margins are absolute lengths, not fractions. The family defaults are `square
 63.5`, where these numbers do not apply. Until a per-family IO/port model exists, treat
 `active_fraction` as valid at 100 mm only, and say so on any row that is not.
 
-## Open discrepancy
+## 11,154 vs 11,565 DFUs on V5-30 — closed 2026-08-04
 
-**11,154 vs 11,565 DFUs on V5-30.** The GDS gives 11,154 (10,000 straight + 1,154 curve),
-with all 31,674 DFU-layer polygons accounted for and nothing left over. Conor's working
-figure is 11,565 — 3.7% apart. Possibly a revision difference (this file is V1.1), or a
-different convention on counting the curve DFUs. Unresolved; it blocks correcting
-`configs/v5_30.yaml`, whose `Mcl = 693 mm` encodes 11,550.
+The GDS gives **11,154** (10,000 straight + 1,154 curve), with all 31,674 DFU-layer
+polygons accounted for and nothing left over. Conor's working figure is **11,565** —
+3.7% apart. **Conor ruled 11,565: 3.7% is close enough, and no reconciliation is being
+sought.** The likely cause (a revision difference — this file is V1.1 — or a different
+convention on the curve DFUs) is recorded only so nobody re-opens it.
+
+The two numbers do not compete, because they answer different questions:
+
+| Number | What it is | Where it belongs |
+|---|---|---|
+| **11,565** | the device figure, the N the model is driven at | `configs/v5_30.yaml` (`Mcl = 693 mm`, reported as 11,549) |
+| **11,154** | polygons counted in this GDS, residual 0 | the layout acceptance tests, `tests/test_reference_devices.py` |
+
+The acceptance tests ask whether `compute_layout` reproduces *the geometry the GDS
+contains*, so 11,154 is the only admissible number there. Asserting 11,565 would be
+asserting the model against a number this file does not contain.
 
 ## Provenance of these numbers
 
