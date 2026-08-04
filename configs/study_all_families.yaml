@@ -36,7 +36,11 @@ fluids:
 footprint:
   square_side_mm: 100.0
   feed_length_mm: 100.0        # manifold spine length available for arms (≤ side)
-  reserve_border_mm: 2.0
+  # No reserve_border_mm: the die a family cannot route in is now MEASURED per
+  # family (serpentine 51%, radial 64% of a 100 mm die -- reference_devices/),
+  # not guessed as a 2 mm edge. That 2 mm claimed 96 x 96 mm of this die was
+  # usable; it is not, and that single assumption was the whole of the old
+  # 1.66x capacity over-prediction.
 
 manufacturing:
   max_main_depth_um: 200.0
