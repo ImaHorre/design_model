@@ -232,7 +232,9 @@ class SerpentineFamily(Family):
         fp = FootprintConfig(
             footprint_area_cm2=area_cm2,
             footprint_aspect_ratio=1.0,   # a square die
-            lane_spacing=float(footprint.get("lane_spacing_um", 500.0)) * 1e-6,
+            # 1.0 mm measured on both built serpentines — a design rule, and the
+            # thing that actually sets the lane pitch (reference_devices/README.md).
+            wall_width=float(footprint.get("wall_width_um", 1000.0)) * 1e-6,
             turn_radius=float(footprint.get("turn_radius_um", 500.0)) * 1e-6,
             reserve_border=float(footprint.get("reserve_border_mm", 2.0)) * 1e-3,
         )
@@ -312,10 +314,11 @@ class SerpentineFamily(Family):
             N_max       = n_lanes_max * floor(lane_length / pitch)
 
         Note what this exposes: ``num_lanes`` depends on ``Mcl`` and
-        ``lane_length`` only — **not** on ``turn_radius``.  Shrinking the turn
-        radius lowers ``total_height`` and so helps an overflowing stack fit,
-        but it never adds a lane.  The drawing and this readout agree on that,
-        which is the point.
+        ``lane_length`` only.  ``lanes_max`` is set by the die height against the
+        **wall** — the 1.0 mm design rule measured on both built serpentines —
+        not by ``turn_radius``, which since W1-1 plays no part in the stack-up.
+        The drawing and this readout share one implementation of that arithmetic
+        (:func:`stepgen.design.layout.lane_stackup`), which is the point.
         """
         from stepgen.design.layout import compute_layout
         from stepgen.viz.schematic import PackingCapacity
@@ -357,6 +360,7 @@ class SerpentineFamily(Family):
                 "dfu_per_lane": float(per_lane),
                 "lane_length_mm": lay.lane_length * 1e3,
                 "lane_pitch_mm": lay.lane_pitch * 1e3,
+                "wall_width_um": fp.wall_width * 1e6,
                 "turn_radius_um": fp.turn_radius * 1e6,
             },
         )
@@ -858,9 +862,16 @@ def _serpentine_device(config, capacity=None):
     Whole-device view: the folded lane stack inside the die square.
 
     Lane block heights are the real ones (``Mcw`` for each main, ``mcl`` for the
-    rung array between them), the fold is drawn as an annular sector at the true
-    ``turn_radius``, and lanes that overflow the die are tinted and dashed.
+    rung array between them), and lanes that overflow the die are tinted and
+    dashed.
+
+    The fold is drawn as an annular sector spanning lane centre to lane centre —
+    a 180° turn between two lanes at ``lane_pitch`` HAS a centreline radius of
+    half the pitch, it is not free to be anything else.  ``turn_radius`` is
+    therefore reported (below the drawing) rather than drawn; W2-5 turns that
+    into a metric.
     """
+    from stepgen.design.layout import lane_stackup
     from stepgen.viz.schematic import Arc, Dim, Label, Rect, Schematic, Zone
 
     fp, geom = config.footprint, config.geometry
@@ -875,8 +886,9 @@ def _serpentine_device(config, capacity=None):
     mcw, pitch = geom.rung.mcw, geom.rung.pitch
 
     lane_len = max(chip_W - 2.0 * bd, 0.0)
-    pair_w = 2.0 * Mcw + mcl + fp.lane_spacing
-    lane_pitch = pair_w + 2.0 * tr
+    pair_w, lane_pitch = lane_stackup(
+        main_width_m=Mcw, dfu_array_m=mcl, wall_width_m=fp.wall_width,
+    )
     n_total = int(geom.Nmc_override or 0) or int(round(geom.main.Mcl / pitch))
     n_lanes = max(math.ceil(geom.main.Mcl / lane_len), 1) if lane_len > 0 else 1
     per_lane_cap = int(math.floor(lane_len / pitch)) if pitch > 0 else 0
@@ -901,14 +913,17 @@ def _serpentine_device(config, capacity=None):
         if not inside:
             prims.append(Rect(bd, y0, lane_len, pair_w, "overflow"))
 
-        # the fold — drawn at the true turn radius, alternating ends
+        # the fold — centre-to-centre between this lane and the next, so the
+        # arc closes on the lane it actually connects to, alternating ends
         if i < n_lanes - 1:
-            cy = y0 + pair_w + tr
+            cy = y0 + pair_w * 0.5 + lane_pitch * 0.5
+            r_in = max(lane_pitch * 0.5 - pair_w * 0.5, 0.0)
+            r_out = lane_pitch * 0.5 + pair_w * 0.5
             if i % 2 == 0:
-                prims.append(Arc(bd + lane_len, cy, tr, tr + pair_w,
+                prims.append(Arc(bd + lane_len, cy, r_in, r_out,
                                  -math.pi / 2, math.pi / 2, "turn"))
             else:
-                prims.append(Arc(bd, cy, tr, tr + pair_w,
+                prims.append(Arc(bd, cy, r_in, r_out,
                                  math.pi / 2, 3 * math.pi / 2, "turn"))
 
     total_h = (n_lanes - 1) * lane_pitch + pair_w
@@ -922,7 +937,7 @@ def _serpentine_device(config, capacity=None):
     if n_lanes > 1:
         prims.append(Dim(bd + lane_len * 0.5, bd + pair_w,
                          bd + lane_len * 0.5, bd + lane_pitch,
-                         f"2*r_turn {2 * tr * 1e6:.0f} um"))
+                         f"wall {fp.wall_width * 1e6:.0f} um"))
     prims.append(Label(bd + lane_len / 2, chip_H - bd * 0.4,
                        f"{n_lanes} lane{'s' if n_lanes != 1 else ''} - "
                        f"{n_total:,} DFUs - pitch {pitch * 1e6:.0f} um"))
@@ -930,9 +945,12 @@ def _serpentine_device(config, capacity=None):
     notes = [
         f"{n_lanes} lane pair(s) of {lane_len * 1e3:.1f} mm; stack height "
         f"{total_h * 1e3:.1f} mm against {(chip_H - 2 * bd) * 1e3:.1f} mm usable.",
-        f"Turn radius {tr * 1e6:.0f} um against a {pair_w * 1e6:.0f} um lane pair "
-        f"(ratio {tr / pair_w:.2f}) - below ~0.5 the fold is tighter than the "
-        f"channel bundle it carries.",
+        f"Lane pitch {lane_pitch * 1e3:.2f} mm = 2 x main {Mcw * 1e6:.0f} um + "
+        f"DFU array {mcl * 1e3:.2f} mm + wall {fp.wall_width * 1e6:.0f} um "
+        f"(measured stack-up, reference_devices/README.md).",
+        f"Configured turn radius {tr * 1e6:.0f} um against the "
+        f"{lane_pitch * 0.5 * 1e6:.0f} um the fold actually needs at this pitch "
+        f"- reported, not gated.",
     ]
     if not fits:
         notes.append(f"Overflows the die by {(total_h - (chip_H - 2 * bd)) * 1e3:.1f} mm.")

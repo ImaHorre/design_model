@@ -348,17 +348,31 @@ def test_bigger_die_buys_more_dfus():
 
 def test_turn_radius_does_not_change_the_lane_count():
     """
-    Shrinking the turn radius compacts the stack; it does NOT buy more lanes,
-    because num_lanes depends on Mcl and lane_length only. The readout has to
-    reflect that rather than the intuition that tighter turns fit more loops.
+    The turn radius plays no part in the stack-up at all (W1-1). It used to set
+    the inter-lane gap as 2×turn_radius, which reproduced the measured 1.0 mm
+    wall only because both defaulted to 500 µm — a coincidence. The gap is the
+    wall; turn_radius is reported.
     """
     fam, tight = compiled("serpentine", footprint={"turn_radius_um": 50.0})
     _, wide = compiled("serpentine", footprint={"turn_radius_um": 2000.0})
     c_tight, c_wide = fam.packing_capacity(tight), fam.packing_capacity(wide)
 
     assert c_tight.detail["lanes_current"] == c_wide.detail["lanes_current"]
-    # but a tighter turn does stack more lanes into the same die height
-    assert c_tight.detail["lanes_max"] > c_wide.detail["lanes_max"]
+    assert c_tight.detail["lanes_max"] == c_wide.detail["lanes_max"]
+    assert c_tight.detail["lane_pitch_mm"] == pytest.approx(
+        c_wide.detail["lane_pitch_mm"], rel=1e-12)
+
+
+def test_the_wall_sets_the_lane_count():
+    """
+    The counterpart: what turn_radius no longer does, the wall does. A thinner
+    wall stacks more lane pairs into the same die height.
+    """
+    fam, thin = compiled("serpentine", footprint={"wall_width_um": 200.0})
+    _, thick = compiled("serpentine", footprint={"wall_width_um": 2000.0})
+    c_thin, c_thick = fam.packing_capacity(thin), fam.packing_capacity(thick)
+
+    assert c_thin.detail["lanes_max"] > c_thick.detail["lanes_max"]
 
 
 def test_manifold_capacity_is_in_the_right_order_of_magnitude():

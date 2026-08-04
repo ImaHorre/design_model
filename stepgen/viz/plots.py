@@ -521,7 +521,7 @@ def plot_layout_schematic(
     layout : LayoutResult (optional — computed from config if not supplied)
     """
     import math
-    from stepgen.design.layout import compute_layout
+    from stepgen.design.layout import compute_layout, lane_stackup
     from matplotlib.patches import Rectangle, Patch
 
     if layout is None:
@@ -542,10 +542,16 @@ def plot_layout_schematic(
     chip_H   = math.sqrt(area_mm2 / AR)
     L_useful = max(chip_W - 2.0 * bd, 1.0)
 
-    # Serpentine geometry using mcl as the physical rung gap (+ intra-lane wall)
-    ls      = fp.lane_spacing * 1e3     # intra-lane wall allowance [mm]
-    pair_w  = 2.0 * Mcw + mcl + ls      # cross-sectional height per lane
-    pitch   = pair_w + 2.0 * tr         # centre-to-centre lane spacing
+    # Serpentine geometry — the same stack-up compute_layout uses, in mm.  This
+    # was a fourth copy of the formula; it now delegates, so the picture cannot
+    # drift from the number again.
+    pair_w_m, pitch_m = lane_stackup(
+        main_width_m=geom.main.Mcw,
+        dfu_array_m=geom.rung.mcl,
+        wall_width_m=fp.wall_width,
+    )
+    pair_w  = pair_w_m * 1e3            # cross-sectional height per lane [mm]
+    pitch   = pitch_m  * 1e3            # centre-to-centre lane spacing [mm]
     n_lanes = math.ceil(geom.main.Mcl * 1e3 / L_useful)
     tot_h   = (n_lanes - 1) * pitch + pair_w
     fits    = tot_h <= (chip_H - 2.0 * bd)

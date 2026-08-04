@@ -25,18 +25,14 @@ Usable routing extent (after subtracting border on both sides):
     L_useful = W − 2 × reserve_border
     H_useful = H − 2 × reserve_border
 
-Lane geometry:
+Lane geometry (see :func:`lane_stackup` — the single implementation):
 
     lane_length     = L_useful
-    lane_pair_width = 2 × Mcw + mcl + lane_spacing
-                        oil main (Mcw) | rung array (mcl) | water main (Mcw),
-                        plus lane_spacing as the intra-lane wall allowance.
+    lane_pair_width = 2 × Mcw + mcl
+                        oil main (Mcw) | rung array (mcl) | water main (Mcw).
                         The rung length ``mcl`` IS the physical gap between the
-                        oil and water mains (this is what the layout schematic
-                        draws) — the earlier ``2×Mcw + lane_spacing`` omitted it
-                        and overestimated how many lanes fit by using a 0.5 mm
-                        gap where the rungs need mcl (typ. 2 mm).
-    lane_pitch      = lane_pair_width + 2 × turn_radius  (centre-to-centre)
+                        oil and water mains — this is what the schematic draws.
+    lane_pitch      = lane_pair_width + wall_width  (centre-to-centre)
 
 Serpentine result:
 
@@ -55,6 +51,38 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from stepgen.config import DeviceConfig
+
+
+def lane_stackup(
+    *,
+    main_width_m: float,
+    dfu_array_m: float,
+    wall_width_m: float,
+) -> tuple[float, float]:
+    """
+    The serpentine cross-lane stack-up: ``(lane_pair_width, lane_pitch)`` [m].
+
+    **The one implementation.**  Measured on both built serpentines
+    (``reference_devices/README.md``, which is ground truth here)::
+
+        lane_pitch = 2 × main_width + DFU_array + wall
+        V5-30:  1.0 + 4.0 + 1.0 + 1.0 = 7.00 mm
+        V5-10:  1.0 + 2.8 + 1.0 + 1.0 = 5.80 mm
+
+    Two terms this drops, both of which the GDS says are not there:
+
+    * ``lane_spacing`` (500 µm) — spurious. Nothing on either device is 500 µm.
+    * ``2 × turn_radius`` as the inter-lane gap. The measured wall is 1.0 mm and
+      ``turn_radius`` also defaulted to 500 µm, so ``2 × 500 µm`` reproduced the
+      wall by **coincidence** — it breaks the moment ``turn_radius`` moves. Per
+      decision 9 the turn radius is reported, not a driver of the stack-up.
+
+    Callers must not re-derive this. Four sites carried their own copy of the
+    formula and three of them disagreed; the readout and the drawing have to
+    agree or the picture stops meaning anything.
+    """
+    lane_pair_width = 2.0 * main_width_m + dfu_array_m
+    return lane_pair_width, lane_pair_width + wall_width_m
 
 
 @dataclass(frozen=True)
@@ -107,12 +135,11 @@ def compute_layout(config: "DeviceConfig") -> LayoutResult:
     H_useful = H - 2.0 * fp.reserve_border
 
     # ── Lane geometry ──────────────────────────────────────────────────────
-    # The rung array (length mcl) is the physical gap between the oil and water
-    # mains — matching the layout schematic (plots.plot_layout_schematic). Using
-    # lane_spacing alone (a fixed ~0.5 mm) instead of mcl (typ. 2 mm) overcounted
-    # lanes. lane_spacing is retained as the intra-lane wall allowance.
-    lane_pair_width = 2.0 * geom.main.Mcw + geom.rung.mcl + fp.lane_spacing
-    lane_pitch      = lane_pair_width + 2.0 * fp.turn_radius
+    lane_pair_width, lane_pitch = lane_stackup(
+        main_width_m=geom.main.Mcw,
+        dfu_array_m=geom.rung.mcl,
+        wall_width_m=fp.wall_width,
+    )
 
     if L_useful <= 0.0:
         # Reserve borders consume all usable width — cannot route.
@@ -131,7 +158,7 @@ def compute_layout(config: "DeviceConfig") -> LayoutResult:
 
     # ── Total perpendicular extent ─────────────────────────────────────────
     # N lanes need N−1 inter-lane gaps (each gap = lane_pitch − lane_pair_width
-    # = 2×turn_radius), plus the pair width of the last lane.
+    # = the wall), plus the pair width of the last lane.
     total_height = (num_lanes - 1) * lane_pitch + lane_pair_width
 
     fits_footprint = (total_height <= H_useful)

@@ -110,9 +110,16 @@ class GeometryConfig:
 class FootprintConfig:
     footprint_area_cm2: float = 10.0
     footprint_aspect_ratio: float = 1.5
-    lane_spacing: float = 500e-6   # [m]
+    # Wall between adjacent serpentine lane pairs.  Measured at 1.0 mm on BOTH
+    # built serpentines (reference_devices/README.md) — it is a design rule, and
+    # it is what sets the lane pitch.  See design.layout.lane_stackup.
+    wall_width: float = 1.0e-3     # [m]
     turn_radius: float = 500e-6    # [m]
     reserve_border: float = 2e-3   # [m]
+    # DEPRECATED — no longer part of any stack-up.  Nothing on either built
+    # device is 500 µm wide; the lane pitch is 2×main + DFU array + wall, with
+    # no separate intra-lane allowance.  Retained only so older configs load.
+    lane_spacing: float = 500e-6   # [m]
 
 
 @dataclass(frozen=True)
@@ -402,9 +409,10 @@ def _parse_footprint(d: dict[str, Any]) -> FootprintConfig:
     return FootprintConfig(
         footprint_area_cm2=float(d.get("footprint_area_cm2", 10.0)),
         footprint_aspect_ratio=float(d.get("footprint_aspect_ratio", 1.5)),
-        lane_spacing=float(d.get("lane_spacing", 500e-6)),
+        wall_width=float(d.get("wall_width", 1.0e-3)),
         turn_radius=float(d.get("turn_radius", 500e-6)),
         reserve_border=float(d.get("reserve_border", 2e-3)),
+        lane_spacing=float(d.get("lane_spacing", 500e-6)),
     )
 
 

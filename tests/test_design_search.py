@@ -159,19 +159,30 @@ class TestMaxMclForFootprint:
 
     def test_returns_positive(self):
         fp = FootprintConfig()
-        mcl = _max_mcl_for_footprint(fp, 500e-6)
+        mcl = _max_mcl_for_footprint(fp, 500e-6, 200e-6)
         assert mcl > 0.0
 
     def test_wider_channel_gives_shorter_mcl(self):
         fp = FootprintConfig()
-        mcl_narrow = _max_mcl_for_footprint(fp, 200e-6)
-        mcl_wide   = _max_mcl_for_footprint(fp, 800e-6)
+        mcl_narrow = _max_mcl_for_footprint(fp, 200e-6, 200e-6)
+        mcl_wide   = _max_mcl_for_footprint(fp, 800e-6, 200e-6)
         assert mcl_narrow > mcl_wide
+
+    def test_longer_rung_gives_shorter_mcl(self):
+        """
+        The rung array is part of the lane pair (W1-1). This site used to omit
+        it entirely, so it over-stated Mcl_max against the model and against the
+        drawing; a longer rung must now cost lanes.
+        """
+        fp = FootprintConfig()
+        mcl_short = _max_mcl_for_footprint(fp, 500e-6, 200e-6)
+        mcl_long  = _max_mcl_for_footprint(fp, 500e-6, 4.0e-3)
+        assert mcl_short > mcl_long
 
     def test_channel_wider_than_footprint_returns_zero(self):
         fp = FootprintConfig(footprint_area_cm2=1.0, reserve_border=2e-3)
         # Mcw = 50 mm >> chip height → zero Mcl
-        mcl = _max_mcl_for_footprint(fp, 50e-3)
+        mcl = _max_mcl_for_footprint(fp, 50e-3, 200e-6)
         assert mcl == 0.0
 
 

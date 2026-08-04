@@ -34,7 +34,7 @@ def _make_config(
     Mcd: float = 100e-6,
     footprint_area_cm2: float = 10.0,
     footprint_aspect_ratio: float = 1.5,
-    lane_spacing: float = 500e-6,
+    wall_width: float = 1.0e-3,
     turn_radius: float = 500e-6,
     reserve_border: float = 2e-3,
 ) -> DeviceConfig:
@@ -55,7 +55,7 @@ def _make_config(
         footprint=FootprintConfig(
             footprint_area_cm2=footprint_area_cm2,
             footprint_aspect_ratio=footprint_aspect_ratio,
-            lane_spacing=lane_spacing,
+            wall_width=wall_width,
             turn_radius=turn_radius,
             reserve_border=reserve_border,
         ),
@@ -121,20 +121,26 @@ class TestLaneGeometry:
         assert compute_layout(cfg).lane_length == pytest.approx(expected, rel=1e-10)
 
     def test_lane_pair_width_formula(self):
-        """lane_pair_width = 2*Mcw + mcl + lane_spacing (mcl = rung gap between mains)."""
-        cfg = _make_config(Mcw=400e-6, lane_spacing=300e-6)   # factory mcl = 200e-6
-        expected = 2.0 * 400e-6 + 200e-6 + 300e-6
+        """lane_pair_width = 2*Mcw + mcl (mcl = the DFU array between the mains)."""
+        cfg = _make_config(Mcw=400e-6)                 # factory mcl = 200e-6
+        expected = 2.0 * 400e-6 + 200e-6
         assert compute_layout(cfg).lane_pair_width == pytest.approx(expected, rel=1e-10)
 
     def test_lane_pitch_formula(self):
-        """lane_pitch = lane_pair_width + 2*turn_radius."""
-        cfg = _make_config(Mcw=400e-6, lane_spacing=300e-6, turn_radius=600e-6)
-        lane_pair_width = 2.0 * 400e-6 + 200e-6 + 300e-6   # + factory mcl
-        expected = lane_pair_width + 2.0 * 600e-6
+        """lane_pitch = lane_pair_width + wall_width."""
+        cfg = _make_config(Mcw=400e-6, wall_width=900e-6)
+        lane_pair_width = 2.0 * 400e-6 + 200e-6        # + factory mcl
+        expected = lane_pair_width + 900e-6
         assert compute_layout(cfg).lane_pitch == pytest.approx(expected, rel=1e-10)
 
+    def test_lane_pitch_ignores_turn_radius(self):
+        """turn_radius is reported, not a driver of the stack-up (W1-1)."""
+        r_small = compute_layout(_make_config(turn_radius=50e-6))
+        r_large = compute_layout(_make_config(turn_radius=5e-3))
+        assert r_small.lane_pitch == pytest.approx(r_large.lane_pitch, rel=1e-12)
+
     def test_lane_pitch_gt_lane_pair_width(self):
-        """Pitch must be larger than pair width (room for U-turns)."""
+        """Pitch must be larger than pair width (room for the wall)."""
         cfg = _make_config()
         r = compute_layout(cfg)
         assert r.lane_pitch > r.lane_pair_width
@@ -224,13 +230,13 @@ class TestFitsFootprint:
     def test_fits_false_for_large_device(self):
         """Very long Mcl forces many lanes that exceed chip height."""
         # Need total_height > H_useful.
-        # H_useful ≈ 21.8 mm for default chip; lane_pitch ≈ 2.5 mm.
-        # 10 lanes: total_height = 9*2.5 + 1.5 = 24 mm > 21.8 mm → no fit.
+        # H_useful ≈ 21.8 mm for default chip; lane_pitch = 1.2 + 1.0 = 2.2 mm.
+        # 20 lanes: total_height = 19*2.2 + 1.2 = 43.0 mm > 21.8 mm → no fit.
         cfg_base = _make_config()
         L = _L_useful(cfg_base)
-        cfg = _make_config(Mcl=10.0 * L)   # → 10 lanes
+        cfg = _make_config(Mcl=20.0 * L)   # → 20 lanes
         r = compute_layout(cfg)
-        assert r.num_lanes == 10
+        assert r.num_lanes == 20
         assert r.fits_footprint is False
 
     def test_fits_consistent_with_total_height(self):

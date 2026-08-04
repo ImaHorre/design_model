@@ -93,15 +93,23 @@ def _derive_junction_geometry(
 def _max_mcl_for_footprint(
     fp,          # FootprintConfig
     Mcw_m: float,
+    mcl_rung_m: float,
 ) -> float:
     """
     Compute the maximum main-channel routed length that fits in the footprint.
 
-    The formula mirrors compute_layout, but solves for Mcl_max instead of
-    checking whether a given Mcl fits.
+    Inverts :func:`stepgen.design.layout.compute_layout`: instead of asking
+    whether a given Mcl fits, it asks how many lanes the die height holds.
+
+    The stack-up comes from :func:`~stepgen.design.layout.lane_stackup`, which
+    is the only place it is written down.  This site used to keep its own copy
+    that omitted the rung array entirely (``2×Mcw + lane_spacing``), so it
+    disagreed with both the model and the drawing and over-stated Mcl_max.
 
     Returns Mcl_max [m]; 0.0 if even one lane doesn't fit.
     """
+    from stepgen.design.layout import lane_stackup
+
     area_m2 = fp.footprint_area_cm2 * 1e-4
     AR      = fp.footprint_aspect_ratio
     W       = math.sqrt(area_m2 * AR)
@@ -113,8 +121,11 @@ def _max_mcl_for_footprint(
     if L_useful <= 0.0:
         return 0.0
 
-    lane_pair_width = 2.0 * Mcw_m + fp.lane_spacing
-    lane_pitch      = lane_pair_width + 2.0 * fp.turn_radius
+    lane_pair_width, lane_pitch = lane_stackup(
+        main_width_m=Mcw_m,
+        dfu_array_m=mcl_rung_m,
+        wall_width_m=fp.wall_width,
+    )
 
     if lane_pair_width > H_useful:
         return 0.0   # even a single lane doesn't fit vertically
@@ -272,7 +283,7 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
         )
 
         # ── Compute Mcl_max from footprint ──────────────────────────────────
-        Mcl_max_m = _max_mcl_for_footprint(fp, Mcw_m)
+        Mcl_max_m = _max_mcl_for_footprint(fp, Mcw_m, mcl_rung_m)
         Nmc_derived = int(math.floor(Mcl_max_m / max(pitch_m, 1e-12)))
 
         if Nmc_derived < 2:
