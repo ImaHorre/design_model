@@ -1,16 +1,18 @@
 # Design Studio — the filter-first front door
 
-**Anchor**: `5674636` on `master`, pushed (was `6db6405` when this plan was written)
-**Baseline now**: `pytest -q` → **534 passed, 5 failed, 5 skipped**. The 5 are pre-existing
-(3 `test_cli` png, 2 `test_design_search`), unchanged since `306a4bc`. **Do not chase
-them.** 534 = the plan's original 531 + 3 tests added by Batch 1.
+**Anchor**: `6ad1f33` on `master` (was `5674636` before Wave 1)
+**Baseline now**: `pytest -q` → **560 passed, 3 failed, 5 skipped**. The 3 are the
+pre-existing `test_cli` png failures. **Do not chase them.** The count of known failures
+dropped 5 → 3 during Wave 1: the two `test_design_search` failures were **not** unrelated
+noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-1.
 **Supersedes**: Phase 6 ("Form-driven UI") in `docs/06_design_studio/roadmap_studio_v1.md`
 **Derived from**: `/grill-me` sessions with Conor, 2026-08-03 and 2026-08-04
 
-> Rewritten 2026-08-04 and re-anchored `306a4bc` → `a0e82a1` → `6db6405` → `5674636`.
+> Rewritten 2026-08-04 and re-anchored `306a4bc` → `a0e82a1` → `6db6405` → `5674636`
+> → `6ad1f33`.
 > Earlier vintages are in git history. Everything below is one vintage; items marked ✅
-> were executed and verified on 2026-08-04, and carry what implementation found that the
-> plan did not.
+> were executed and verified (Batch 1 on 2026-08-04, Wave 1 on 2026-08-05) and carry what
+> implementation found that the plan did not.
 
 ---
 
@@ -19,27 +21,34 @@ them.** 534 = the plan's original 531 + 3 tests added by Batch 1.
 | | State |
 |---|---|
 | **Batch 1** | ✅ **complete.** B0 `e53ddc6` · B1 `e21798e` · A4a+A4b `39e7342` · plan `5674636` |
-| **Wave 1** | W1-4 ✅ `77ac36a`. **W1-1, W1-2, W1-3, W1-5, W1-6 are the next work.** |
-| **Wave 2** | not started. The risk item — it changes what every number means |
+| **Wave 1** | ✅ **complete.** W1-4 `77ac36a` · W1-1 `d347643` · W1-2 `747a3ce` · W1-3 `9556202` · W1-6 `fd99045` · W1-5 `6ad1f33` |
+| **Wave 2** | **not started — this is the next work.** The risk item: it changes what every number means |
 | **C (server)** | not started, and must not start until W2-8 passes |
 | **D (explorer)** | D1 ✅, D4 ✅, D2 partly, all in the chapter (`912c74c`, `6db6405`). D5 unblocked |
 | **E** | not started |
 
-**Start here**: Wave 1, in order W1-1 → W1-2 → W1-3 → W1-6, with W1-5 (comment hygiene)
-whenever convenient. It is measurement-determined — every constant it needs is already
-measured and committed in `reference_devices/README.md`. **Read that README; do not
-re-derive its numbers from the model or from this plan's summary table.**
+**Start here**: Wave 2, beginning with W2-1 (one rung-resistance implementation) and
+W2-2 (the duplicate-formula audit). **Do not start C until W2-8 passes.**
 
-**Two things Batch 1 learned that generalise**, and that Wave 1 should expect to hit again:
+**Three things Batch 1 and Wave 1 learned that generalise:**
 
-1. **The site count in this plan is a lower bound.** A4a was documented as two places and
-   was three — `radial` and `manifold` never filled `CommonMetrics.gamma_Nm`, so per-row γ
-   was unreachable until that was fixed. W2-2 exists for exactly this; apply it early.
-   W1-1 already names three copies of the lane-pitch formula. Grep before editing.
-2. **Batch 1 was inert as claimed** — no physics moved, and the only test-count change was
-   the three tests it added. Wave 1 should be similarly inert *for a pinned N*: it moves
-   `area_used_cm2`, `fits_square` and `packing_capacity`, never throughput or ΔP. If a
-   throughput number moves during Wave 1, stop — something is wrong.
+1. **The site count in this plan is a lower bound — every time it has been checked.** A4a
+   was documented as two places and was three. W1-1 was documented as three copies of the
+   lane-pitch formula and was **four**: the fourth is
+   `viz/plots.py::plot_layout_schematic`, which no vintage of this plan had ever named.
+   Treat W2-1's four rung-resistance sites the same way — **grep before editing, and
+   assume the count is still wrong.**
+2. **Duplicated formulas are not a tidiness problem, they are where the bugs already
+   are.** `design_search`'s copy of the lane pitch omitted the rung array, so the search
+   sized `Mcl_max` with a lane pair that `compute_layout` then checked with a wider one:
+   every candidate it produced was declared not-to-fit by its own footprint check. That is
+   what the two "pre-existing, do not chase" `test_design_search` failures were. Nobody had
+   looked, because they were on the known-failures list. **The three remaining known
+   failures deserve the same suspicion.**
+3. **Wave 1 was inert for a pinned N, as required.** N = 1000, 60×20 exit, 500 mbar:
+   throughput, ΔP_rung, uniformity, `regime_Ca` and droplet size are bit-identical across
+   the whole wave; only `area_used_cm2`, `fits_square` and `packing_capacity` moved.
+   Wave 2 will **not** be inert, by design — that is what makes it the risk item.
 
 ---
 
@@ -348,7 +357,7 @@ Fully determined by the GDS measurements; no design decisions remain. `compute_l
 never feeds the hydraulic solve, so for a **pinned N** these change `area_used_cm2`,
 `fits_square` and `packing_capacity` but leave throughput and ΔP untouched.
 
-### W1-1 — correct the serpentine stack-up
+### W1-1 — correct the serpentine stack-up ✅ `d347643`
 
 ```python
 lane_pair_width = 2 * main_width + dfu_array_length     # drop lane_spacing
@@ -358,19 +367,34 @@ lane_pitch      = lane_pair_width + wall_width          # wall is an INPUT, not 
 `wall_width` becomes a `FootprintConfig` field, default **1.0 mm** (measured on both
 serpentines). `turn_radius` stops setting the inter-lane gap; per decision 9 it is reported.
 
-**Correction: the formula is written three times, not twice.**
+**Correction: the formula was written FOUR times, not three.**
 
-| Site | What it is |
-|---|---|
-| `design/layout.py:114-115` | the model |
-| `design/design_search.py:117` | the search (note: omits `mcl`, so it already differs) |
-| `families/serpentine.py:879` | **the schematic drawing** |
+| Site | What it is | |
+|---|---|---|
+| `design/layout.py` | the model | |
+| `design/design_search.py` | the search | **omitted `mcl` outright** |
+| `families/serpentine.py` | the Phase 3 schematic | |
+| `viz/plots.py::plot_layout_schematic` | the matplotlib layout schematic | **named in no vintage of this plan** |
 
-The third is the one that bites: `serpentine.py`'s `packing_capacity` docstring explicitly
-claims *"The drawing and this readout agree on that, which is the point."* Fix two of the
-three and the picture silently stops matching the number.
+All four now delegate to `design.layout.lane_stackup`.
 
-### W1-2 — per-family `active_fraction`, measured
+**What the omission cost.** `design_search` sized `Mcl_max` from
+`2×Mcw + lane_spacing`, with no rung array, while `compute_layout` checked the result with
+`2×Mcw + mcl + lane_spacing`. So the search handed out designs that its own footprint
+check then rejected — `fits_footprint=False` on every candidate. That is exactly
+`tests/test_design_search.py::TestJunctionAspectRatio::test_valid_ar_passes_hard` and
+`TestPressureHardConstraints::test_default_Po_limits_allow_normal_design`, the two failures
+this plan told the reader not to chase. **Both pass now.**
+
+**Also landed, because the drawing had to stay honest.** The fold arc is drawn centre to
+centre between the lanes it connects: a 180° turn between lanes at a given pitch *has* a
+centreline radius of half that pitch. Drawing it at `turn_radius` while the gap is the wall
+would let the arc overlap the next lane. W2-5 turns that into a metric.
+
+**Verify.** ✅ V5-30 → 7.00 mm pitch, V5-10 → 5.80 mm, on the nose. `turn_radius` moved
+60× with no change to the pitch. Guarded by `tests/test_reference_devices.py`.
+
+### W1-2 — per-family `active_fraction`, measured ✅ `747a3ce`
 
 Each number is measured from a built device; the difference between families reflects real
 IO topology, not a fitted constant.
@@ -384,11 +408,34 @@ manifold    0.51   [UNCALIBRATED — no built device; note on every row]
 `reserve_border` stops carrying overhead it was never sized for.
 
 **Caveat to record on the field**: 0.51 and 0.64 were measured on a **100 × 100 mm** die.
-`serpentine.py:230` and `radial.py:186` both default `square_side_mm` to **63.5**. An area
+`serpentine.py` and `radial.py` both default `square_side_mm` to **63.5**. An area
 *fraction* does not scale to a different die — the IO strip and margins are absolute. Flag
 it on any row whose die is not 100 mm; the real fix is the deferred per-family IO model.
+✅ Done: `families.base.active_fraction_note()`.
 
-### W1-3 — acceptance tests from the real devices
+**Five things implementation found that the plan did not:**
+
+1. **Name collision.** `active_fraction` was already taken — it is the *physics* metric for
+   the fraction of rungs ACTIVE (`models/metrics.py`). The layout quantity is
+   **`active_area_fraction`**. Do not merge the two.
+2. **`active_extent()` is a second shared implementation**, beside `lane_stackup`. The same
+   four sites each computed the usable extent themselves, so the same consolidation applied.
+3. **`area_used_cm2` had to change meaning to be worth anything.** It is now *die* area
+   consumed — the active box grossed up by the fraction — uniformly across the three
+   families. Compared as raw active area, the measured 51%-vs-64% split would buy nothing
+   on area and would only ever move fits/capacity; grossed up, the family with worse IO
+   overhead correctly costs more die. **This is a semantic change to a scored column**, and
+   it is the one thing in Wave 1 that a pre-Wave-1 chapter cannot be silently pooled with
+   — another argument for W2-6 landing before anyone pools anything.
+4. **Radial `fits_square` was `2R ≤ side`** — a wheel touching the die edge on all four
+   sides, with nowhere to put an inlet. Now `R ≤ side·√(f/π)` = 45.1 mm on a 100 mm die,
+   which is the V6-30 disc to 0.3%.
+5. **`reserve_border` is now dead everywhere**, not only in the study configs. Retained as a
+   field so older device YAMLs still load, and marked DEPRECATED in `config.py`. Rows with
+   no overhead model (`active_area_fraction = 1.0`, which is what a hand-written device
+   YAML means by giving an area directly) correctly get no caveat note.
+
+### W1-3 — acceptance tests from the real devices ✅ `9556202`
 
 ```
 V5-30 -> 10 lane pairs, 7.00 mm pitch, 11,154 DFUs
@@ -403,6 +450,24 @@ of binaries becomes a test dependency.
 `compute_layout` reproduces the geometry in the GDS; the ruling is about what N
 `configs/v5_30.yaml` drives the model at. See W1-5.
 
+**As built** (`tests/test_reference_devices.py`, 20 tests, all passing):
+
+* **Exact**: lane pitch (7.00 / 5.80 mm), lane-pair count (10 / 12), radial N at R = 36 mm
+  (2,999 — the model truncates rather than rounds, since a fractional spoke does not
+  exist), radial R_max ≈ 45 mm, and the implied serpentine margin (14.3 mm, against the
+  13–15 mm measured).
+* **The sharpest check is one the plan did not list.** The measured *active footprint
+  heights*, 69.0 and 68.6 mm, are inputs nowhere — they fall out of
+  `(pairs−1)×pitch + pair_width`. Both land to the micron, so the stack-up and the lane
+  count are right simultaneously.
+* **DFU capacity is asserted as a bracket, not an equality**, and the test says why: the
+  model packs DFUs along the whole lane while the real device does not use the fold ends
+  (V5-30 runs 1,000 straight per lane in a 71 mm lane at 60 µm pitch, plus 1,154 round the
+  curves). Capacity lands **+6.7%** (V5-30) and **+9.3%** (V5-10). *Over* is the correct
+  sign — capacity *below* the built count would be a real failure, since the die
+  demonstrably holds that many. Closing the gap needs the deferred fold model, not a fudge
+  factor.
+
 ### W1-4 — commit the reference devices ✅ `77ac36a`
 
 `reference_devices/` at top level: the three GDS files (`v5_30umV1.1.gds`,
@@ -410,7 +475,7 @@ of binaries becomes a test dependency.
 table above and the script that produced it. **Read the README — it is ground truth for
 layout and packing; do not re-derive its numbers from the model.**
 
-### W1-5 — fix `configs/v5_30.yaml` — **unblocked** (ruled 2026-08-04)
+### W1-5 — fix `configs/v5_30.yaml` ✅ `6ad1f33` (ruled 2026-08-04)
 
 **Conor's ruling: use 11,565; the 3.7% gap to the GDS does not matter.** So `Mcl` stays at
 **693 mm** (which implies 11,550, within 0.13% of 11,565) and the DFU count is *not*
@@ -420,6 +485,22 @@ re-cut to the GDS's 11,154. This also keeps `comp_deep_dfu_main_mods`, calibrate
 What W1-5 still is, therefore, is **comment hygiene only**: the block
 ("Mcl=2040 mm, pitch=3 µm, Nmc=680 000", "0.3 µm depth", "1 µm width") is stale template
 text describing nothing in the file. Delete it and state the real numbers.
+
+**Two things found while doing it:**
+
+1. **The footprint block was wrong, not merely badly commented.** It declared a 1.5:1
+   rectangle for a device that is a 100 × 100 mm square die, and carried two keys W1-1 and
+   W1-2 had just made dead. Corrected — footprint never feeds the hydraulic solve, so this
+   moves `fits_footprint`, `footprint_area_used` and the schematic and nothing else. The
+   config now reproduces the built device: 10 lane pairs, 7.00 mm pitch, 69.0 mm stack
+   height, fits, 96.6 cm² of the 100 cm² die.
+2. **The model reports 11,549, not 11,550** — `0.693 / 60e-6` lands a hair under in binary
+   floating point and the floor takes the hit. One DFU in 11,550 (0.009%). Written into the
+   config so nobody re-derives it and files a bug.
+
+`reference_devices/README.md`'s "Open discrepancy" section still claimed the 11,154/11,565
+gap "blocks correcting `configs/v5_30.yaml`". It has not since the ruling; rewritten there
+to record the ruling and which number belongs where.
 
 **Do not propagate 11,565 into W1-3.** The two numbers answer different questions:
 
@@ -432,13 +513,17 @@ W1-3 tests that `compute_layout` reproduces *the geometry it is given*. Assertin
 there would be asserting the model against a number the GDS does not contain, which is the
 one thing the acceptance tests exist to prevent.
 
-### W1-6 — migrate the study configs off `reserve_border` *(new)*
+### W1-6 — migrate the study configs off `reserve_border` ✅ `fd99045`
 
 Every checked-in study config pairs `square_side_mm: 100.0` with `reserve_border_mm: 2.0`
 — the 96×96-of-100×100 assumption that W1-2 identifies as the entire source of the old
 1.66× over-prediction. W1-2 changes the model; without this item the configs keep feeding
-it the old overhead. Touches `study_all_families`, `study_dp15_1000mbar_60x20`,
-`study_my_designs`, `study_serpentine_vs_radial`, `study_template`.
+it the old overhead.
+
+**Three files, not five**: `study_serpentine_vs_radial` and `study_template` never set the
+key. Each of the three keeps a comment saying what replaced it, so it does not come back.
+`study_dp15`'s manifold `feed_length_mm` went 96 → 100 — it was explicitly "side minus
+border", and there is no border any more.
 
 ---
 
@@ -674,11 +759,17 @@ B0 ✅ -> B1 ✅ -> A4a/A4b ✅  ->  Wave 1  ->  Wave 2 (+ re-validation, C_visc
                            └─ D5 unblocked: it needed A4a only, which has landed
 ```
 
-Batch 1 is done and was inert as expected — no physics moved, 534 passed against the same
-5 known failures. **Next up is Wave 1**, which is measurement-determined with tests already
-written (W1-4's `reference_devices/README.md` is the ground truth; read it, do not
-re-derive). **Wave 2 is the risk** — it changes what every number means, and C does not
-start until W2-8 passes.
+Batch 1 and Wave 1 are both done, and both were inert as expected: no throughput or ΔP
+number moved at a pinned N. 560 pass against 3 known failures (down from 5 — see W1-1).
+**Next up is Wave 2**, the risk item: it changes what every number means, and C does not
+start until W2-8 passes. Start with W2-2 (the duplicate-formula audit) *before* W2-1 rather
+than after — Wave 1 found a fourth copy of a formula documented as having three, and W2-1
+edits the site with the most copies of all.
+
+**Note for W2-8's exit criteria**: the `pytest -q` line there still reads "531 passed, same
+5 known failures". The current baseline is **560 passed, 3 failed** (the `test_cli` png
+ones). The two `test_design_search` failures are gone for a reason and must not come
+back.
 
 **The one item worth pulling forward now**: D5's ceiling control with `passes_at_gamma_lo`
 beside it. Its prerequisite (γ on the page) landed in `39e7342`; it depends on nothing in
@@ -721,6 +812,9 @@ Wave 1 or 2.
 4. **The Ca ceiling itself.** `SE_CEILING_CA = 0.03` (`base.py:87`) is borrowed from
    literature; `CA_MEASURED_MAX = 0.0017` (`base.py:107`) is the highest Ca Peak has ever
    measured — 18× below. Every Ca verdict inherits that.
-5. *(new)* **Does `active_fraction` survive a die-size change?** 0.51/0.64 are measured at
-   100 mm; the family defaults are 63.5 mm. Until the deferred IO model exists, W1-2 is
-   only valid at 100 mm and must say so on the row.
+5. *(new)* **Does `active_area_fraction` survive a die-size change?** 0.51/0.64 are
+   measured at 100 mm; the family defaults are 63.5 mm. Until the deferred IO model exists,
+   W1-2 is only valid at 100 mm. **Still open, but no longer silent**: since `747a3ce` any
+   row on another die carries `active_fraction_note()` saying the fraction does not scale.
+   Note this bites the *defaults* — a study that does not set `square_side_mm: 100.0` is
+   off-calibration by default, so most rows will carry the note until the IO model lands.
