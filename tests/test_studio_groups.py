@@ -368,6 +368,12 @@ def test_workbook_renders_per_design_panels_and_filters(tmp_path):
     assert "gotoRow(" in doc               # a pick jumps to its row in the table
     assert "Design vs design" in doc
     assert "How to push this design further" in doc
+    # four tab panes, explore first — the plot and filters are what you land on
+    for tab in ("explore", "designs", "runs", "notes"):
+        assert f'data-tab="{tab}"' in doc
+    assert doc.index('data-tab="explore"') < doc.index('data-tab="designs"')
+    assert 'id="pintable"' in doc          # pinned runs get their full spec
+    assert "pinned only" in doc and "mark best" in doc
     # the mashed label is gone from the table, but still auditable in the drill-down
     assert 'data-gid="D1"' in doc
     assert "Config</h4>" in doc

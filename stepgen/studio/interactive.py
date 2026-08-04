@@ -249,7 +249,16 @@ INTERACTIVE_CSS = """
 .line input[type=number]{width:74px;}
 .line input[type=checkbox]{width:auto;}
 .count{font-size:12px;font-weight:600;margin-left:auto;align-self:center;}
-.chipbar{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.4rem;font-size:11px;}
+.tabbar{display:flex;gap:.3rem;margin-top:.5rem;border-bottom:1px solid #d0d7de;}
+.tabbtn{font-size:12.5px;padding:.35rem .9rem;border:1px solid transparent;
+  border-bottom:none;border-radius:7px 7px 0 0;background:transparent;color:inherit;
+  cursor:pointer;margin-bottom:-1px;}
+.tabbtn:hover{background:rgba(127,127,127,.1);}
+.tabbtn.on{border-color:#d0d7de;background:rgba(9,105,218,.1);font-weight:600;
+  border-bottom:1px solid transparent;}
+.chipbar{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.4rem;font-size:11px;
+  align-items:center;}
+table.pintbl td.why{max-width:280px;white-space:normal;font-size:11.5px;}
 .pinchip{border:1px solid #0969da;border-radius:10px;padding:0 7px;cursor:pointer;
   background:rgba(9,105,218,.12);}
 .pinchip::after{content:" ✕";opacity:.55;}
@@ -274,8 +283,8 @@ tr.pinned td{outline:2px solid #0969da;outline-offset:-2px;}
 tr.hit td{background:rgba(9,105,218,.18)!important;}
 @media (prefers-color-scheme:dark){
   .rail{background:#0d1117;border-color:#30363d;}
-  .rail select,.rail input,.plotwrap{border-color:#30363d;}
-  .rail label,.plotnote,.dparams li span{color:#8b949e;}
+  .line select,.line input,.plotwrap,.tabbar,.tabbtn.on{border-color:#30363d;}
+  .line label,.plotnote,.dparams li span{color:#8b949e;}
 }
 """
 
@@ -309,7 +318,23 @@ function esc(s){return String(s).replace(/[&<>"]/g,function(c){
 
 // ── state ──────────────────────────────────────────────────────────────────
 const S = {f:{}, lim:[{k:'',min:null,max:null},{k:'',min:null,max:null}],
-           pin:[], plot:0, x:null, y:null, logx:false, logy:false, colour:'verdict'};
+           pin:[], plot:0, x:null, y:null, logx:false, logy:false, colour:'verdict',
+           pinOnly:false, showBest:true, tab:'explore'};
+
+// ── tabs ───────────────────────────────────────────────────────────────────
+// One page, four views. A 4 MB chapter where the plot sits below three screens
+// of decision panels is a chapter nobody plays with: the filters and the plot
+// have to be the thing you land on.
+function showTab(name){
+  S.tab=name;
+  document.querySelectorAll('.tabpane').forEach(function(p){
+    p.style.display = (p.getAttribute('data-tab')===name) ? '' : 'none';
+  });
+  document.querySelectorAll('.tabbtn').forEach(function(b){
+    b.classList.toggle('on', b.getAttribute('data-tab')===name);
+  });
+  if(name==='explore') paintPlot(shown());
+}
 
 function metricOf(key){return CHAPTER.metrics.find(function(m){return m.key===key;});}
 function axisOf(path){return CHAPTER.axes.find(function(a){return a.path===path;});}
@@ -363,6 +388,10 @@ function buildRail(){
   h.push('<button class="btn" onclick="resetAll()">Reset filters</button>');
   h.push('<button class="btn" onclick="clearPins()">Clear pins</button>');
   h.push('</div><div class="chipbar" id="pinbar"></div>');
+  h.push('<div class="tabbar">'
+    + [['explore','Explore'],['designs','Designs'],['runs','All runs'],['notes','Notes']]
+      .map(function(t){return '<button class="tabbtn" data-tab="'+t[0]+'" onclick="showTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')
+    + '</div>');
   document.getElementById('rail').innerHTML = h.join('');
 
   document.querySelectorAll('#rail select[data-f]').forEach(function(sel){
@@ -416,6 +445,7 @@ function togglePin(i){
 function clearPins(){ S.pin=[]; paint(); }
 function gotoRow(i){
   if(S.pin.indexOf(i)<0) S.pin.push(i);
+  showTab('runs');
   paint();
   var tr=document.getElementById('r'+i);
   if(tr){
@@ -425,10 +455,59 @@ function gotoRow(i){
   }
 }
 function paintPins(){
-  document.getElementById('pinbar').innerHTML = S.pin.map(function(i){
+  document.getElementById('pinbar').innerHTML = S.pin.length
+    ? ('<span class="muted">pinned:</span> ' + S.pin.map(function(i){
+        var r=CHAPTER.rows[i];
+        return '<span class="pinchip" onclick="togglePin('+i+')">'+esc(r.gid+' #'+(i+1))+'</span>';
+      }).join(''))
+    : '';
+}
+
+// ── the pinned devices, spelled out ────────────────────────────────────────
+// Pinning a point on a plot is only half an answer: the other half is what that
+// device actually is. Same shape as the design-vs-design table, one row per pin.
+function paintPinTable(){
+  var host=document.getElementById('pintable');
+  if(!host) return;
+  if(!S.pin.length){
+    host.innerHTML='<p class="muted">No pins yet — click a point on the plot, a '
+      +'winner card, or a cell of the design table to pin a run. Pinned runs are '
+      +'drawn large on every plot and listed here with their full spec.</p>';
+    return;
+  }
+  var cols = CHAPTER.axes;
+  var mets = ['throughput_mlhr','uniformity_pct','regime_Ca','N_dfu'];
+  var h = ['<table class="pareto pintbl"><thead><tr><th>Run</th><th>Verdict</th>'];
+  cols.forEach(function(a){h.push('<th class="tight">'+esc(a.label)+(a.unit?' ('+esc(a.unit)+')':'')+'</th>');});
+  mets.forEach(function(k){h.push('<th class="tight">'+esc(labelOf(k))+'</th>');});
+  h.push('<th>Why</th><th></th></tr></thead><tbody>');
+  S.pin.forEach(function(i){
     var r=CHAPTER.rows[i];
-    return '<span class="pinchip" onclick="togglePin('+i+')">'+esc(r.gid+' #'+(i+1))+'</span>';
-  }).join('');
+    h.push('<tr><td><b>'+esc(r.gid)+' #'+(i+1)+'</b></td>');
+    h.push('<td><span class="dot" style="background:'+CAT[r.verdict]+'"></span>'+r.verdict+'</td>');
+    cols.forEach(function(a){
+      var opt=a.values.find(function(o){return String(o.v)===String(r.v[a.path]);});
+      h.push('<td class="tight num">'+esc(opt?opt.t:r.v[a.path])+'</td>');
+    });
+    mets.forEach(function(k){h.push('<td class="tight num">'+fmtN(r.m[k],fmtOf(k))+'</td>');});
+    h.push('<td class="why">'+esc(r.why)+'</td>');
+    h.push('<td><button class="btn" onclick="event.stopPropagation();gotoRow('+i+')">open</button> '
+      +'<button class="btn" onclick="event.stopPropagation();togglePin('+i+')">unpin</button></td></tr>');
+  });
+  h.push('</tbody></table>');
+  host.innerHTML=h.join('');
+}
+
+// ── the program's own picks, over the visible rows ─────────────────────────
+function bestPicks(rows){
+  var out={};
+  CHAPTER.decideAxes.forEach(function(ax){
+    var r=bestIn(rows,ax);
+    // the axis KEY, not its label: "Margin from failure (confidence-discounted)"
+    // written beside a data point is wider than the plot
+    if(r) (out[r.i]=out[r.i]||[]).push(ax.key.replace('_',' '));
+  });
+  return out;
 }
 
 // ── per-design decision cards, recomputed over the visible rows ────────────
@@ -514,8 +593,15 @@ function niceTicks(lo, hi, log){
 function paintPlot(rows){
   var W=880,H=430,L=74,R=18,T=14,B=46;
   var xk=S.x, yk=S.y, logx=S.logx, logy=S.logy;
+  // picks are chosen over everything the filters allow, then drawn on whatever
+  // subset is plotted — so "best" does not silently change meaning when the
+  // pinned-only view narrows the picture
+  var picks = S.showBest ? bestPicks(rows) : {};
+  var plotRows = S.pinOnly
+    ? rows.filter(function(r){return S.pin.indexOf(r.i)>=0;})
+    : rows;
   var pts=[];
-  rows.forEach(function(r){
+  plotRows.forEach(function(r){
     var x=valueOf(r,xk), y=valueOf(r,yk);
     if(x===null||y===null||x===undefined||y===undefined) return;
     if(logx&&x<=0) return; if(logy&&y<=0) return;
@@ -603,8 +689,20 @@ function paintPlot(rows){
       +labelOf(xk)+' '+fmtN(p.x,fmtOf(xk))+'\n'+labelOf(yk)+' '+fmtN(p.y,fmtOf(yk))
       +'\n'+p.r.why)+'</title></circle>');
   });
+  // the program's picks: a ring and what it won, so "what does the tool think"
+  // and "what have I picked" are both readable at once
+  pts.forEach(function(p){
+    if(!picks[p.r.i]) return;
+    var cx=sx(p.x), cy=sy(p.y);
+    g.push('<circle cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="9"'
+      +' fill="none" stroke="#0969da" stroke-width="1.4" stroke-dasharray="3 2"/>');
+    var txt='★ '+picks[p.r.i].join(' + ');
+    var tx=Math.min(Math.max(cx, L+txt.length*2.6), W-R-txt.length*2.6);
+    g.push('<text x="'+tx.toFixed(1)+'" y="'+(cy-13).toFixed(1)+'"'
+      +' text-anchor="middle" font-size="9.5" fill="#0969da">'+esc(txt)+'</text>');
+  });
   pts.filter(function(p){return S.pin.indexOf(p.r.i)>=0;}).forEach(function(p){
-    g.push('<text x="'+(sx(p.x)+8).toFixed(1)+'" y="'+(sy(p.y)-7).toFixed(1)+'" font-size="10" fill="currentColor">#'+(p.r.i+1)+' '+esc(p.r.gid)+'</text>');
+    g.push('<text x="'+(sx(p.x)+8).toFixed(1)+'" y="'+(sy(p.y)+13).toFixed(1)+'" font-size="10" fill="currentColor">#'+(p.r.i+1)+' '+esc(p.r.gid)+'</text>');
   });
   refPts.forEach(function(p){
     g.push('<rect class="pt" x="'+(sx(p.x)-5).toFixed(1)+'" y="'+(sy(p.y)-5).toFixed(1)+'" width="10" height="10"'
@@ -622,8 +720,10 @@ function paintPlot(rows){
     legend.push('<span style="color:'+CAT[c]+'">●</span> '+c);
   });
   if(refPts.length) legend.push('<span style="color:#8250df">◇</span> reference');
+  if(S.showBest) legend.push('<span style="color:#0969da">◯</span> tool\'s pick');
   document.getElementById('plotlegend').innerHTML =
-    legend.join(' &nbsp; ') + ' &nbsp; · &nbsp; ' + pts.length + ' points · click one to pin it';
+    legend.join(' &nbsp; ') + ' &nbsp; · &nbsp; ' + pts.length + ' points'
+    + (S.pinOnly ? ' (pinned only)' : '') + ' · click one to pin it';
 }
 
 function buildPlotControls(){
@@ -643,7 +743,11 @@ function buildPlotControls(){
     +'<label>log X<input type="checkbox" id="p-lx"></label>'
     +'<label>log Y<input type="checkbox" id="p-ly"></label>'
     +'<label>colour<select id="p-c"><option value="verdict">verdict</option>'
-    +'<option value="design">design</option></select></label>';
+    +'<option value="design">design</option></select></label>'
+    +'<label title="hide everything except the runs you have pinned">'
+    +'pinned only<input type="checkbox" id="p-po"></label>'
+    +'<label title="ring the run that wins each decide axis, over the visible rows">'
+    +'mark best<input type="checkbox" id="p-pb" checked></label>';
   document.getElementById('p-pre').addEventListener('change',function(e){
     if(e.target.value==='') return;
     usePreset(+e.target.value);
@@ -660,6 +764,8 @@ function buildPlotControls(){
   document.getElementById('p-lx').addEventListener('change',function(e){S.logx=e.target.checked;paint();});
   document.getElementById('p-ly').addEventListener('change',function(e){S.logy=e.target.checked;paint();});
   document.getElementById('p-c').addEventListener('change',function(e){S.colour=e.target.value;paint();});
+  document.getElementById('p-po').addEventListener('change',function(e){S.pinOnly=e.target.checked;paint();});
+  document.getElementById('p-pb').addEventListener('change',function(e){S.showBest=e.target.checked;paint();});
 }
 function usePreset(i){
   var p=CHAPTER.presets[i]; if(!p) return;
@@ -687,7 +793,8 @@ function paint(){
   var rows=shown();
   document.getElementById('railcount').textContent =
     rows.length+' of '+CHAPTER.rows.length+' rows';
-  paintPins(); paintDesigns(rows); paintTable(rows); paintLevers(); paintPlot(rows);
+  paintPins(); paintPinTable(); paintDesigns(rows); paintTable(rows);
+  paintLevers(); paintPlot(rows);
 }
 
 function initChapter(){
@@ -696,6 +803,7 @@ function initChapter(){
             : {x:CHAPTER.metrics[0].key, y:CHAPTER.metrics[1].key};
   S.x=first.x; S.y=first.y; S.logx=!!first.logx; S.logy=!!first.logy;
   buildRail(); buildPlotControls();
+  showTab('explore');
   if(CHAPTER.presets.length) usePreset(0); else paint();
 }
 document.addEventListener('DOMContentLoaded', initChapter);

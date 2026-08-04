@@ -487,8 +487,10 @@ STRUCTURAL: tuple[StructuralLever, ...] = (
         src="@chakraborty2017 · @montessori2020",
         mechanism="Exit Ca is proportional to exit velocity and therefore to drive "
                   "pressure. Backing off pressure is the only lever that lowers Ca "
-                  "without changing the device, and in the SE regime it costs no droplet "
-                  "size at all — size is Ca-independent, frequency carries the flow.",
+                  "without changing the device — every device here has an in-regime "
+                  "operating point, it is just a slower one — and in the SE regime it "
+                  "costs no droplet size at all: size is Ca-independent, frequency "
+                  "carries the flow.",
         costs=("Throughput falls in proportion — regime margin is bought with output.",
                "Below the production threshold the far rungs stop producing entirely, "
                "which is a cliff, not a gradient."),
@@ -498,16 +500,21 @@ STRUCTURAL: tuple[StructuralLever, ...] = (
     ),
     StructuralLever(
         objective="margin", knob="DFU count", path="main.length_mm", move="increase",
-        scaling="Ca ∝ Q/N — many slow DFUs",
-        cost_tags=("droop ∝ N", "area ↑"),
+        scaling="throughput ∝ N at ~constant Ca",
+        cost_tags=("droop ∝ N", "area ↑", "free only until the main droops"),
         src="model-v3 · deep-dfu-se-regime",
-        mechanism="Spreading the same total flow over more DFUs lowers per-DFU velocity, "
-                  "which is what exit Ca actually measures. The in-regime shape of this "
-                  "device is many DFUs run slowly, not few run fast.",
-        costs=("A longer ladder droops: flatness is the price of regime margin, and it "
-               "is the trade this whole family is stuck in.",
-               "Area and priming volume grow with the run."),
-        evidence="[model-v3, 2026-07] · [[open-questions/deep-dfu-se-regime]]",
+        mechanism="Exit Ca is set by per-DFU velocity, and per-DFU velocity is set by "
+                  "the ΔP each rung sees — not by how many rungs there are. While the "
+                  "main is stiff enough not to droop, adding DFUs multiplies throughput "
+                  "at essentially unchanged Ca: it is the one way to buy output without "
+                  "spending regime margin. To hold a THROUGHPUT target, the same "
+                  "relation reads Ca ∝ 1/N — few DFUs must each run fast.",
+        costs=("The free ride ends when the main starts to droop: past that, the far "
+               "rungs both starve (flatness) and stop adding their share of output.",
+               "Area and priming volume grow with the run.",
+               "Nothing here lowers Ca — it holds it while output rises. Lowering it "
+               "still means backing off drive pressure."),
+        evidence="[model-v3, 2026-08] · [[open-questions/deep-dfu-se-regime]]",
     ),
     StructuralLever(
         objective="margin", knob="Exit depth", path="junction.exit_depth_um",

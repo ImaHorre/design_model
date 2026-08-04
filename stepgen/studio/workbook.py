@@ -1095,13 +1095,14 @@ def _design_compare_html(
 def _plot_workbench_html() -> str:
     """The one interactive plot: axis pickers, presets, and the regime ceiling."""
     return (
-        '<h2>Explore</h2>'
         '<section class="plotwrap">'
         '<div class="line" id="plotctl"></div>'
         '<div id="plot"></div>'
         '<p class="plotnote" id="plotnote"></p>'
         '<p class="muted" id="plotlegend"></p>'
         '</section>'
+        '<h3>Pinned runs</h3>'
+        '<div id="pintable"></div>'
     )
 
 
@@ -1526,24 +1527,29 @@ def write_workbook(
 
 {_verdict_summary_html(scored, diagnosis)}
 
-{_intent_html(result.study)}
+<div class="tabpane" data-tab="explore">
+{_plot_workbench_html()}
+</div>
 
+<div class="tabpane" data-tab="designs" style="display:none">
 {_design_sections_html(scored, grouping, leaves, decisions,
                        _design_compare_html(scored, grouping, leaves, decisions, dec.axes))}
-
-{_plot_workbench_html()}
-
 {_decision_html(scored, dec, grouping, leaves)}
+</div>
 
-{_diagnosis_html(diagnosis)}
-
+<div class="tabpane" data-tab="runs" style="display:none">
 <h2 id="overview">All runs</h2>
 <p class="muted">Filtered by the rail above. Click a header to sort, a row to open its
 gate-by-gate breakdown. <b>Why</b> names the gate that set the verdict — the tightest
 one for a green row, the binding one otherwise.</p>
 {_table_html(scored, best, result.study, grouping, leaves, result.study.scoring)}
+</div>
 
+<div class="tabpane" data-tab="notes" style="display:none">
+{_intent_html(result.study)}
+{_diagnosis_html(diagnosis)}
 {_provenance_html(result, refs)}
+</div>
 
 <script>{payload_script(payload)}</script>
 <script>{_JS}</script>
