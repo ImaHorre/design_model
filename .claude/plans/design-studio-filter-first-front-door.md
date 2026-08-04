@@ -5,8 +5,9 @@
 pre-existing (3 `test_cli` png, 2 `test_design_search`), verified unchanged from `306a4bc`.
 Do not chase them.
 **Supersedes**: Phase 6 ("Form-driven UI") in `docs/06_design_studio/roadmap_studio_v1.md`
-**Status**: Batch 1 / Wave 1 / Wave 2 not started. **Part of D shipped early** — see
-"What landed ahead of the plan".
+**Status**: **Batch 1 complete** (B0 `e53ddc6`, B1 `e21798e`, A4a+A4b `39e7342`); W1-4
+landed early (`77ac36a`). Wave 1 otherwise not started; Wave 2 not started. **Part of D
+shipped early** — see "What landed ahead of the plan".
 **Derived from**: `/grill-me` sessions with Conor, 2026-08-03 and 2026-08-04
 
 > Rewritten 2026-08-04 and re-anchored `306a4bc` → `a0e82a1` → `6db6405`. Earlier vintages
@@ -123,7 +124,8 @@ payload is only used to draw bands on plots.
 
 **What it costs — four items, all folded into the plan below**:
 
-1. **A4a is now a live reader-facing gap, not a latent one.** `chapter_payload` is a
+1. ~~**A4a is now a live reader-facing gap, not a latent one.**~~ **Closed by `39e7342`.**
+   Recorded for the reasoning: `chapter_payload` is a
    *second* row serialiser beside `_chapter_json`. It exposes `regime_Ca` as a filterable
    limit (`interactive.py:64`) and ships `caCeiling` / `caMeasured` — but **carries no γ at
    all**. γ-robustness exists only in the server-rendered diagnosis panel, computed over
@@ -250,7 +252,7 @@ The code is right for oil-driven Stage 1; the docstring is a trap. Fix it in W2-
 > B3 was removed earlier (it changes results 1.47×; it is now W2-1).
 > B4's physics half landed in `21c974f`, `7810092`, `45437cc`; the form half is C2.
 
-### B1 — `stepgen study` crashes on Windows printing its own diagnosis
+### B1 — `stepgen study` crashes on Windows printing its own diagnosis ✅ `e21798e`
 
 **Symptom.** `UnicodeEncodeError` at `cli.py:513-514`, printing `diag.headline()`. The
 study **completes and writes its chapter**, then dies on the summary — worst possible
@@ -266,45 +268,50 @@ than one glyph, and `d8397ab` / `2908af0` added more Δ-bearing prose on that pa
 `encoding="utf-8", errors="replace"`, guarded for streams that do not support it.
 `errors="replace"` matters — console output must never kill a completed run.
 
-**Verify.** `python -m stepgen.cli study configs/study_dp15_1000mbar_60x20.yaml
---diagnose always` completes without `PYTHONIOENCODING=utf-8`.
-**Blocked on B0** — that config is untracked.
+**Verify.** ✅ Exits 0 under `PYTHONIOENCODING=cp1252`, full diagnosis printed. Regression
+tests in `tests/test_cli.py::TestConsoleEncoding` cover both the cp1252 stream and a stream
+with no `.reconfigure`.
 
-### B0 — commit the repro config *(new)*
+### B0 — commit the repro config ✅ `e53ddc6`
 
-`configs/study_dp15_1000mbar_60x20.yaml` is untracked. B1's and W2-1a's verify steps both
-name it. Commit it before either.
+`configs/study_dp15_1000mbar_60x20.yaml` was untracked. B1's and W2-1a's verify steps both
+name it. Now committed.
 
-### A4a — γ is missing from **both** sidecars
+### A4a — γ is missing from **both** sidecars ✅ `39e7342`
 
 **Why.** γ varies 3× across this repo's configs (5 / 15 / 0 mN/m) and `Ca ∝ 1/γ`. Pooling
 rows from two chapters would silently mix Ca computed on different constants — and since
 `912c74c`, a reader can filter on `regime_Ca` in-browser with no γ anywhere on the page.
 
-**Fix, two places** (this is now the A4a scope):
-1. `_chapter_json()` — add a top-level `fluids` key from
-   `result.study.raw.get("fluids", {})`. `StudyPoint` carries `fluids` per point, so if any
-   point disagrees with the study-level block, record that rather than assuming uniformity.
-   The list form exists — `study_gamma()` has handled both shapes since `7810092`.
-2. `chapter_payload()` — carry `gamma` **per row**, and render it beside the Ca limit
-   control. A Ca filter with no γ on screen is a physics claim resting on an invisible
-   constant.
+**Fix — three places, not two.** A third was found while implementing: `radial` and
+`manifold` never filled `CommonMetrics.gamma_Nm` at all (`base.py:163` existed; only
+`serpentine.py:839` set it), so two of three families computed a Ca and discarded the
+constant behind it. Per-row γ was unreachable until that was fixed.
 
-**Verify.** `book/<chapter>.json` contains `fluids.gamma`; the chapter's Ca limit control
-displays the γ it is using.
+1. ✅ `radial.py` / `manifold.py` fill `gamma_Nm` from the compiled `c.gamma`.
+2. ✅ `_chapter_json()` — top-level `fluids` block (`_fluids_json`). γ resolved from the
+   **points actually solved**, not the study block: `fluids:` may be a list, and where the
+   points disagree `gamma_Nm` is null with `gamma_values_Nm` listing every value found.
+3. ✅ `chapter_payload()` — `gamma` per row (kept out of `m` so it never becomes a plot
+   axis; it is provenance, not a result), plus `paintGamma()` in the rail, recomputed over
+   the **visible** rows: one system, several (flagged *not comparable on Ca*), or none.
 
-### A4b — per-cell margins are missing from both sidecars
+**Verify.** ✅ On the 1368-row study: `fluids.gamma_Nm = 0.005`, every payload row carries
+`gamma`, and the rail states it. Radial confirmed on `study_serpentine_vs_radial.yaml`.
+Guarded by `tests/test_studio.py::test_chapter_carries_gamma_and_per_metric_margins`.
+
+### A4b — per-cell margins are missing from both sidecars ✅ `39e7342`
 
 **Why.** `ScoredRow` stores `min_margin` but not per-metric margins. `CellScore.margin` is
 "distance past the ceiling", deliberately uncapped — it is what the planned Ca-distance
 column displays.
 
-**Fix.** In `_chapter_json`, mirroring the `confidence` block:
+**Fix.** ✅ In `_chapter_json`, mirroring the `confidence` block:
 `"margins": {k: c.margin for k, c in sr.cells.items() if c.category != "grey"}`.
-In `chapter_payload`, the same dict per row, so the Ca-distance column can exist in the
-interactive table.
+In `chapter_payload`, the same dict per row (`None` margins dropped), so the Ca-distance
+column can exist in the interactive table.
 
-**Verify.** `rows[0].margins.regime_Ca` is a number in both.
+**Verify.** ✅ `rows[0].margins.regime_Ca` is a float in both.
 
 ---
 
@@ -365,11 +372,12 @@ V6-30 ->  3,000 DFUs at R = 36.0 mm
 Constants asserted as literals citing `reference_devices/`, so neither `gdstk` nor 2.2 MB
 of binaries becomes a test dependency.
 
-### W1-4 — commit the reference devices
+### W1-4 — commit the reference devices ✅ `77ac36a`
 
 `reference_devices/` at top level: the three GDS files (`v5_30umV1.1.gds`,
-`v5_10umV1.gds`, `V6-30um_v1.2.gds` — all three still untracked in the repo root) plus a
-short `README.md` carrying the measurement table above and the script that produced it.
+`v5_10umV1.gds`, `V6-30um_v1.2.gds`) plus a short `README.md` carrying the measurement
+table above and the script that produced it. **Read the README — it is ground truth for
+layout and packing; do not re-derive its numbers from the model.**
 
 ### W1-5 — fix `configs/v5_30.yaml`
 
@@ -574,11 +582,12 @@ remains:
   — ungated at 1000 mbar, main 200×1000 µm makes 18.87 mL/hr against 4.35 for 100×500 µm.
   Gated at Ca ≤ 0.0125 the wide main caps at 200 mbar and makes **3.29**, losing to 4.35.
 
-  **Non-negotiable, and currently breached.** `passes_at_gamma_lo` must sit *next to* the
-  ceiling control, not in a detail panel. In that example **both** designs pass at
-  γ = 5 mN/m and **both** fail at 3. `912c74c` shipped a `regime_Ca` limit control with **no
-  γ on the page at all** — a bare green there reads as a physics result. A4a's second half
-  is the prerequisite; **do D5 before shipping another chapter build.**
+  **Non-negotiable. Half-closed.** `39e7342` put γ on the page: the rail states which γ the
+  *visible* rows were solved at, and says so when a subset mixes systems. Still missing is
+  `passes_at_gamma_lo` sitting *next to* the ceiling control rather than in a detail panel
+  — in the example above **both** designs pass at γ = 5 mN/m and **both** fail at 3, and
+  only the ceiling control can say that at the moment the reader filters. A4a's
+  prerequisite is done, so D5 is unblocked.
 - **D6.** Columns to add: `dP_rung_mbar` ✅, `t_cycle_s` ✅, `t_stage1_s` (in `workbook.py`,
   **missing from `interactive.py:PLOT_METRICS`**), `Po_min_production_mbar` (missing
   everywhere). Two caveats ship with them:
@@ -614,18 +623,20 @@ remains:
 ## Sequencing
 
 ```
-B0 -> B1 -> A4a/A4b  ->  Wave 1  ->  Wave 2 (+ re-validation, C_visc refit)  ->  C  ->  D-rest  ->  E
-                                \
-                                 └─ D5 can go early: it needs A4a only, and it closes
-                                    a gap that is live in every chapter written today
+B0 ✅ -> B1 ✅ -> A4a/A4b ✅  ->  Wave 1  ->  Wave 2 (+ re-validation, C_visc refit)  ->  C  ->  D-rest  ->  E
+                          \
+                           └─ D5 unblocked: it needed A4a only, which has landed
 ```
 
-Batch 1 is inert. Wave 1 is measurement-determined with tests already written. **Wave 2 is
-the risk** — it changes what every number means, and C does not start until W2-8 passes.
+Batch 1 is done and was inert as expected — no physics moved, 534 passed against the same
+5 known failures. **Next up is Wave 1**, which is measurement-determined with tests already
+written (W1-4's `reference_devices/README.md` is the ground truth; read it, do not
+re-derive). **Wave 2 is the risk** — it changes what every number means, and C does not
+start until W2-8 passes.
 
-**The one item worth pulling forward**: D5 / A4a's γ display. It depends on nothing in
-Wave 1 or 2, and until it lands every chapter offers a Ca filter whose deciding constant is
-invisible.
+**The one item worth pulling forward now**: D5's ceiling control with `passes_at_gamma_lo`
+beside it. Its prerequisite (γ on the page) landed in `39e7342`; it depends on nothing in
+Wave 1 or 2.
 
 ---
 
