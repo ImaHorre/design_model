@@ -88,7 +88,10 @@ from typing import Any
 
 import numpy as np
 
-from stepgen.families.base import CommonMetrics, Family, register_family
+from stepgen.families.base import (
+    MANIFOLD_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
+    register_family,
+)
 from stepgen.families.intent import (
     Constraints,
     Intent,
@@ -156,7 +159,12 @@ class ManifoldCompiled:
     # environment
     square_side_m: float
     feed_length_m: float      # spine length available for stacking arms
+    #: DEPRECATED — superseded by active_area_fraction (W1-2); kept so older
+    #: configs load. The overhead it stood for is now measured, not guessed.
     border_m: float
+    #: routable fraction of the die — UNCALIBRATED here (no built manifold);
+    #: borrows the serpentine's 0.51. See families.base.
+    active_area_fraction: float
     min_feature_m: float
     max_main_depth_m: float
     max_main_width_m: float
@@ -330,6 +338,10 @@ class ManifoldFamily(Family):
         side = float(footprint.get("square_side_mm", 63.5)) * 1e-3
         feed_len = float(footprint.get("feed_length_mm", side * 1e3)) * 1e-3
         border = float(footprint.get("reserve_border_mm", 2.0)) * 1e-3
+        # no built manifold exists, so this borrows the serpentine's measured
+        # 0.51 and every row says so.
+        active_frac = float(
+            footprint.get("active_area_fraction", MANIFOLD_ACTIVE_FRACTION))
         max_main_depth = float(manufacturing.get("max_main_depth_um", 200.0)) * 1e-6
         max_main_width = float(manufacturing.get("max_main_width_um", 1000.0)) * 1e-6
 
@@ -343,6 +355,7 @@ class ManifoldFamily(Family):
             wall_width_m=wall_width, wall_min_m=wall_min, outlet_m=outlet,
             r_water=r_water, mu_water=mu_water,
             square_side_m=side, feed_length_m=feed_len, border_m=border,
+            active_area_fraction=active_frac,
             min_feature_m=min_feature,
             max_main_depth_m=max_main_depth, max_main_width_m=max_main_width,
             mu_oil=mu, gamma=float(fluids.get("gamma", 0.0)),
@@ -562,16 +575,23 @@ def solve_manifold(
         + max(c.M - 1, 0) * (2.0 * cp_w + c.wall_width_m)
         + 2.0 * cp_w
     )
-    # perpendicular extent: spine + arm reach + continuous outlet manifold + borders
-    perp = 2.0 * c.border_m + c.main_width_m + arm_len + c.outlet_m
+    # perpendicular extent: spine + arm reach + continuous outlet manifold.
+    # No border term: the die a manifold cannot route in is the routable
+    # fraction, not a 2 mm edge allowance (W1-2).
+    perp = c.main_width_m + arm_len + c.outlet_m
 
-    stack_budget = min(c.feed_length_m, c.square_side_m) - 2.0 * c.border_m
+    # both extents are judged against the ROUTABLE box, side x sqrt(f)
+    routable_side = c.square_side_m * math.sqrt(max(c.active_area_fraction, 0.0))
+    stack_budget = min(c.feed_length_m, c.square_side_m) * math.sqrt(
+        max(c.active_area_fraction, 0.0))
     fits_square = bool(
         stack <= stack_budget
-        and perp <= c.square_side_m
+        and perp <= routable_side
         and c.feed_length_m <= c.square_side_m
     )
-    area_used_cm2 = stack * perp * 1e4
+    # die area consumed — grossed up by the routable fraction, as for the other
+    # families, so "area used" compares like with like across all three.
+    area_used_cm2 = stack * perp * 1e4 / max(c.active_area_fraction, 1e-12)
 
     # ── fabrication + no-crossing gates ─────────────────────────────────────
     wall_ar = c.main_depth_m / c.wall_width_m if c.wall_width_m > 0 else float("inf")
@@ -593,6 +613,10 @@ def solve_manifold(
     # ── advisory notes ──────────────────────────────────────────────────────
     lam_arm = math.sqrt(c.R_rung / c.r_arm)
     notes: list[str] = []
+    area_caveat = active_fraction_note(
+        c.square_side_m * 1e3, "manifold", c.active_area_fraction)
+    if area_caveat:
+        notes.append(area_caveat)
     if c.exit_depth_m * 1e6 > 12.0:
         notes.append(
             "deep exit: power-law droplet size extrapolated (~2x) — size/frequency not trusted"

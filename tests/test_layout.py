@@ -37,6 +37,7 @@ def _make_config(
     wall_width: float = 1.0e-3,
     turn_radius: float = 500e-6,
     reserve_border: float = 2e-3,
+    active_area_fraction: float = 1.0,
 ) -> DeviceConfig:
     pitch = 100e-6  # 0.1 mm pitch; Nmc = floor(Mcl / pitch)
     return DeviceConfig(
@@ -56,25 +57,27 @@ def _make_config(
             footprint_area_cm2=footprint_area_cm2,
             footprint_aspect_ratio=footprint_aspect_ratio,
             wall_width=wall_width,
+            active_area_fraction=active_area_fraction,
             turn_radius=turn_radius,
             reserve_border=reserve_border,
         ),
     )
 
 
-# Reusable helper: expected L_useful for default chip
+# Reusable helpers: the routable box (W1-2 — scaled by active_area_fraction,
+# NOT inset by reserve_border, which the layout no longer reads).
 def _L_useful(cfg: DeviceConfig) -> float:
     fp = cfg.footprint
     area_m2 = fp.footprint_area_cm2 * 1e-4
     W = math.sqrt(area_m2 * fp.footprint_aspect_ratio)
-    return W - 2.0 * fp.reserve_border
+    return W * math.sqrt(fp.active_area_fraction)
 
 
 def _H_useful(cfg: DeviceConfig) -> float:
     fp = cfg.footprint
     area_m2 = fp.footprint_area_cm2 * 1e-4
     H = math.sqrt(area_m2 / fp.footprint_aspect_ratio)
-    return H - 2.0 * fp.reserve_border
+    return H * math.sqrt(fp.active_area_fraction)
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +118,8 @@ class TestLayoutTypes:
 class TestLaneGeometry:
 
     def test_lane_length_formula(self):
-        """lane_length = sqrt(A*AR) − 2*border."""
-        cfg = _make_config()
+        """lane_length = sqrt(A*AR) * sqrt(active_area_fraction)."""
+        cfg = _make_config(active_area_fraction=0.51)
         expected = _L_useful(cfg)
         assert compute_layout(cfg).lane_length == pytest.approx(expected, rel=1e-10)
 
@@ -230,8 +233,8 @@ class TestFitsFootprint:
     def test_fits_false_for_large_device(self):
         """Very long Mcl forces many lanes that exceed chip height."""
         # Need total_height > H_useful.
-        # H_useful ≈ 21.8 mm for default chip; lane_pitch = 1.2 + 1.0 = 2.2 mm.
-        # 20 lanes: total_height = 19*2.2 + 1.2 = 43.0 mm > 21.8 mm → no fit.
+        # H_useful ≈ 25.8 mm for the default chip (fraction 1.0); lane_pitch =
+        # 1.2 + 1.0 = 2.2 mm. 20 lanes: 19*2.2 + 1.2 = 43.0 mm > 25.8 → no fit.
         cfg_base = _make_config()
         L = _L_useful(cfg_base)
         cfg = _make_config(Mcl=20.0 * L)   # → 20 lanes
@@ -262,12 +265,23 @@ class TestFootprintAreaUsed:
         assert compute_layout(cfg).footprint_area_used > 0.0
 
     def test_formula(self):
-        """footprint_area_used = (total_height + 2*border) * (lane_length + 2*border)."""
-        cfg = _make_config()
+        """footprint_area_used = total_height * lane_length / active_area_fraction."""
+        cfg = _make_config(active_area_fraction=0.51)
         r = compute_layout(cfg)
-        border = cfg.footprint.reserve_border
-        expected = (r.total_height + 2.0 * border) * (r.lane_length + 2.0 * border)
+        expected = r.total_height * r.lane_length / 0.51
         assert r.footprint_area_used == pytest.approx(expected, rel=1e-10)
+
+    def test_overhead_is_counted_as_die_area(self):
+        """
+        A design occupying the same lanes on a family with worse IO overhead
+        consumes MORE die. That is the whole point of measuring 0.51 vs 0.64 —
+        if area_used were the raw active box the fractions would buy nothing.
+        """
+        lean = compute_layout(_make_config(active_area_fraction=1.0))
+        heavy = compute_layout(_make_config(active_area_fraction=0.51))
+        per_active_lean = lean.footprint_area_used / (lean.total_height * lean.lane_length)
+        per_active_heavy = heavy.footprint_area_used / (heavy.total_height * heavy.lane_length)
+        assert per_active_heavy > per_active_lean
 
     def test_lte_chip_area_when_fits(self):
         """If device fits, area_used ≤ chip total area."""

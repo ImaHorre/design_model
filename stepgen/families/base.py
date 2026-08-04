@@ -107,6 +107,60 @@ SE_CEILING_CA = 0.03
 CA_MEASURED_MAX = 0.0017
 
 
+#: Fraction of the die a family can actually route in, after IO ports, feed
+#: strips and edge margins.  **Measured from the built devices** — see
+#: ``reference_devices/README.md``, which is ground truth here.
+#:
+#:   serpentine  0.51   V5-30 (69.0 x 74.0 mm) and V5-10 (68.6 x 74.0 mm)
+#:   radial      0.64   V6-30 (disc R = 45 mm)
+#:   manifold    0.51   UNCALIBRATED — no built device; borrows serpentine's
+#:
+#: The 51/64 split is not a fitted constant: radial feeds from the centre and
+#: needs only ~5 mm of margin, while the serpentine spends a dedicated
+#: 65.8 x 8 mm IO strip plus 13-15 mm margins.  It is measured, not explained;
+#: an explicit port/strip model is deferred.
+SERPENTINE_ACTIVE_FRACTION = 0.51
+RADIAL_ACTIVE_FRACTION = 0.64
+MANIFOLD_ACTIVE_FRACTION = 0.51
+
+#: Die size the fractions above were measured at [mm].  An area *fraction* does
+#: not scale to a different die — the IO strip and the margins are absolute
+#: lengths — so a row on any other die carries ``active_fraction_note()``.
+#: Open question 5; the real fix is the deferred per-family IO model.
+ACTIVE_FRACTION_CALIBRATION_SIDE_MM = 100.0
+
+
+def active_fraction_note(
+    square_side_mm: float, family: str, active_area_fraction: float = 0.0,
+) -> str | None:
+    """
+    The caveat a row must carry when its die is not the one the area model was
+    measured on, or when the family has no built device behind its fraction.
+
+    Returns ``None`` when there is nothing to say — including when the row is
+    not using an overhead model at all (fraction 1.0, which is what a
+    hand-written device YAML means by giving an area directly).
+    """
+    if active_area_fraction >= 1.0:
+        return None
+    parts: list[str] = []
+    if family == "manifold":
+        parts.append(
+            "manifold active-area fraction is UNCALIBRATED (no built device) — "
+            "it borrows the serpentine's 0.51"
+        )
+    side = float(square_side_mm)
+    if abs(side - ACTIVE_FRACTION_CALIBRATION_SIDE_MM) > 1e-6:
+        parts.append(
+            f"active-area fraction was measured on a "
+            f"{ACTIVE_FRACTION_CALIBRATION_SIDE_MM:.0f} mm die, not this "
+            f"{side:g} mm one — the IO strip and margins are absolute lengths, "
+            f"so the fraction does not scale; area and capacity here are "
+            f"indicative only"
+        )
+    return "; ".join(parts) if parts else None
+
+
 @dataclass
 class CommonMetrics:
     """

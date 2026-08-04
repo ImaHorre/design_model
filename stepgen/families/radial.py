@@ -48,7 +48,10 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from stepgen.families.base import CommonMetrics, Family, register_family
+from stepgen.families.base import (
+    RADIAL_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
+    register_family,
+)
 from stepgen.families.intent import (
     Constraints,
     Intent,
@@ -98,6 +101,21 @@ class RadialCompiled:
     gamma: float
     min_feature_m: float
     mu_water: float = 0.00089     # continuous phase; envelope reporting only
+    #: routable fraction of the die -- measured, see families.base
+    active_area_fraction: float = RADIAL_ACTIVE_FRACTION
+
+    @property
+    def max_radius_m(self) -> float:
+        """
+        Largest wheel the die holds: the disc whose area is the routable
+        fraction of the die, ``R_max = side x sqrt(f/pi)``.
+
+        At f = 0.64 on a 100 mm die this is 45.1 mm, which is the V6-30 disc to
+        0.3%.  It replaces ``side/2`` -- a wheel touching the die edge on all
+        four sides has nowhere to put its inlet.
+        """
+        return self.square_side_m * math.sqrt(
+            max(self.active_area_fraction, 0.0) / math.pi)
 
 
 @register_family
@@ -184,6 +202,11 @@ class RadialFamily(Family):
 
         t_min = float(manufacturing.get("min_wall_um", 5.0)) * 1e-6
         side = float(footprint.get("square_side_mm", 63.5)) * 1e-3
+        # 64% measured on V6-30: a R = 45 mm disc on a 100 mm die.  Radial feeds
+        # from the centre and needs only ~5 mm of margin, which is why it beats
+        # the serpentine's 51% (reference_devices/README.md).
+        active_frac = float(
+            footprint.get("active_area_fraction", RADIAL_ACTIVE_FRACTION))
 
         return RadialCompiled(
             radius_m=radius,
@@ -194,6 +217,7 @@ class RadialFamily(Family):
             inlet_radius_m=r_inlet,
             t_min_m=t_min,
             square_side_m=side,
+            active_area_fraction=active_frac,
             mu_oil=float(fluids.get("mu_dispersed", 0.06)),
             gamma=float(fluids.get("gamma", 0.0)),
             min_feature_m=float(manufacturing.get("min_wall_um", 0.5)) * 1e-6,
@@ -224,7 +248,9 @@ class RadialFamily(Family):
         Two different limits, and which one binds is worth seeing.  At the
         configured radius the array holds ``N = 2πR/pitch`` spokes — that is not
         a choice, it is the circumference.  The *die* limit is the largest wheel
-        the square holds, ``R_max = side/2``, giving ``N_max = 2πR_max/pitch``.
+        the square can ROUTE, ``R_max = side·√(f/π)`` for the measured routable
+        fraction f, giving ``N_max = 2πR_max/pitch``.  Not ``side/2``: a wheel
+        touching the die edge on all four sides has nowhere to put its inlet.
 
         So unlike the serpentine, ``n_current`` here is already the maximum for
         its radius: growing the die only helps by permitting a bigger wheel.
@@ -233,10 +259,10 @@ class RadialFamily(Family):
 
         if compiled.pitch_m <= 0:
             return None
-        r_max = compiled.square_side_m / 2.0
+        r_max = compiled.max_radius_m
         n_here = int(2.0 * math.pi * compiled.radius_m / compiled.pitch_m)
         n_max = int(2.0 * math.pi * r_max / compiled.pitch_m)
-        fits = (2.0 * compiled.radius_m) <= compiled.square_side_m
+        fits = compiled.radius_m <= compiled.max_radius_m
 
         return PackingCapacity(
             n_current=n_here,
@@ -330,8 +356,11 @@ def solve_radial(
 
     # ── layout + fabrication gates ──────────────────────────────────────────
     diameter = 2.0 * R
-    fits_square = bool(diameter <= c.square_side_m)
-    area_used_cm2 = math.pi * R ** 2 * 1e4
+    fits_square = bool(R <= c.max_radius_m)
+    # die area consumed, not disc area: the wheel's own overhead is grossed up
+    # by the routable fraction so "area used" means the same thing here as it
+    # does for the serpentine, whose overhead is a third larger.
+    area_used_cm2 = math.pi * R ** 2 * 1e4 / max(c.active_area_fraction, 1e-12)
     manufacturable = bool(
         w >= c.min_feature_m
         and c.exit_width_m >= c.min_feature_m
@@ -340,6 +369,10 @@ def solve_radial(
     )
 
     notes: list[str] = []
+    area_caveat = active_fraction_note(
+        c.square_side_m * 1e3, "radial", c.active_area_fraction)
+    if area_caveat:
+        notes.append(area_caveat)
     if h * 1e6 > 12.0:
         notes.append(
             "deep exit: power-law droplet size extrapolated (~2x) — size/frequency not trusted"

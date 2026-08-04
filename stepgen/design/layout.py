@@ -20,10 +20,10 @@ Chip dimensions (from FootprintConfig, area_m2 = footprint_area_cm2 × 1e-4):
     W = sqrt(area_m2 × AR)       longest chip dimension [m]
     H = sqrt(area_m2 / AR)       shortest chip dimension [m]
 
-Usable routing extent (after subtracting border on both sides):
+Usable routing extent (see :func:`active_extent`):
 
-    L_useful = W − 2 × reserve_border
-    H_useful = H − 2 × reserve_border
+    L_useful = W × √active_area_fraction
+    H_useful = H × √active_area_fraction
 
 Lane geometry (see :func:`lane_stackup` — the single implementation):
 
@@ -40,7 +40,7 @@ Serpentine result:
     total_height = (num_lanes − 1) × lane_pitch + lane_pair_width
 
     fits_footprint    = total_height ≤ H_useful  (and lane_length > 0)
-    footprint_area_used = (total_height + 2×border) × (lane_length + 2×border)
+    footprint_area_used = total_height × lane_length / active_area_fraction
 """
 
 from __future__ import annotations
@@ -51,6 +51,42 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from stepgen.config import DeviceConfig
+
+
+def active_extent(fp) -> tuple[float, float]:
+    """
+    The routable box inside the die: ``(L_useful, H_useful)`` [m].
+
+    **The one implementation.**  A real device does not get its whole die: the
+    serpentine spends a dedicated 65.8 × 8 mm IO strip plus 13–15 mm margins,
+    and the radial needs ~5 mm of margin around the wheel.  Measured on the
+    built devices (``reference_devices/README.md``), what is left is
+
+        serpentine  51%   V5-30 (69.0 × 74.0 mm) and V5-10 (68.6 × 74.0 mm)
+        radial      64%   V6-30 (disc R = 45 mm)
+
+    of a 100 × 100 mm die.  The box is that area laid out with the die's own
+    aspect ratio, i.e. each side scaled by ``√active_area_fraction``.
+
+    This **replaces** ``reserve_border``, which is why that field is now unused.
+    A 2 mm border on a 100 mm die claims 96 × 96 mm is routable; it is not, and
+    that single assumption was the entire source of the old 1.66× capacity
+    over-prediction — the packing geometry itself was never wrong.  At 100 mm
+    the fraction implies a ~14.3 mm serpentine margin, against the 13–15 mm
+    measured.
+
+    **Caveat (open question 5).**  0.51 and 0.64 were measured at a 100 mm die
+    and an area *fraction* does not scale: the IO strip and the margins are
+    absolute lengths.  Rows on a different die carry a note saying so.  The real
+    fix is the deferred per-family IO/port model.
+    """
+    area_m2 = fp.footprint_area_cm2 * 1e-4
+    AR = fp.footprint_aspect_ratio
+    side_scale = math.sqrt(max(fp.active_area_fraction, 0.0))
+    return (
+        math.sqrt(area_m2 * AR) * side_scale,
+        math.sqrt(area_m2 / AR) * side_scale,
+    )
 
 
 def lane_stackup(
@@ -98,7 +134,11 @@ class LayoutResult:
     lane_pair_width     : Combined width of both main channels per lane [m].
     lane_pitch          : Centre-to-centre perpendicular spacing of lanes [m].
     total_height        : Total perpendicular extent of all lanes [m].
-    footprint_area_used : Bounding-box area of the occupied chip region [m²].
+    footprint_area_used : Die area this design consumes [m²] — the lane
+                          bounding box grossed up by ``active_area_fraction``,
+                          so it counts the IO and margin overhead the family
+                          cannot route in.  A design that fills the routable
+                          box consumes the whole die.
     """
     fits_footprint: bool
     num_lanes: int
@@ -124,15 +164,8 @@ def compute_layout(config: "DeviceConfig") -> LayoutResult:
     fp   = config.footprint
     geom = config.geometry
 
-    # ── Chip dimensions ────────────────────────────────────────────────────
-    area_m2 = fp.footprint_area_cm2 * 1e-4
-    AR      = fp.footprint_aspect_ratio
-    W       = math.sqrt(area_m2 * AR)
-    H       = math.sqrt(area_m2 / AR)
-
     # ── Usable routing extents ─────────────────────────────────────────────
-    L_useful = W - 2.0 * fp.reserve_border
-    H_useful = H - 2.0 * fp.reserve_border
+    L_useful, H_useful = active_extent(fp)
 
     # ── Lane geometry ──────────────────────────────────────────────────────
     lane_pair_width, lane_pitch = lane_stackup(
@@ -142,7 +175,7 @@ def compute_layout(config: "DeviceConfig") -> LayoutResult:
     )
 
     if L_useful <= 0.0:
-        # Reserve borders consume all usable width — cannot route.
+        # No routable area at all — cannot route.
         return LayoutResult(
             fits_footprint=False,
             num_lanes=0,
@@ -150,7 +183,7 @@ def compute_layout(config: "DeviceConfig") -> LayoutResult:
             lane_pair_width=lane_pair_width,
             lane_pitch=lane_pitch,
             total_height=0.0,
-            footprint_area_used=(2.0 * fp.reserve_border) ** 2,
+            footprint_area_used=0.0,
         )
 
     lane_length = L_useful
@@ -163,11 +196,14 @@ def compute_layout(config: "DeviceConfig") -> LayoutResult:
 
     fits_footprint = (total_height <= H_useful)
 
-    # ── Bounding-box area (includes border) ────────────────────────────────
-    footprint_area_used = (
-        (total_height + 2.0 * fp.reserve_border) *
-        (lane_length  + 2.0 * fp.reserve_border)
-    )
+    # ── Die area consumed ──────────────────────────────────────────────────
+    # The lane bounding box is active area; grossing it up by the family's
+    # active fraction turns it into die area, which is what makes "area used"
+    # comparable across families with genuinely different IO overhead (51% vs
+    # 64%).  Compare raw active areas and the measured fractions would buy
+    # nothing here — they would only ever move fits/capacity.
+    frac = max(fp.active_area_fraction, 1e-12)
+    footprint_area_used = (total_height * lane_length) / frac
 
     return LayoutResult(
         fits_footprint=fits_footprint,

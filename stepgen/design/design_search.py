@@ -108,15 +108,9 @@ def _max_mcl_for_footprint(
 
     Returns Mcl_max [m]; 0.0 if even one lane doesn't fit.
     """
-    from stepgen.design.layout import lane_stackup
+    from stepgen.design.layout import active_extent, lane_stackup
 
-    area_m2 = fp.footprint_area_cm2 * 1e-4
-    AR      = fp.footprint_aspect_ratio
-    W       = math.sqrt(area_m2 * AR)
-    H       = math.sqrt(area_m2 / AR)
-
-    L_useful = W - 2.0 * fp.reserve_border
-    H_useful = H - 2.0 * fp.reserve_border
+    L_useful, H_useful = active_extent(fp)
 
     if L_useful <= 0.0:
         return 0.0

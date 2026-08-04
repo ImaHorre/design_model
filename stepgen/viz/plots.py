@@ -521,7 +521,7 @@ def plot_layout_schematic(
     layout : LayoutResult (optional — computed from config if not supplied)
     """
     import math
-    from stepgen.design.layout import compute_layout, lane_stackup
+    from stepgen.design.layout import active_extent, compute_layout, lane_stackup
     from matplotlib.patches import Rectangle, Patch
 
     if layout is None:
@@ -534,13 +534,19 @@ def plot_layout_schematic(
     Mcw    = geom.main.Mcw   * 1e3   # main channel width
     mcl    = geom.rung.mcl   * 1e3   # rung length → gap between channels
     tr     = fp.turn_radius  * 1e3   # turn-end buffer
-    bd     = fp.reserve_border * 1e3 # chip border
 
     area_mm2 = fp.footprint_area_cm2 * 100.0
     AR       = fp.footprint_aspect_ratio
     chip_W   = math.sqrt(area_mm2 * AR)
     chip_H   = math.sqrt(area_mm2 / AR)
-    L_useful = max(chip_W - 2.0 * bd, 1.0)
+
+    # Routable box, and the margin it implies — the margin is derived from the
+    # family's measured active fraction, not read from reserve_border.
+    L_useful_m, H_useful_m = active_extent(fp)
+    L_useful = max(L_useful_m * 1e3, 1.0)
+    H_useful = H_useful_m * 1e3
+    bd       = max((chip_W - L_useful) * 0.5, 0.0)   # chip border, x [mm]
+    bd_y     = max((chip_H - H_useful) * 0.5, 0.0)   # chip border, y [mm]
 
     # Serpentine geometry — the same stack-up compute_layout uses, in mm.  This
     # was a fourth copy of the formula; it now delegates, so the picture cannot
@@ -554,7 +560,7 @@ def plot_layout_schematic(
     pitch   = pitch_m  * 1e3            # centre-to-centre lane spacing [mm]
     n_lanes = math.ceil(geom.main.Mcl * 1e3 / L_useful)
     tot_h   = (n_lanes - 1) * pitch + pair_w
-    fits    = tot_h <= (chip_H - 2.0 * bd)
+    fits    = tot_h <= H_useful
 
     oil_col   = "tab:orange"
     water_col = "tab:blue"
@@ -570,9 +576,9 @@ def plot_layout_schematic(
 
     # ── Draw lanes ──────────────────────────────────────────────────────────
     for i in range(n_lanes):
-        y0     = bd + i * pitch
+        y0     = bd_y + i * pitch
         x0     = bd
-        inside = (y0 + pair_w) <= (chip_H - bd + 1e-9)
+        inside = (y0 + pair_w) <= (chip_H - bd_y + 1e-9)
         al     = 0.6 if inside else 0.2
         ls_rect = "-" if inside else "--"
 
@@ -606,12 +612,12 @@ def plot_layout_schematic(
         fill=False, edgecolor="black", linewidth=2, linestyle="--", zorder=5,
     ))
     # Usable-area guides
-    for y_guide in (bd, chip_H - bd):
+    for y_guide in (bd_y, chip_H - bd_y):
         ax.axhline(y_guide, color="gray", linewidth=0.5, linestyle=":", zorder=4)
 
     # ── Dimension annotations (left side, first lane) ───────────────────────
     ann_x = -bd * 0.3
-    y_cur = bd
+    y_cur = bd_y
     for height, label in [(Mcw, f"Mcw\n{Mcw:.3f} mm"), (mcl, f"mcl\n{mcl:.3f} mm")]:
         ax.annotate(
             "", xy=(ann_x, y_cur), xytext=(ann_x, y_cur + height),
@@ -623,7 +629,7 @@ def plot_layout_schematic(
 
     # ── Overflow warning ────────────────────────────────────────────────────
     if not fits:
-        overflow_mm = tot_h - (chip_H - 2.0 * bd)
+        overflow_mm = tot_h - H_useful
         ax.text(
             chip_W * 0.5, chip_H + bd * 0.4,
             f"⚠  overflows chip by {overflow_mm:.1f} mm  ({n_lanes} lanes needed)",

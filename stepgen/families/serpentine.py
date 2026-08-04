@@ -32,7 +32,10 @@ from typing import TYPE_CHECKING, Any, Sequence
 if TYPE_CHECKING:
     import pandas as pd
 
-from stepgen.families.base import CommonMetrics, Family, register_family
+from stepgen.families.base import (
+    SERPENTINE_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
+    register_family,
+)
 from stepgen.families.intent import (
     Constraints,
     Intent,
@@ -235,6 +238,11 @@ class SerpentineFamily(Family):
             # 1.0 mm measured on both built serpentines — a design rule, and the
             # thing that actually sets the lane pitch (reference_devices/README.md).
             wall_width=float(footprint.get("wall_width_um", 1000.0)) * 1e-6,
+            # 51% measured on TWO independent built serpentines, V5-30
+            # (69.0 × 74.0 mm) and V5-10 (68.6 × 74.0 mm), both on a 100 mm die.
+            # The rest is the 65.8 × 8 mm IO strip and 13–15 mm of margin.
+            active_area_fraction=float(
+                footprint.get("active_area_fraction", SERPENTINE_ACTIVE_FRACTION)),
             turn_radius=float(footprint.get("turn_radius_um", 500.0)) * 1e-6,
             reserve_border=float(footprint.get("reserve_border_mm", 2.0)) * 1e-3,
         )
@@ -320,15 +328,13 @@ class SerpentineFamily(Family):
         The drawing and this readout share one implementation of that arithmetic
         (:func:`stepgen.design.layout.lane_stackup`), which is the point.
         """
-        from stepgen.design.layout import compute_layout
+        from stepgen.design.layout import active_extent, compute_layout
         from stepgen.viz.schematic import PackingCapacity
 
         fp, geom = compiled.footprint, compiled.geometry
         lay = compute_layout(compiled)
 
-        area_m2 = fp.footprint_area_cm2 * 1e-4
-        H = math.sqrt(area_m2 / fp.footprint_aspect_ratio)
-        H_useful = H - 2.0 * fp.reserve_border
+        _, H_useful = active_extent(fp)
 
         pitch = geom.rung.pitch
         n_current = int(geom.Nmc_override or 0) or int(round(geom.main.Mcl / pitch))
@@ -768,6 +774,11 @@ def solve_config(
         regime_Ca = config.fluids.mu_dispersed * v_exit / gamma
 
     notes: list[str] = []
+    area_caveat = active_fraction_note(
+        math.sqrt(config.footprint.footprint_area_cm2) * 10.0, "serpentine",
+        config.footprint.active_area_fraction)
+    if area_caveat:
+        notes.append(area_caveat)
     # Honesty flag: the power-law droplet size is not trusted for deep exits
     # (see the droplet-model-regime-blind note). Flag ~2x extrapolation.
     if exit_d * 1e6 > 12.0:
@@ -871,7 +882,7 @@ def _serpentine_device(config, capacity=None):
     therefore reported (below the drawing) rather than drawn; W2-5 turns that
     into a metric.
     """
-    from stepgen.design.layout import lane_stackup
+    from stepgen.design.layout import active_extent, lane_stackup
     from stepgen.viz.schematic import Arc, Dim, Label, Rect, Schematic, Zone
 
     fp, geom = config.footprint, config.geometry
@@ -879,13 +890,16 @@ def _serpentine_device(config, capacity=None):
     area_m2 = fp.footprint_area_cm2 * 1e-4
     chip_W = math.sqrt(area_m2 * fp.footprint_aspect_ratio)
     chip_H = math.sqrt(area_m2 / fp.footprint_aspect_ratio)
-    bd = fp.reserve_border
     tr = fp.turn_radius
 
     Mcw, mcl = geom.main.Mcw, geom.rung.mcl
     mcw, pitch = geom.rung.mcw, geom.rung.pitch
 
-    lane_len = max(chip_W - 2.0 * bd, 0.0)
+    # The margin is DERIVED from the routable box, not an input any more — the
+    # die area a serpentine cannot route in is the measured active fraction.
+    lane_len, h_useful = active_extent(fp)
+    bd = max((chip_W - lane_len) * 0.5, 0.0)
+    bd_y = max((chip_H - h_useful) * 0.5, 0.0)
     pair_w, lane_pitch = lane_stackup(
         main_width_m=Mcw, dfu_array_m=mcl, wall_width_m=fp.wall_width,
     )
@@ -897,8 +911,8 @@ def _serpentine_device(config, capacity=None):
     remaining = n_total
 
     for i in range(n_lanes):
-        y0 = bd + i * lane_pitch
-        inside = (y0 + pair_w) <= (chip_H - bd + 1e-12)
+        y0 = bd_y + i * lane_pitch
+        inside = (y0 + pair_w) <= (chip_H - bd_y + 1e-12)
         here = min(remaining, per_lane_cap) if per_lane_cap else 0
         remaining -= here
 
@@ -927,24 +941,26 @@ def _serpentine_device(config, capacity=None):
                                  math.pi / 2, 3 * math.pi / 2, "turn"))
 
     total_h = (n_lanes - 1) * lane_pitch + pair_w
-    fits = total_h <= (chip_H - 2.0 * bd)
+    fits = total_h <= h_useful
 
     # dimension the first lane so the block heights are checkable
-    prims.append(Dim(bd - chip_W * 0.012, bd, bd - chip_W * 0.012, bd + Mcw,
+    prims.append(Dim(bd - chip_W * 0.012, bd_y, bd - chip_W * 0.012, bd_y + Mcw,
                      f"Mcw {Mcw * 1e6:.0f} um"))
-    prims.append(Dim(bd - chip_W * 0.045, bd + Mcw, bd - chip_W * 0.045, bd + Mcw + mcl,
+    prims.append(Dim(bd - chip_W * 0.045, bd_y + Mcw, bd - chip_W * 0.045, bd_y + Mcw + mcl,
                      f"mcl {mcl * 1e3:.2f} mm"))
     if n_lanes > 1:
-        prims.append(Dim(bd + lane_len * 0.5, bd + pair_w,
-                         bd + lane_len * 0.5, bd + lane_pitch,
+        prims.append(Dim(bd + lane_len * 0.5, bd_y + pair_w,
+                         bd + lane_len * 0.5, bd_y + lane_pitch,
                          f"wall {fp.wall_width * 1e6:.0f} um"))
-    prims.append(Label(bd + lane_len / 2, chip_H - bd * 0.4,
+    prims.append(Label(bd + lane_len / 2, chip_H - bd_y * 0.4,
                        f"{n_lanes} lane{'s' if n_lanes != 1 else ''} - "
                        f"{n_total:,} DFUs - pitch {pitch * 1e6:.0f} um"))
 
     notes = [
         f"{n_lanes} lane pair(s) of {lane_len * 1e3:.1f} mm; stack height "
-        f"{total_h * 1e3:.1f} mm against {(chip_H - 2 * bd) * 1e3:.1f} mm usable.",
+        f"{total_h * 1e3:.1f} mm against {h_useful * 1e3:.1f} mm routable "
+        f"({fp.active_area_fraction * 100:.0f}% of a {chip_W * 1e3:.0f} mm die is "
+        f"routable at all).",
         f"Lane pitch {lane_pitch * 1e3:.2f} mm = 2 x main {Mcw * 1e6:.0f} um + "
         f"DFU array {mcl * 1e3:.2f} mm + wall {fp.wall_width * 1e6:.0f} um "
         f"(measured stack-up, reference_devices/README.md).",
@@ -953,7 +969,7 @@ def _serpentine_device(config, capacity=None):
         f"- reported, not gated.",
     ]
     if not fits:
-        notes.append(f"Overflows the die by {(total_h - (chip_H - 2 * bd)) * 1e3:.1f} mm.")
+        notes.append(f"Overflows the routable box by {(total_h - h_useful) * 1e3:.1f} mm.")
     if per_lane_cap and n_total > per_lane_cap * n_lanes:
         notes.append(
             f"{n_total:,} DFUs exceeds the {per_lane_cap * n_lanes:,} that these "
@@ -962,7 +978,7 @@ def _serpentine_device(config, capacity=None):
 
     return Schematic(
         family="serpentine", view="device", prims=prims,
-        extent=(0.0, 0.0, chip_W, max(chip_H, total_h + 2 * bd)),
+        extent=(0.0, 0.0, chip_W, max(chip_H, total_h + 2 * bd_y)),
         title="Serpentine - whole device",
         subtitle=f"die {chip_W * 1e3:.1f} x {chip_H * 1e3:.1f} mm",
         notes=notes,

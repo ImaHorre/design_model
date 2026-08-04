@@ -114,7 +114,19 @@ class FootprintConfig:
     # built serpentines (reference_devices/README.md) — it is a design rule, and
     # it is what sets the lane pitch.  See design.layout.lane_stackup.
     wall_width: float = 1.0e-3     # [m]
+    # Fraction of the die that is routable at all, after IO ports, feed strips
+    # and edge margins.  Measured per family; the FAMILY sets it (serpentine
+    # 0.51, radial 0.64), so the default here is 1.0 = "the area given is all
+    # usable", which is what a hand-written device YAML means by an area.
+    # See design.layout.active_extent, and W1-2's caveat: these were measured on
+    # a 100 mm die and an area FRACTION does not scale to another die size.
+    active_area_fraction: float = 1.0
     turn_radius: float = 500e-6    # [m]
+    # DEPRECATED — no longer used by the layout.  The overhead it stood for is
+    # now the measured active_area_fraction, which subsumes it (at 100 mm the
+    # fraction implies a ~14 mm serpentine margin; this field's default was
+    # 2 mm, which was the whole source of the old 1.66× capacity over-predict).
+    # Retained only so older configs load.
     reserve_border: float = 2e-3   # [m]
     # DEPRECATED — no longer part of any stack-up.  Nothing on either built
     # device is 500 µm wide; the lane pitch is 2×main + DFU array + wall, with
@@ -410,6 +422,7 @@ def _parse_footprint(d: dict[str, Any]) -> FootprintConfig:
         footprint_area_cm2=float(d.get("footprint_area_cm2", 10.0)),
         footprint_aspect_ratio=float(d.get("footprint_aspect_ratio", 1.5)),
         wall_width=float(d.get("wall_width", 1.0e-3)),
+        active_area_fraction=float(d.get("active_area_fraction", 1.0)),
         turn_radius=float(d.get("turn_radius", 500e-6)),
         reserve_border=float(d.get("reserve_border", 2e-3)),
         lane_spacing=float(d.get("lane_spacing", 500e-6)),
