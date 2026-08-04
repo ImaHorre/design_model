@@ -180,6 +180,16 @@ def chapter_payload(
             "why": why,
             "v": {a.path: leaves.get(i, {}).get(a.path) for a in axes},
             "m": metrics,
+            # the γ this row's exit Ca was computed at [N/m].  Per row, not per
+            # study: a study may carry several fluid systems, and Ca ∝ 1/γ
+            # exactly — so the filter bar can only state the constant behind a
+            # Ca verdict if each row brings its own.  Kept out of "m" so it
+            # never becomes a plot axis; it is provenance, not a result.
+            "gamma": _num(sr.metrics.gamma_Nm),
+            # per-metric distance from the ceiling (uncapped), for the
+            # Ca-distance column.  min_margin cannot answer "how far is the Ca".
+            "margins": {k: c.margin for k, c in sr.cells.items()
+                        if c.category != "grey" and c.margin is not None},
         })
 
     # only offer plot axes some row can actually place
@@ -249,6 +259,10 @@ INTERACTIVE_CSS = """
 .line input[type=number]{width:74px;}
 .line input[type=checkbox]{width:auto;}
 .count{font-size:12px;font-weight:600;margin-left:auto;align-self:center;}
+/* the γ behind the Ca column — never quiet, because a Ca verdict read without
+   its interfacial tension is a physics claim with an invisible constant */
+.gnote{font-size:11.5px;color:#57606a;align-self:center;flex-basis:100%;}
+.gnote.mixed{color:#9a6700;font-weight:600;}
 .tabbar{display:flex;gap:.3rem;margin-top:.5rem;border-bottom:1px solid #d0d7de;}
 .tabbtn{font-size:12.5px;padding:.35rem .9rem;border:1px solid transparent;
   border-bottom:none;border-radius:7px 7px 0 0;background:transparent;color:inherit;
@@ -387,6 +401,7 @@ function buildRail(){
   }
   h.push('<button class="btn" onclick="resetAll()">Reset filters</button>');
   h.push('<button class="btn" onclick="clearPins()">Clear pins</button>');
+  h.push('<span class="gnote" id="gammanote"></span>');
   h.push('</div><div class="chipbar" id="pinbar"></div>');
   h.push('<div class="tabbar">'
     + [['explore','Explore'],['designs','Designs'],['runs','All runs'],['notes','Notes']]
@@ -789,10 +804,51 @@ function paintLevers(){
   });
 }
 
+// ── the constant behind the Ca column ──────────────────────────────────────
+// Ca = mu*v/gamma, so Ca is exactly proportional to 1/gamma — and gamma is not
+// measured on Peak's fluids (it varies 3x across this repo's configs). A Ca
+// limit control with no gamma on the page is a physics claim resting on an
+// invisible constant.
+//
+// This recomputes over the VISIBLE rows on purpose. The diagnosis panel states
+// gamma over every row; narrow to a subset that mixes fluid systems and that
+// statement quietly stops applying. Here the note follows the filter, so a
+// mixed subset says it is mixed rather than implying one gamma.
+function paintGamma(rows){
+  var el=document.getElementById('gammanote');
+  if(!el) return;
+  var seen=[], missing=0;
+  rows.forEach(function(r){
+    if(r.gamma===null||r.gamma===undefined){ missing++; return; }
+    var g=Math.round(r.gamma*1e6)/1e3;          // N/m -> mN/m
+    if(seen.indexOf(g)<0) seen.push(g);
+  });
+  seen.sort(function(a,b){return a-b;});
+  var txt='', mixed=false;
+  if(!rows.length){ txt=''; }
+  else if(!seen.length){
+    txt='exit Ca: γ not recorded on these rows — Ca cannot be re-checked';
+    mixed=true;
+  } else if(seen.length===1){
+    txt='exit Ca computed at γ = '+seen[0]+' mN/m (unmeasured; Ca ∝ 1/γ)';
+  } else {
+    txt='exit Ca spans γ = '+seen.join(', ')+' mN/m — Ca ∝ 1/γ, so these rows '
+       +'are not comparable on Ca. Filter to one fluid system.';
+    mixed=true;
+  }
+  if(missing && seen.length){
+    txt += ' · '+missing+' row'+(missing===1?'':'s')+' carry no γ';
+    mixed=true;
+  }
+  el.textContent=txt;
+  el.className='gnote'+(mixed?' mixed':'');
+}
+
 function paint(){
   var rows=shown();
   document.getElementById('railcount').textContent =
     rows.length+' of '+CHAPTER.rows.length+' rows';
+  paintGamma(rows);
   paintPins(); paintPinTable(); paintDesigns(rows); paintTable(rows);
   paintLevers(); paintPlot(rows);
 }

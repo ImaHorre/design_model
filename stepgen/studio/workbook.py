@@ -1567,6 +1567,41 @@ one for a green row, the binding one otherwise.</p>
     return out_path
 
 
+def _fluids_json(result: StudyResult) -> dict[str, Any]:
+    """
+    The fluid constants this chapter's numbers rest on — γ above all.
+
+    γ varies 3x across this repo's configs (5 / 15 / 0 mN/m) and ``Ca ∝ 1/γ``
+    exactly, so a sidecar that records a Ca without its γ cannot be re-checked
+    and must never be pooled with another chapter's rows.
+
+    The declared ``fluids:`` block is written verbatim, but γ is resolved from
+    the **points that were actually solved** rather than from the study block:
+    ``fluids:`` may be a list (several fluid systems, deliberately not crossed),
+    and a study may vary it per design.  Where the points disagree there is no
+    study γ, so ``gamma_Nm`` is null and every value found is listed instead —
+    asserting one system's γ over another's is how a confident wrong Ca is made.
+    """
+    declared = (result.study.raw or {}).get("fluids", {})
+
+    gammas: list[float] = []
+    for p in result.study.points:
+        try:
+            g = float((p.fluids or {}).get("gamma", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if g > 0:
+            gammas.append(g)
+    unique = sorted(set(gammas))
+
+    return {
+        "declared": declared,
+        "gamma_Nm": unique[0] if len(unique) == 1 else None,
+        "gamma_values_Nm": unique,
+        "uniform": len(unique) <= 1,
+    }
+
+
 def _chapter_json(
     result: StudyResult,
     scored: list[ScoredRow],
@@ -1581,6 +1616,8 @@ def _chapter_json(
         "families": result.study.families,
         "git_hash": result.provenance.git_hash,
         "timestamp": result.provenance.timestamp,
+        # the constants the Ca column rests on; see _fluids_json
+        "fluids": _fluids_json(result),
         # the question as asked, when it was asked as a target rather than a grid
         "intent": None if plan is None else plan.summary(),
         # why the answer came out this way, and what would change it
@@ -1616,6 +1653,11 @@ def _chapter_json(
                 "extrapolated": sr.extrapolated_keys,
                 "confidence": {k: c.confidence for k, c in sr.cells.items()
                                if c.category != "grey"},
+                # per-metric distance from the ceiling, deliberately uncapped —
+                # `min_margin` alone cannot answer "how far is THIS row's Ca from
+                # the bound", which is the column the Ca-distance view needs.
+                "margins": {k: c.margin for k, c in sr.cells.items()
+                            if c.category != "grey"},
                 "metrics": {
                     "throughput_mlhr": sr.metrics.throughput_mlhr,
                     "N_dfu": sr.metrics.N_dfu,
@@ -1631,6 +1673,7 @@ def _chapter_json(
                     "exit_width_um": sr.metrics.exit_width_um,
                     "exit_depth_um": sr.metrics.exit_depth_um,
                     "lambda_visc": sr.metrics.lambda_visc,
+                    "gamma_Nm": sr.metrics.gamma_Nm,
                 },
             }
             for i, sr in enumerate(scored)

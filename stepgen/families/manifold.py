@@ -648,6 +648,9 @@ def solve_manifold(
         exit_width_um=c.exit_width_m * 1e6,
         exit_depth_um=c.exit_depth_m * 1e6,
         lambda_visc=(c.mu_water / c.mu_oil) if c.mu_oil else None,
+        # the γ `regime_Ca` above was computed at.  Ca ∝ 1/γ exactly, so a Ca
+        # verdict travelling without its γ is a number nobody can re-check.
+        gamma_Nm=(c.gamma if c.gamma > 0 else None),
         hub_budget_pct=None,        # N-A for manifold (radial-specific)
         area_used_cm2=area_used_cm2,
         fits_square=fits_square,

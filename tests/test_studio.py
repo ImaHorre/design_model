@@ -221,6 +221,48 @@ def test_template_study_runs_end_to_end(tmp_path):
     assert chapter.stat().st_size > 10_000
 
 
+def _payload_of(chapter):
+    """The interactive payload back out of a written chapter."""
+    import json as _json
+    html = chapter.read_text(encoding="utf-8")
+    i = html.index("const CHAPTER=") + len("const CHAPTER=")
+    j = html.index(";</script>", i)
+    return _json.loads(html[i:j].replace("<\\/", "</"))
+
+
+def test_chapter_carries_gamma_and_per_metric_margins(tmp_path):
+    """
+    Both sidecars must record γ and the per-metric margins.
+
+    Ca ∝ 1/γ exactly and γ varies 3x across this repo's configs, so a Ca number
+    travelling without its γ cannot be re-checked and must never be pooled with
+    another chapter's.  The chapter is filter-first, so γ has to ride on the
+    *row* — a study-level constant stops applying the moment a reader narrows
+    to a subset that mixes fluid systems.
+    """
+    import json as _json
+    from stepgen.studio import run_study, write_workbook
+
+    study = load_study(TEMPLATE)
+    gamma = float(study.raw["fluids"]["gamma"])          # 0.015 N/m in the template
+    result = run_study(study)
+    chapter = write_workbook(result, tmp_path / "chapter.html")
+
+    side = _json.loads(chapter.with_suffix(".json").read_text(encoding="utf-8"))
+    assert side["fluids"]["gamma_Nm"] == pytest.approx(gamma)
+    assert side["fluids"]["uniform"] is True
+    assert side["rows"][0]["metrics"]["gamma_Nm"] == pytest.approx(gamma)
+    # per-metric margin, not just the weakest link
+    assert isinstance(side["rows"][0]["margins"]["regime_Ca"], float)
+
+    payload = _payload_of(chapter)
+    assert all(r["gamma"] == pytest.approx(gamma) for r in payload["rows"])
+    assert isinstance(payload["rows"][0]["margins"]["regime_Ca"], float)
+    # the filter bar has to be able to say which γ the visible rows used
+    html = chapter.read_text(encoding="utf-8")
+    assert "gammanote" in html and "paintGamma" in html
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 — radial family (§11 L_eff + hub-ΔP corrections)
 # ---------------------------------------------------------------------------
