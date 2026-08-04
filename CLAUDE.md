@@ -32,16 +32,42 @@ stepgen/                     core library
   design/
     design_search.py
     operating_map.py
-    sweep.py
-  viz/plots.py               result plotting
+    sweep.py                 layout.py — serpentine fold stack-up and packing
+  families/                  topology families (serpentine, radial, manifold) + intent
+  studio/                    Design Studio: study → score → decide → diagnose → chapter
+  viz/plots.py               result plotting; schematic.py — to-scale device SVG
   cli.py                     stepgen CLI entry point
 
 configs/                     device YAML config files (one per device geometry/fluid system)
+reference_devices/           the three BUILT devices as GDS + measured ground truth
 experimental_workspaces/     focused studies (see Experimental Workflow below)
 scripts/                     utility scripts (compare, workspace creation, parameter studies)
 tests/                       pytest suite
 docs/                        physics plans, implementation history
 ```
+
+
+## Design Studio
+
+The Studio is the design-side counterpart to the model: `stepgen study` solves a declared
+study, scores every row, and writes a self-contained HTML chapter you filter in the browser.
+
+**Read before starting any Studio work, in this order:**
+
+1. `.claude/plans/design-studio-filter-first-front-door.md` — **the active plan.** Verified
+   against the code; carries the sequencing (Batch 1 → Wave 1 → Wave 2 → server → explorer),
+   the locked decisions, and the measured evidence. Supersedes roadmap Phase 6.
+2. `docs/06_design_studio/PRD_studio_v1.md` — the stable what-and-why.
+3. `docs/06_design_studio/roadmap_studio_v1.md` — the record of Phases 0–3 and M1. Phase 6
+   in it is **superseded**; do not execute it.
+
+**`reference_devices/` is ground truth for layout and packing.** Where the model's geometry
+disagrees with a number in its README, the model is wrong. Do not re-derive those numbers
+from the model or from memory — read the README.
+
+Study configs are the spec for the study format: `configs/study_my_designs.yaml` documents
+the set-vs-axis rule (**lists concatenate, dicts cross**) and the shallow-merge trap on
+YAML anchors. Read it before writing or generating a study.
 
 
 ## Authoritative physics documents

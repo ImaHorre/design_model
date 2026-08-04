@@ -28,9 +28,18 @@ wafer. Phase 5 is promoted to run alongside it. Details in Phase 2's "What actua
 | **M1** | **Deep-DFU sweep session** | — | **ungated — next** |
 | 5 | Boundary-probe studies + calibration loop | M | **promoted — run with M1** |
 | 4 | Workbook as memory | M | not started |
-| 6 | Form-driven UI | M | not started |
+| ~~6~~ | ~~Form-driven UI~~ | — | **superseded 2026-08-04** — see the filter-first plan |
 | 7 | GDS handoff | S | not started |
 | 8 | Consolidation & archive | S | not started |
+
+> **Active plan, 2026-08-04.** Phase 6 has been replaced by
+> **`.claude/plans/design-studio-filter-first-front-door.md`**, which is the executable
+> plan for the next block of work (Batch 1 → Wave 1 → Wave 2 → server → explorer). It
+> supersedes Phase 6 entirely and re-scopes parts of Phases 3 and 4. Read it before
+> starting any Studio work; this roadmap remains the record of Phases 0–3 and M1.
+>
+> Physical ground truth for layout and packing now lives in **`reference_devices/`** —
+> the three built devices as GDS, with the measurement table in its README.
 
 Sizes are relative: **S** = a sitting, **M** = a focused block of work, **L** = multi-session.
 
@@ -618,7 +627,25 @@ well-designed wafer converts the largest open risk into a measured number.
 
 ---
 
-## Phase 6 — Form-driven UI
+## Phase 6 — Form-driven UI — **SUPERSEDED 2026-08-04**
+
+> **Do not execute this phase.** It is replaced by
+> `.claude/plans/design-studio-filter-first-front-door.md`.
+>
+> **Why it was wrong.** Phase 6 assumed the user composes a bespoke study per question, so
+> the job was a form that writes an `intent:` block. That is not the loop. The real loop is
+> *run one broad sweep → filter the results → sort by what matters → refine around the
+> designs you liked*. Every constraint the user actually states (ΔP spread, area, pressure,
+> throughput, Ca) is a field on a solved row, so it belongs in a **filter, not a grid
+> generator**. That dissolves this roadmap's own bolded lesson — a generated grid inherits
+> the bias of whatever it was sized against — because a broad sweep is sized against
+> nothing.
+>
+> Two deliverables below survive, relocated: the template gallery becomes the *design set*
+> region of the new form, and "YAML stays the source of truth" is unchanged. The
+> "I want to…" intent screen and the LLM config helper are **out for v1**.
+>
+> Retained verbatim below as the record of what was planned.
 
 **Goal:** "easy to understand, easy to interact with" — the current sidebar is a raw YAML
 `st.text_area`.
