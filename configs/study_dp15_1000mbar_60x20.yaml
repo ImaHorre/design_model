@@ -1,0 +1,96 @@
+# study_dp15_1000mbar_60x20.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# THE QUESTION (Conor, 2026-08-03):
+#
+#   "Keeping max area 10x10 cm, what design dimensions do I need MINIMUM to
+#    ensure DP across all DFUs within 15% and operation under 1000 mbar, for a
+#    DFU exit geometry of 20 µm deep x 60 µm wide?"
+#
+# This is Path B: the junction is PINNED by the question (60 x 20 µm), so there
+# is no `intent:` block — we sweep the free geometry directly and let scoring
+# say where the 15% / 1000 mbar frontier sits.
+#
+# Fixed by the question:      exit 60 x 20 µm; die 100 x 100 mm; Po <= 1000 mbar
+# Free (swept):               main depth, main width, rung length, N, Po
+# The answer we want:         the MINIMUM main cross-section that holds
+#                             uniformity_pct <= 15 at each DFU count.
+#
+# NOTE ON "MINIMUM": with no throughput floor stated, flatness is trivially
+# bought by shrinking N (fewer DFUs -> flatter ladder, per
+# comp_deep_dfu_v5_main_mods Part 2). So the honest answer is a FRONTIER over N,
+# not one device. N is swept and reported per level.
+# ─────────────────────────────────────────────────────────────────────────────
+
+title: "DP<=15% under 1000 mbar on a 60x20 µm exit — minimum main geometry (100 mm die)"
+
+decide:
+  axes: [flatness, throughput, drive_pressure, margin]
+  weights: { flatness: 0.4, throughput: 0.3, drive_pressure: 0.2, margin: 0.1 }
+
+family: [serpentine, manifold]
+
+fluids:
+  mu_dispersed:  0.06       # Pa·s — sunflower oil (dispersed)
+  mu_continuous: 0.00089    # Pa·s — 2% SDS water (continuous)
+  gamma:         0.005      # N/m  — UNMEASURED; 5 mN/m as in study_all_families.
+                            # Ca ∝ 1/γ, so the γ-robustness layer sweeps 3–20.
+  emulsion_ratio: 0.10
+  phase_system:  o/w
+
+footprint:
+  square_side_mm: 100.0     # the 10 x 10 cm ceiling from the question
+  feed_length_mm: 96.0      # manifold spine available (side minus border)
+  reserve_border_mm: 2.0
+
+manufacturing:
+  max_main_depth_um: 400.0  # deliberately ABOVE the 200 µm fab cap so the sweep
+  max_main_width_um: 2000.0 # can show whether the cap is what binds. The build
+  min_wall_um: 5.0          # gate below still flags anything past current fab.
+
+operating:
+  Po_mbar: [200, 500, 1000]
+  Qw_mlhr: 5.0
+
+# ── serpentine: the incumbent V5 topology, one long main ─────────────────────
+serpentine:
+  main:
+    depth_um: [100, 200, 300, 400]
+    width_um: [500, 1000, 1500, 2000]
+  rung:
+    length_mm: [1, 2, 4]
+    # Rung depth == exit depth (single etch) = 20 µm, so the upstream width must
+    # exceed 20 µm for the rectangular-resistance model to be valid. This is a
+    # first-class flatness lever: narrow/long rungs raise R_rung, which is what
+    # keeps the ladder flat (comp_deep_dfu_v5_main_mods).
+    upstream_width_um: [25, 40]
+    N: [500, 1000, 2000, 4000]
+  junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }
+
+# ── manifold (comb): spine + arms; 1–2 orders flatter at equal N ─────────────
+# n ≈ λ_arm rule pinned by comp_manifold_parametrization. Arms swept to trace
+# the flatness V-curve rather than assuming the optimum transfers.
+manifold:
+  main:  { depth_um: [200, 400], width_um: [1000, 2000] }
+  arms:  { count: [10, 25, 50], depth_um: 100, width_um: 200 }
+  rung:  { length_mm: 2, upstream_width_um: [25, 40] }
+  rungs_per_arm: [40, 80, 160]
+  junction: { exit_width_um: 60, exit_depth_um: 20, pitch_um: 120 }
+  cont_phase: { width_um: 200, flow_scaled: true, max_velocity_mps: 0.1 }
+  wall: { min_um: 100 }
+
+# ── scoring — the question's own thresholds ──────────────────────────────────
+scoring:
+  # THE BAR: 15% ΔP spread is green. Orange to 30% shows the near-misses.
+  uniformity_pct:    { green: 15,   orange: 30 }
+  # THE CEILING: under 1000 mbar. Green at half the ceiling, red past it.
+  operating_Po_mbar: { green: 500,  orange: 1000 }
+  # No throughput target was stated — kept permissive so it ranks but never gates.
+  throughput_mlhr:   { green: 1,    orange: 0.1, higher_better: true }
+  # SE→jetting ceiling. green ≤ 0.0125 (@montessori2020-step-emulsification),
+  # orange ≤ 0.03 (@chakraborty2017-step-emulsification). Both at λ ≈ 1; we run
+  # λ ≈ 0.015, which narrows the SE window — see wiki open-questions/deep-dfu-se-regime.
+  regime_Ca:         { green: 0.0125, orange: 0.03 }
+  build:             { from: manufacturing, fits_square: required, no_crossing: required }
+
+reference:
+  - { kind: modelled, config: configs/v5_30.yaml, label: "V5-30 (model)" }
