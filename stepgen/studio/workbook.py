@@ -32,9 +32,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from stepgen.families.base import CA_MEASURED_MAX, SE_CEILING_CA
 from stepgen.studio.diagnosis import Diagnosis, diagnose
 from stepgen.studio.grouping import (
     Axis, Grouping, build_grouping, format_axis_value, row_axis_values,
+)
+from stepgen.studio.interactive import (
+    INTERACTIVE_CSS, INTERACTIVE_JS, chapter_payload, payload_script, verdict_reason,
 )
 from stepgen.studio.ranking import (
     Decision, ValueAxis, axis_value, decide, decide_subset,
@@ -249,7 +253,14 @@ def _series_hits(rs, xattr, yattr) -> bool:
 
 
 def _build_plots(scored: list[ScoredRow], goal: str, refs=None) -> list[dict[str, Any]]:
-    """Return the standard plot set, each with toggle variants + references."""
+    """
+    The static plot set, for the Streamlit Studio UI.
+
+    The HTML chapter no longer uses these — it draws one configurable SVG plot
+    from the row payload instead (:mod:`stepgen.studio.interactive`), so the
+    reader picks the axes and the filters reach the plot.  This stays because
+    the live UI renders PNGs inline and has no such payload.
+    """
     refs = refs or []
     return [
         _variant_plot(
@@ -274,11 +285,13 @@ def _build_plots(scored: list[ScoredRow], goal: str, refs=None) -> list[dict[str
         ),
         _variant_plot(
             scored, goal, refs,
-            xattr="N_dfu", yattr="throughput_mlhr",
-            xlabel="N DFU", ylabel="Throughput (mL/hr)",
-            title="Throughput vs DFU count",
-            caption=("IRL: more parallel DFUs generally means more oil — until the far "
-                     "ones starve or reverse and extra DFUs stop paying their way."),
+            xattr="throughput_mlhr", yattr="regime_Ca",
+            xlabel="Throughput (mL/hr)", ylabel="Exit Ca",
+            title="Output vs blow-out risk",
+            caption=("IRL: every mL/hr is bought with exit velocity, and exit Ca is "
+                     "what that velocity costs. Above the SE ceiling droplet size stops "
+                     "being geometry-set — which is the part 'more pressure, more "
+                     "throughput' leaves out."),
             with_best=True,
         ),
         _variant_plot(
@@ -319,17 +332,28 @@ def _light(cat: str) -> str:
 # Decision panel
 # ---------------------------------------------------------------------------
 
-def _pick_card(title: str, sub: str, row: ScoredRow | None, extra: str = "") -> str:
+def _pick_card(title: str, sub: str, row: ScoredRow | None, extra: str = "",
+               where: str = "", index: int | None = None) -> str:
+    """
+    One winner card.
+
+    *where* is the row said in design-and-conditions terms.  The internal label
+    is a machine key — printing it here is how the old panel managed to answer
+    "which design won?" with forty characters nobody can parse at a glance.
+    """
     if row is None:
         return (f'<div class="pick"><h4>{html.escape(title)}</h4>'
                 f'<div class="picksub">{html.escape(sub)}</div>'
                 f'<div class="pickname">—</div>'
                 f'<div class="pickwhy">no row can be compared on this</div></div>')
-    return (f'<div class="pick"><h4>{html.escape(title)}</h4>'
+    click = f' onclick="gotoRow({index})"' if index is not None else ""
+    row_ref = f' · row #{index + 1}' if index is not None else ""
+    return (f'<div class="pick"{click} title="{html.escape(row.metrics.label)}">'
+            f'<h4>{html.escape(title)}</h4>'
             f'<div class="picksub">{html.escape(sub)}</div>'
             f'<div class="pickname">{_light(row.overall)}'
-            f'{html.escape(row.metrics.label)}</div>'
-            f'<div class="pickwhy">{extra}</div></div>')
+            f'{html.escape(where or row.metrics.label)}</div>'
+            f'<div class="pickwhy">{extra}{row_ref}</div></div>')
 
 
 def _axis_cell(row: ScoredRow, axis: ValueAxis) -> str:
@@ -341,7 +365,9 @@ def _axis_cell(row: ScoredRow, axis: ValueAxis) -> str:
     return f"{fmt_metric(value, _FMT_BY_KEY.get(axis.source, 'g3'))}{axis.unit}"
 
 
-def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
+def _decision_html(scored: list[ScoredRow], dec: Decision,
+                   grouping: Grouping | None = None,
+                   leaves: dict[int, dict[str, Any]] | None = None) -> str:
     """
     The decide layer, rendered above the table.
 
@@ -352,6 +378,15 @@ def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
     if not scored:
         return ""
 
+    leaves = leaves or {}
+
+    def where_of(i: int | None) -> str:
+        if i is None or grouping is None:
+            return ""
+        gid = grouping.group_of.get(i, "")
+        cond = _conditions_text(leaves.get(i, {}), grouping.condition_axes, scored[i])
+        return f"{gid} · {cond}" if gid else cond
+
     # ── per-axis winners ────────────────────────────────────────────────────
     cards = []
     for axis in dec.axes:
@@ -360,7 +395,7 @@ def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
         detail = _axis_cell(row, axis) if row is not None else ""
         # never .lower() the label — it would turn "ΔP spread" into "δp spread"
         cards.append(_pick_card(f"Best: {axis.label}", "per-axis winner",
-                                row, html.escape(detail)))
+                                row, html.escape(detail), where_of(i), i))
     axis_cards = f'<div class="picks">{"".join(cards)}</div>'
 
     # ── all-round + safest ──────────────────────────────────────────────────
@@ -380,9 +415,10 @@ def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
 
     summary_cards = (
         '<div class="picks">'
-        + _pick_card("All-round", "weighted composite", all_round_row, all_round_why)
+        + _pick_card("All-round", "weighted composite", all_round_row, all_round_why,
+                     where_of(dec.all_round), dec.all_round)
         + _pick_card("Safest to build first", "confidence-discounted margin",
-                     safest_row, safest_why)
+                     safest_row, safest_why, where_of(dec.safest), dec.safest)
         + '</div>'
     )
 
@@ -390,7 +426,8 @@ def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
     if dec.pareto:
         head = "".join(f"<th>{html.escape(a.label)}</th>" for a in dec.axes)
         body = "".join(
-            "<tr><td><b>" + html.escape(scored[i].metrics.label) + "</b></td>"
+            f'<tr class="clickable" onclick="gotoRow({i})"><td><b>'
+            + html.escape(where_of(i) or scored[i].metrics.label) + "</b></td>"
             + "".join(f"<td>{_axis_cell(scored[i], a)}</td>" for a in dec.axes)
             + "</tr>"
             for i in dec.pareto
@@ -414,15 +451,11 @@ def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
     if incomparable:
         missing = sorted({a.label for i in incomparable for a in dec.axes
                           if axis_value(scored[i], a) is None})
-        names = ", ".join(html.escape(scored[i].metrics.label) for i in incomparable[:6])
-        more = f" (+{len(incomparable) - 6} more)" if len(incomparable) > 6 else ""
         pareto_html += (
-            f'<p class="muted">{len(incomparable)} design'
-            f'{"s" if len(incomparable) != 1 else ""} could not be placed on the '
-            f'Pareto front — N-A on {html.escape(", ".join(missing))}: '
-            f'{names}{more}. They are compared on the axes they do have, but a '
-            f'design that cannot be measured on an axis cannot be called '
-            f'non-dominated across all of them.</p>'
+            f'<p class="muted">{len(incomparable)} run'
+            f'{"s" if len(incomparable) != 1 else ""} left off the front — N-A on '
+            f'{html.escape(", ".join(missing))}, and a design that cannot be measured '
+            f'on an axis cannot be called non-dominated across all of them.</p>'
         )
 
     # ── honesty notes ───────────────────────────────────────────────────────
@@ -464,7 +497,7 @@ def _decision_html(scored: list[ScoredRow], dec: Decision) -> str:
 
     return (
         '<section class="decision">'
-        '<h2>Decision</h2>'
+        '<h2>Across every design</h2>'
         f'{axis_cards}{summary_cards}{pareto_html}{notes_html}'
         '</section>'
     )
@@ -853,8 +886,12 @@ def _levers_table(steps: Sequence[Any], watches: Sequence[Any], title: str) -> s
     if not steps:
         return ""
     head = "".join(f"<th>{html.escape(w.label)}</th>" for w in watches)
+    # data-leveraxis lets the page drop a lever the reader has filtered away:
+    # once you have pinned the fluid to o/w, "switch to w/o" is not a lever you
+    # have, it is a different study.
     body = "".join(
-        f'<tr><td class="lev">{html.escape(s.label)}</td>'
+        f'<tr data-leveraxis="{html.escape(s.axis.path)}">'
+        f'<td class="lev">{html.escape(s.label)}</td>'
         f'<td class="num muted">{s.n_pairs}</td>'
         + "".join(_lever_cell(s, w.key) for w in watches) + "</tr>"
         for s in steps
@@ -893,7 +930,8 @@ def _advice_html(
                      if k != metric and e.direction == "worse" and e.delta != 0
                      and (e.rel is None or abs(e.rel) > 0.02)]
             rows.append(
-                f'<tr title="median over {step.n_pairs} row pairs differing only on '
+                f'<tr data-leveraxis="{html.escape(step.axis.path)}" '
+                f'title="median over {step.n_pairs} row pairs differing only on '
                 f'{html.escape(step.axis.label)}">'
                 f'<td>{html.escape(axis.label)}</td>'
                 f'<td><span class="tag measured">measured</span>'
@@ -929,6 +967,16 @@ def _advice_html(
     )
 
 
+def _design_params_html(group, axes: Sequence[Axis]) -> str:
+    """The design's own geometry, as the thing the panel is actually about."""
+    items = "".join(
+        f'<li><span>{html.escape(a.label)}</span><br><b>'
+        f'{html.escape(a.show(group.values.get(a.path)))}</b></li>'
+        for a in axes
+    )
+    return f'<ul class="dparams">{items}</ul>'
+
+
 def _design_sections_html(
     scored: list[ScoredRow],
     grouping: Grouping,
@@ -936,7 +984,11 @@ def _design_sections_html(
     decisions: dict[str, Decision],
     compare_html: str = "",
 ) -> str:
-    """One decision panel per design, each ranking that design's own conditions."""
+    """
+    One panel per design.  The winner cards are shells: the browser fills them
+    from whatever the filters leave visible, so "best throughput" always means
+    best among the rows on screen.
+    """
     from stepgen.studio.levers import WATCHED, measured_levers
 
     if not grouping.groups:
@@ -946,29 +998,6 @@ def _design_sections_html(
     sections: list[str] = []
     for group in grouping.groups:
         dec = decisions[group.gid]
-        cards = "".join(
-            _pick_card_for(axis, dec.per_axis.get(axis.key), scored, leaves,
-                           grouping.condition_axes)
-            for axis in dec.axes
-        )
-
-        extra = []
-        if dec.all_round is not None:
-            extra.append(
-                f'<b>All-round</b> (weighted composite within this design): '
-                f'{html.escape(_conditions_text(leaves.get(dec.all_round, {}), grouping.condition_axes, scored[dec.all_round]))} '
-                f'<span class="muted">row #{dec.all_round + 1}, '
-                f'{scored[dec.all_round].overall}</span>')
-        if dec.safest is not None:
-            m = scored[dec.safest].min_margin_discounted or 0.0
-            extra.append(
-                f'<b>Safest</b> (discounted margin {m * 100:.0f}%): '
-                f'{html.escape(_conditions_text(leaves.get(dec.safest, {}), grouping.condition_axes, scored[dec.safest]))} '
-                f'<span class="muted">row #{dec.safest + 1}</span>')
-        if dec.all_red:
-            extra.append('<span class="warn">Every point of this design scored red — '
-                         'the picks above are least-bad, not recommendations.</span>')
-        extra_html = "".join(f"<li>{e}</li>" for e in extra)
 
         spans = measured_levers(scored, group.indices, leaves,
                                 grouping.condition_axes, mode="span")
@@ -984,25 +1013,20 @@ def _design_sections_html(
                 + _levers_table(notches, watches, "Lever — one notch")
                 + '</details>')
         if levers_html:
-            levers_html = (
-                '<h3>What moves this design</h3>'
-                '<p class="muted">Median change over row pairs that differ on this '
-                'axis and nothing else. Green helped, red hurt; ΔP flatness is in '
-                'percentage points, everything else relative.</p>' + levers_html)
+            levers_html = ('<h3>What moves this design</h3>' + levers_html
+                           + '<p class="muted">Median over row pairs differing on that '
+                             'axis alone. Flatness in points, the rest relative.</p>')
 
         n_txt = _n_range(scored, group.indices)
         sections.append(
             f'<details class="dgroup" id="grp-{group.gid}" open>'
             f'<summary><span class="gid">{group.gid}</span> '
-            f'<b>{html.escape(group.label(grouping.design_axes))}</b> '
-            + (f'<span class="muted">· {html.escape(n_txt)}</span> ' if n_txt else "")
-            + f'<span class="muted">· {len(group.indices)} points</span> '
-            f'{_verdict_bar(scored, group.indices)}</summary>'
+            f'<b>{html.escape(group.label(grouping.design_axes))}</b>'
+            + (f' <span class="muted">· {html.escape(n_txt)}</span>' if n_txt else "")
+            + f' <span class="muted" id="cnt-{group.gid}"></span></summary>'
             f'<div class="gbody">'
-            f'<p><button class="btn" onclick="filterToDesign(\'{group.gid}\')">'
-            f'Show only this design in the table ↓</button></p>'
-            f'<div class="picks">{cards}</div>'
-            f'<ul class="decnotes">{extra_html}</ul>'
+            f'{_design_params_html(group, grouping.design_axes)}'
+            f'<div class="picks" id="picks-{group.gid}"></div>'
             f'{levers_html}'
             f'{_advice_html(dec.axes, spans, swept, scored)}'
             f'</div></details>'
@@ -1010,17 +1034,12 @@ def _design_sections_html(
 
     return ('<section class="decision">'
             f'<h2>Per-design decisions — {len(grouping.groups)} designs</h2>'
-            '<p class="muted">Each design is ranked against <b>its own</b> operating '
-            'points, so "best throughput" here means the best way to run this device '
-            f'— not the biggest device. Designs are defined by: '
-            f'{html.escape(", ".join(a.label for a in grouping.design_axes)) or "—"} '
-            f'({html.escape(grouping.source)}).</p>'
-            '<p class="muted">Explored inside each design — '
+            '<p class="muted">Each design ranked against its own operating points, '
+            'recomputed live from the filters above. Click a card to pin that run and '
+            'jump to it. Explored inside each design: '
             + (html.escape(" · ".join(_axis_values_text(a)
-                                      for a in grouping.condition_axes))
-               or "nothing")
-            + '. N DFU is not swept: it is derived as main length ÷ pitch, so the '
-              'same length buys a different ladder on every design here.</p>'
+                                      for a in grouping.condition_axes)) or "nothing")
+            + '. N DFU is derived (main length ÷ pitch), not swept.</p>'
             f'{compare_html}{"".join(sections)}</section>')
 
 
@@ -1034,34 +1053,38 @@ def _design_compare_html(
     """One row per design: its own best on each axis, side by side."""
     if not grouping.is_split:
         return ""
-    head = ("".join(f"<th>{html.escape(a.label)}</th>" for a in grouping.design_axes)
-            + '<th title="derived from main length ÷ pitch, over the swept lengths">'
-              'N DFU</th>'
+    head = ("".join(f'<th class="tight">{html.escape(a.label)}</th>'
+                    for a in grouping.design_axes)
+            + '<th class="tight" title="derived from main length ÷ pitch">N DFU</th>'
             # never .lower() a label — it turns "ΔP spread" into "δp spread"
             + "".join(f"<th>Best {html.escape(a.label)}</th>" for a in dec_axes))
     body = []
     for group in grouping.groups:
         dec = decisions[group.gid]
-        cells = [f'<td>{html.escape(a.show(group.values.get(a.path)))}</td>'
+        cells = [f'<td class="tight num">{html.escape(a.show(group.values.get(a.path)))}</td>'
                  for a in grouping.design_axes]
-        cells.append(f'<td class="num">{html.escape(_n_range(scored, group.indices))}</td>')
+        cells.append(f'<td class="tight num">'
+                     f'{html.escape(_n_range(scored, group.indices))}</td>')
         for axis in dec_axes:
             i = dec.per_axis.get(axis.key)
             if i is None:
                 cells.append("<td>—</td>")
                 continue
             where = _conditions_text(leaves.get(i, {}), grouping.condition_axes, scored[i])
-            cells.append(f'<td title="{html.escape(where)}">{_axis_cell(scored[i], axis)}'
-                         f'<span class="tier">{html.escape(where)}</span></td>')
-        body.append(f'<tr><td><b>{group.gid}</b></td>{"".join(cells)}</tr>')
+            cells.append(
+                f'<td class="clickable" onclick="gotoRow({i})" '
+                f'title="{html.escape(where)} — click to pin">'
+                f'{_light(scored[i].overall)}{_axis_cell(scored[i], axis)}'
+                f'<span class="tier">{html.escape(where)}</span></td>')
+        body.append(f'<tr><td class="gidcell"><span class="gid">{group.gid}</span></td>'
+                    f'{"".join(cells)}</tr>')
     return (
         '<h3>Design vs design — each at its own best</h3>'
-        '<p class="muted">Every cell is that design run at whichever of its own '
-        'operating points wins that column, with the point named underneath. Reading '
-        'across a row shows what one device can and cannot do at once; reading down a '
-        'column compares devices fairly, each at its own best.</p>'
         f'<table class="pareto compare"><thead><tr><th>Design</th>{head}</tr></thead>'
         f'<tbody>{"".join(body)}</tbody></table>'
+        '<p class="muted">Each cell is that design at whichever of its own operating '
+        'points wins the column — click one to pin it. Fixed at the full sweep; the '
+        'cards below follow the filters.</p>'
     )
 
 
@@ -1069,37 +1092,46 @@ def _design_compare_html(
 # Filter bar + overview table
 # ---------------------------------------------------------------------------
 
-def _filters_html(grouping: Grouping, axes: Sequence[Axis]) -> str:
-    """Client-side filters — one control per axis that actually varies."""
-    controls: list[str] = []
-    if grouping.is_split:
-        opts = "".join(
-            f'<option value="{html.escape(g.gid)}">{html.escape(g.gid)} — '
-            f'{html.escape(g.label(grouping.design_axes))}</option>'
-            for g in grouping.groups)
-        controls.append(
-            '<label>Design<select id="f-gid" data-key="gid" onchange="applyFilters()">'
-            f'<option value="">All designs</option>{opts}</select></label>')
+def _plot_workbench_html() -> str:
+    """The one interactive plot: axis pickers, presets, and the regime ceiling."""
+    return (
+        '<h2>Explore</h2>'
+        '<section class="plotwrap">'
+        '<div class="line" id="plotctl"></div>'
+        '<div id="plot"></div>'
+        '<p class="plotnote" id="plotnote"></p>'
+        '<p class="muted" id="plotlegend"></p>'
+        '</section>'
+    )
 
-    for j, axis in enumerate(axes):
-        opts = "".join(f'<option value="{html.escape(str(v))}">'
-                       f'{html.escape(axis.show(v))}</option>' for v in axis.values)
-        controls.append(
-            f'<label>{html.escape(axis.header())}'
-            f'<select data-key="a{j}" onchange="applyFilters()">'
-            f'<option value="">Any</option>{opts}</select></label>')
 
-    controls.append(
-        '<label>Verdict<select data-key="verdict" onchange="applyFilters()">'
-        '<option value="">Any</option><option value="green">green</option>'
-        '<option value="orange">orange</option><option value="red">red</option>'
-        '</select></label>')
-    controls.append(
-        '<label>Search<input id="f-text" type="search" placeholder="label, reason…" '
-        'oninput="applyFilters()"></label>')
-    controls.append('<button class="btn" onclick="resetFilters()">Reset</button>')
-    controls.append('<span id="filtercount" class="muted"></span>')
-    return f'<div class="filters" id="filters">{"".join(controls)}</div>'
+def _verdict_summary_html(scored: Sequence[ScoredRow], diag: Diagnosis | None) -> str:
+    """Counts, and the one gate that is doing the reddening — in two lines."""
+    n_green = sum(1 for s in scored if s.overall == "green")
+    n_orange = sum(1 for s in scored if s.overall == "orange")
+    n_red = sum(1 for s in scored if s.overall == "red")
+
+    line, caveat = "", ""
+    if diag is not None and diag.failures:
+        binding = sorted((f for f in diag.failures if f.n_sole_cause),
+                         key=lambda f: -f.n_sole_cause)[:3]
+        if binding:
+            line = ("reds by binding gate: "
+                    + " · ".join(f"<b>{html.escape(f.label)}</b> {f.n_sole_cause}"
+                                 for f in binding))
+        if any(f.key == "regime_Ca" and f.n_red for f in diag.failures):
+            caveat = (
+                f'<p class="muted">Exit Ca is <b>not calibrated</b>: the {SE_CEILING_CA} '
+                f'ceiling is borrowed from λ ≈ 1 literature, and the highest exit Ca ever '
+                f'measured on a Peak device is {CA_MEASURED_MAX}. Read red-on-Ca as '
+                f'unmeasured risk, not as failure — and note that pushing pressure for '
+                f'throughput is exactly what raises it.</p>'
+            )
+    return (
+        f'<p class="legend">{_light("green")}green {n_green} &nbsp; '
+        f'{_light("orange")}orange {n_orange} &nbsp; {_light("red")}red {n_red}'
+        f'{" &nbsp;·&nbsp; " + line if line else ""}</p>{caveat}'
+    )
 
 
 def _table_html(
@@ -1108,8 +1140,10 @@ def _table_html(
     study=None,
     grouping: Grouping | None = None,
     leaves: dict[int, dict[str, Any]] | None = None,
+    scoring: dict[str, Any] | None = None,
 ) -> str:
     leaves = leaves or {}
+    scoring = scoring or {}
     axes: list[Axis] = []
     if grouping is not None:
         axes = list(grouping.design_axes) + list(grouping.condition_axes)
@@ -1131,8 +1165,8 @@ def _table_html(
     head += [a.header() for a in axes]
     if len(families) > 1:
         head.append("Family")
-    head += ["Verdict"] + [c[1] for c in columns] + \
-            ["Margin (weakest link)", "Build", "Valid", "Reasons"]
+    head += ["Verdict", "Why"] + [c[1] for c in columns] + \
+            ["Margin (weakest link)", "Build", "Valid"]
     thead = "".join(
         f'<th onclick="sortTable({i})">{html.escape(h)}</th>'
         for i, h in enumerate(head)
@@ -1146,11 +1180,10 @@ def _table_html(
         vals = leaves.get(i, {})
         gid = grouping.group_of.get(i, "") if grouping is not None else ""
 
-        attrs = [f'data-gid="{html.escape(gid)}"',
-                 f'data-verdict="{sr.overall}"',
-                 f'data-txt="{html.escape((m.label + " " + " ".join(sr.chips)).lower())}"']
-        for j, axis in enumerate(axes):
-            attrs.append(f'data-a{j}="{html.escape(str(vals.get(axis.path)))}"')
+        # filtering is driven from the JSON payload by row index, so the row only
+        # needs to be findable — the old data-a<n> mirror of every axis value was
+        # a second copy of the same truth
+        attrs = [f'id="r{i}"', f'data-gid="{html.escape(gid)}"']
 
         star = '<span class="star" title="best all-round">★</span>' if i in best else ""
         cells = [f'<td data-v="{i}">{i + 1}{star}</td>']
@@ -1165,9 +1198,13 @@ def _table_html(
                          f'{html.escape(format_axis_value(value, axis.spec))}</td>')
         if len(families) > 1:
             cells.append(f'<td data-v="{html.escape(m.family)}">{html.escape(m.family)}</td>')
+        cat, why = verdict_reason(sr)
         cells.append(
             f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(sr.overall,3) }">'
             f'{_light(sr.overall)}{sr.overall}</td>')
+        cells.append(f'<td class="why" data-v="{html.escape(why)}" '
+                     f'title="{html.escape(" · ".join(sr.chips) or why)}">'
+                     f'{html.escape(why)}</td>')
 
         for key, _, spec in columns:
             value = getattr(m, key, None)
@@ -1186,13 +1223,6 @@ def _table_html(
         vtip = val_cell.reason if val_cell and val_cell.reason else vcat
         cells.append(f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(vcat,3) }" '
                      f'title="{html.escape(vtip)}">{_light(vcat)}</td>')
-        # Reasons stay on one line: a wrapping chip stack triples the height of
-        # every red row, and in a 350-row table that is the difference between
-        # scanning it and scrolling it. The full text is in the tooltip and,
-        # unabridged, in the drill-down.
-        chips = " ".join(f'<span class="chip">{html.escape(c)}</span>' for c in sr.chips)
-        cells.append(f'<td data-v="0" class="reasons" '
-                     f'title="{html.escape(" · ".join(sr.chips))}">{chips}</td>')
 
         rows_html.append(
             f'<tr class="mainrow" {" ".join(attrs)} onclick="toggleDrill({i})">'
@@ -1200,56 +1230,69 @@ def _table_html(
         )
         rows_html.append(_drilldown_row(i, sr, len(head),
                                         study if i in draw_rows else None,
-                                        drawable=(study is not None)))
+                                        drawable=(study is not None),
+                                        scoring=scoring))
 
     return (f'<div class="tablewrap"><table id="scoretable"><thead><tr>{thead}</tr></thead>'
             f'<tbody>{"".join(rows_html)}</tbody></table></div>')
 
 
+def _gate_table(sr: ScoredRow, scoring: dict[str, Any]) -> str:
+    """
+    Gate by gate: value, bound, verdict — why this row is the colour it is.
+
+    A traffic light with no arithmetic behind it is a thing to argue with rather
+    than check.  Green rows get the table too: knowing a row passed by 4% of the
+    span and not by three spans is the difference between a design and a
+    coincidence.
+    """
+    rows = []
+    for key, cell in sr.cells.items():
+        if cell.category == "grey":
+            continue
+        spec = (scoring or {}).get(key) or {}
+        if "green" in spec:
+            arrow = "≥" if spec.get("higher_better") else "≤"
+            bound = (f'green {arrow}{fmt_metric(spec["green"], _FMT_BY_KEY.get(key, "g3"))}'
+                     f' · red past {fmt_metric(spec["orange"], _FMT_BY_KEY.get(key, "g3"))}')
+        else:
+            bound = "hard gate" if key == "build" else "model envelope"
+        value = ("—" if cell.value is None
+                 else fmt_metric(cell.value, _FMT_BY_KEY.get(key, "g3")))
+        margin = "—" if cell.margin is None else f"{cell.margin * 100:.0f}%"
+        detail = cell.reason or ("; ".join(cell.detail) if cell.detail else "")
+        rows.append(
+            f'<tr><td>{_light(cell.category)}{html.escape(key)}</td>'
+            f'<td class="num">{value}</td><td>{bound}</td>'
+            f'<td class="num">{margin}</td><td>{html.escape(detail)}</td></tr>'
+        )
+    if not rows:
+        return "<p class='muted'>no applicable gate</p>"
+    return ('<table class="pareto"><thead><tr><th>Gate</th><th>Value</th>'
+            '<th>Bound</th><th>Margin</th><th>Note</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>')
+
+
 def _drilldown_row(i: int, sr: ScoredRow, ncols: int, study=None,
-                   *, drawable: bool = False) -> str:
+                   *, drawable: bool = False,
+                   scoring: dict[str, Any] | None = None) -> str:
     m = sr.metrics
     params = json.dumps(m.params, indent=2, default=str)
     raw = {k: v for k, v in (m.raw or {}).items() if not k.startswith("_")}
     raw_txt = json.dumps(raw, indent=2, default=str)
     notes = "".join(f"<li>{html.escape(n)}</li>" for n in m.notes) or "<li>—</li>"
-    reasons = "".join(f"<li>{html.escape(c)}</li>" for c in sr.chips) or "<li>all green</li>"
     body = (
+        f'<h4>Why {sr.overall}</h4>{_gate_table(sr, scoring or {})}'
         f'<div class="drillgrid">'
         f'<div><h4>Config</h4><code class="cfglabel">{html.escape(m.label)}</code>'
         f'<h4>Swept params</h4><pre>{html.escape(params)}</pre></div>'
-        f'<div><h4>Score reasons</h4><ul>{reasons}</ul>'
-        f'<h4>Notes</h4><ul>{notes}</ul></div>'
+        f'<div><h4>Notes</h4><ul>{notes}</ul></div>'
         f'<div><h4>Raw metrics</h4><pre>{html.escape(raw_txt)}</pre></div>'
         f'{_schematic_html(sr, study) if study is not None else _schematic_omitted(drawable)}'
         f'</div>'
     )
     return (f'<tr id="drill{i}" class="drill" style="display:none">'
             f'<td colspan="{ncols}">{body}</td></tr>')
-
-
-def _plots_html(plots: list[dict[str, Any]]) -> str:
-    blocks: list[str] = []
-    for j, p in enumerate(plots):
-        variants = p["variants"]
-        # data-* attributes carry every rendered variant for JS composition
-        data_attrs = " ".join(f'data-{k}="{uri}"' for k, uri in variants.items())
-        img = (f'<img id="plotimg{j}" src="{variants["base"]}" {data_attrs} '
-               f'alt="{html.escape(p["title"])}">')
-        toggles: list[str] = []
-        if p.get("has_best"):
-            toggles.append(f'<label class="toggle"><input type="checkbox" '
-                           f'onchange="composePlot({j})" data-role="best"> best-3</label>')
-        if p.get("has_ref"):
-            toggles.append(f'<label class="toggle"><input type="checkbox" '
-                           f'onchange="composePlot({j})" data-role="ref"> references</label>')
-        toggle_html = " ".join(toggles)
-        blocks.append(
-            f'<figure class="plot" id="plotfig{j}">{img}'
-            f'<figcaption><b>{html.escape(p["title"])}</b> {toggle_html}'
-            f'<br>{html.escape(p["caption"])}</figcaption></figure>'
-        )
-    return '<div class="plots">' + "".join(blocks) + "</div>"
 
 
 def _provenance_html(result: StudyResult, refs=None) -> str:
@@ -1313,45 +1356,6 @@ function toggleDrill(i){
   if(!r) return;
   r.style.display = r.style.display==='none' ? 'table-row' : 'none';
 }
-function applyFilters(){
-  var box=document.getElementById('filters');
-  if(!box) return;
-  var sels=box.querySelectorAll('select');
-  var input=document.getElementById('f-text');
-  var q=(input && input.value ? input.value : '').toLowerCase().trim();
-  var shown=0, total=0;
-  rowPairs().forEach(function(g){
-    var r=g[0], ok=true;
-    for(var i=0;i<sels.length;i++){
-      var s=sels[i];
-      if(!s.value) continue;
-      var key=s.getAttribute('data-key');
-      if(r.getAttribute('data-'+key)!==s.value){ok=false;break;}
-    }
-    if(ok && q && (r.getAttribute('data-txt')||'').indexOf(q)<0) ok=false;
-    total++;
-    r.style.display = ok ? '' : 'none';
-    if(g[1]) g[1].style.display='none';
-    if(ok) shown++;
-  });
-  var c=document.getElementById('filtercount');
-  if(c) c.textContent = shown===total ? (total+' rows') : ('showing '+shown+' of '+total+' rows');
-}
-function resetFilters(){
-  var box=document.getElementById('filters');
-  if(!box) return;
-  box.querySelectorAll('select').forEach(function(s){s.value='';});
-  var input=document.getElementById('f-text');
-  if(input) input.value='';
-  applyFilters();
-}
-function filterToDesign(gid){
-  var s=document.getElementById('f-gid');
-  if(s){ s.value=gid; applyFilters(); }
-  var t=document.getElementById('overview');
-  if(t) t.scrollIntoView({behavior:'smooth'});
-}
-document.addEventListener('DOMContentLoaded', applyFilters);
 function composePlot(j){
   var fig=document.getElementById('plotfig'+j);
   var img=document.getElementById('plotimg'+j);
@@ -1419,17 +1423,14 @@ ul.candidates code{font-size:11px;}
 #scoretable td{padding:3px 8px;}
 .cfglabel{font-size:11px;word-break:break-all;display:block;margin:.2rem 0 .6rem;}
 
-/* ── filter bar ─────────────────────────────────────────────────────────── */
-.filters{display:flex;flex-wrap:wrap;gap:.6rem .9rem;align-items:flex-end;
-  border:1px solid #d0d7de;border-radius:10px;padding:.7rem .9rem;margin:.8rem 0;
-  background:rgba(127,127,127,.05);position:sticky;top:0;z-index:5;
-  backdrop-filter:blur(6px);}
-.filters label{display:flex;flex-direction:column;font-size:11px;color:#57606a;gap:2px;}
-.filters select,.filters input{font-size:12px;padding:3px 6px;border-radius:6px;
-  border:1px solid #d0d7de;background:transparent;color:inherit;max-width:230px;}
 .btn{font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid #d0d7de;
   background:transparent;color:inherit;cursor:pointer;}
 .btn:hover{background:rgba(127,127,127,.12);}
+td.tight,th.tight{width:1%;white-space:nowrap;}
+td.clickable{cursor:pointer;}
+td.clickable:hover{background:rgba(9,105,218,.12);}
+td.why{max-width:330px;overflow:hidden;text-overflow:ellipsis;font-size:12px;}
+td.gidcell{width:1%;}
 
 /* ── design groups ──────────────────────────────────────────────────────── */
 .gid{display:inline-block;background:#0969da;color:#fff;border-radius:5px;
@@ -1507,57 +1508,46 @@ def write_workbook(
     from stepgen.studio.references import resolve_references
     refs = resolve_references(result.study)
 
-    plots = _build_plots(scored, goal, refs)
-    plots_html = _plots_html(plots)
-
-    n_green = sum(1 for s in scored if s.overall == "green")
-    n_orange = sum(1 for s in scored if s.overall == "orange")
-    n_red = sum(1 for s in scored if s.overall == "red")
+    payload = chapter_payload(scored, grouping, leaves, dec.axes, decisions,
+                              result.study.scoring, refs)
 
     doc = f"""<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(result.study.title)}</title>
-<style>{_css()}</style></head>
+<style>{_css()}{INTERACTIVE_CSS}</style></head>
 <body>
 <h1>{html.escape(result.study.title)}</h1>
-<p class="goal">Deciding on: <b>{html.escape(", ".join(a.key for a in dec.axes))}</b> ·
-  Families: {html.escape(", ".join(result.study.families))} ·
-  {len(grouping.groups)} design{"s" if len(grouping.groups) != 1 else ""} ·
-  {len(scored)} configs</p>
-<p class="legend">
-  <span>{_light("green")}green {n_green}</span>
-  <span>{_light("orange")}orange {n_orange}</span>
-  <span>{_light("red")}red {n_red}</span>
-  <span>★ = best {len(best)} all-round</span>
-</p>
+<p class="goal">{len(grouping.groups)} design{"s" if len(grouping.groups) != 1 else ""} ·
+  {len(scored)} runs · deciding on
+  <b>{html.escape(", ".join(a.key for a in dec.axes))}</b></p>
+
+<div class="rail" id="rail"></div>
+
+{_verdict_summary_html(scored, diagnosis)}
 
 {_intent_html(result.study)}
 
 {_design_sections_html(scored, grouping, leaves, decisions,
                        _design_compare_html(scored, grouping, leaves, decisions, dec.axes))}
 
-{_decision_html(scored, dec)}
+{_plot_workbench_html()}
+
+{_decision_html(scored, dec, grouping, leaves)}
 
 {_diagnosis_html(diagnosis)}
 
-<h2 id="overview">Overview — scored comparison</h2>
-<p style="font-size:12px;color:#57606a">Filter with the bar below; click a header to sort;
-click a row to drill in. Verdict is <b>worst-category-wins</b> across every applicable gate;
-grey = N-A for that family.
-<b>Margin</b> is how far the weakest applicable metric sits from its red boundary, as a
-fraction of the green→red span, discounted by how much the model is trusted for that
-number. <b>Valid</b> is orange when the design sits outside the envelope the model has
-been checked in — never green there, and never red on those grounds alone.</p>
-{_filters_html(grouping, all_axes)}
-{_table_html(scored, best, result.study, grouping, leaves)}
-
-<h2>Standard plots</h2>
-{plots_html}
+<h2 id="overview">All runs</h2>
+<p class="muted">Filtered by the rail above. Click a header to sort, a row to open its
+gate-by-gate breakdown. <b>Why</b> names the gate that set the verdict — the tightest
+one for a green row, the binding one otherwise.</p>
+{_table_html(scored, best, result.study, grouping, leaves, result.study.scoring)}
 
 {_provenance_html(result, refs)}
 
+<script>{payload_script(payload)}</script>
 <script>{_JS}</script>
+<script>{INTERACTIVE_JS}</script>
 <script>{_panzoom_js()}</script>
 </body></html>
 """

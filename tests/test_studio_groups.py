@@ -50,7 +50,10 @@ def _raw(**decide):
         "manufacturing": {"max_main_depth_um": 200.0},
         "operating": {"Po_mbar": [50, 100, 200], "Qw_mlhr": 5.0},
         "scoring": {"uniformity_pct": {"green": 15, "orange": 30},
-                    "throughput_mlhr": {"green": 5, "orange": 1, "higher_better": True}},
+                    "throughput_mlhr": {"green": 5, "orange": 1, "higher_better": True},
+                    # the SE→jetting bound this repo scores against; carried here
+                    # so the payload/plot tests see a real Ca threshold
+                    "regime_Ca": {"green": 0.0125, "orange": 0.03}},
     }
 
 
@@ -359,12 +362,95 @@ def test_workbook_renders_per_design_panels_and_filters(tmp_path):
 
     assert "Per-design decisions — 2 designs" in doc
     assert 'id="grp-D1"' in doc and 'id="grp-D2"' in doc
-    assert 'id="filters"' in doc and 'filterToDesign' in doc
+    # the filter rail is global and drives the page from the payload
+    assert 'id="rail"' in doc and "const CHAPTER=" in doc
+    assert 'id="picks-D1"' in doc          # winner cards are filled client-side
+    assert "gotoRow(" in doc               # a pick jumps to its row in the table
     assert "Design vs design" in doc
     assert "How to push this design further" in doc
     # the mashed label is gone from the table, but still auditable in the drill-down
     assert 'data-gid="D1"' in doc
     assert "Config</h4>" in doc
+    assert 'id="r0"' in doc                # rows addressable for filter + pin
+
+
+# ---------------------------------------------------------------------------
+# The interactive layer
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def payload(solved):
+    from stepgen.studio.interactive import chapter_payload
+    from stepgen.studio.ranking import decide_subset, resolve_axes
+
+    study, scored, g, leaves = solved
+    axes = resolve_axes(study.decide, study.goal)
+    decisions = {grp.gid: decide_subset(scored, grp.indices, study.decide)
+                 for grp in g.groups}
+    return chapter_payload(scored, g, leaves, axes, decisions, study.scoring)
+
+
+def test_payload_is_strict_json(payload):
+    """
+    NaN and Infinity are valid Python json output and invalid JSON.
+
+    One of either in the blob and ``JSON.parse`` throws, which takes the whole
+    page down to a blank screen — the metrics have to be sanitised on the way
+    out, not hoped about.
+    """
+    import json as _json
+
+    def boom(x):
+        raise AssertionError(f"non-JSON constant in payload: {x}")
+
+    text = _json.dumps(payload, default=str)
+    _json.loads(text, parse_constant=boom)
+
+
+def test_payload_carries_every_row_with_its_group_and_reason(payload, solved):
+    study, scored, g, leaves = solved
+    assert len(payload["rows"]) == len(scored)
+    for r, sr in zip(payload["rows"], scored):
+        assert r["verdict"] == sr.overall
+        assert r["gid"].startswith("D")
+        assert r["why"]
+    assert {gr["gid"] for gr in payload["groups"]} == {grp.gid for grp in g.groups}
+
+
+def test_payload_passes_the_studys_own_ca_thresholds(payload):
+    """The plot must draw the band this study scored against, not a constant."""
+    assert payload["thresholds"]["regime_Ca"]["green"] == 0.0125
+    assert payload["caMeasured"] == 0.0017
+
+
+def test_presets_drop_axes_this_study_does_not_have(payload):
+    names = {p["name"] for p in payload["presets"]}
+    have = ({m["key"] for m in payload["metrics"]}
+            | {a["path"] for a in payload["axes"] if a["numeric"]})
+    for p in payload["presets"]:
+        assert p["x"] in have and p["y"] in have
+    # nothing plotted against droplet size: it is geometry-set and Ca-independent
+    # in SE, so it is a flat line by construction
+    assert all("droplet" not in n.lower() for n in names)
+
+
+def test_verdict_reason_names_the_binding_gate(solved):
+    from stepgen.studio.interactive import verdict_reason
+
+    study, scored, g, leaves = solved
+    seen_red = seen_ok = False
+    for sr in scored:
+        cat, why = verdict_reason(sr)
+        assert cat == sr.overall
+        assert why
+        if cat == "red":
+            seen_red = True
+            # a red row must say which gate, with the number that failed it
+            assert any(ch in why for ch in ("(want", "—", "gate", "no"))
+        if cat == "green":
+            seen_ok = True
+            assert "all gates pass" in why
+    assert seen_red or seen_ok
 
 
 def test_swept_lengths_and_derived_N_are_stated_in_the_decision_layer(tmp_path):
