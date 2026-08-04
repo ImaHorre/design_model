@@ -256,8 +256,45 @@ def test_every_structural_lever_states_a_cost():
     assert STRUCTURAL
     for lever in STRUCTURAL:
         assert lever.costs, f"{lever.knob} claims a free lunch"
-        assert lever.evidence
+        assert lever.cost_tags, f"{lever.knob} has no short cost"
+        assert lever.evidence and lever.src
         assert lever.move in ("increase", "decrease")
+
+
+def test_structural_levers_are_short_enough_to_scan():
+    """
+    The chapter prints the short fields; the prose is the tooltip.
+
+    This is a readability budget, not a style rule — the advice table has five
+    columns and lives inside a design panel, so a lever that needs a paragraph
+    to state its effect has to state it on hover instead.
+    """
+    from stepgen.studio.levers import STRUCTURAL
+
+    for lever in STRUCTURAL:
+        assert lever.scaling, f"{lever.knob} has no short effect"
+        assert len(lever.scaling) <= 40, f"{lever.knob}: {lever.scaling!r}"
+        for tag in lever.cost_tags:
+            assert len(tag) <= 32, f"{lever.knob}: {tag!r}"
+        # nothing is lost — the full reasoning is still reachable
+        assert lever.mechanism in lever.tooltip
+        assert all(c in lever.tooltip for c in lever.costs)
+
+
+def test_advice_is_a_table_not_a_wall_of_prose(tmp_path):
+    from stepgen.studio import run_study, write_workbook
+
+    study = build_study(_raw(group_by=["junction.exit_width_um"]))
+    result = run_study(study)
+    doc = write_workbook(result, tmp_path / "advice.html", price="never") \
+        .read_text(encoding="utf-8")
+
+    assert "How to push this design further" in doc
+    assert "<th>To improve</th><th>Change</th>" in doc
+    # short forms on the page, long forms only as tooltips
+    assert "flow &#x27;" not in doc
+    assert 'class="tag measured">measured<' in doc
+    assert 'class="tag model">model<' in doc
 
 
 def test_structural_levers_defer_to_what_the_study_measured():

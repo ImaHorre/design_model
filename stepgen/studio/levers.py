@@ -315,20 +315,36 @@ def best_step_for(
 
 @dataclass(frozen=True)
 class StructuralLever:
-    """A knob, which way to turn it for one objective, and what it costs."""
+    """
+    A knob, which way to turn it for one objective, and what it costs.
+
+    Every field comes in two lengths.  The short ones (:attr:`scaling`,
+    :attr:`cost_tags`, :attr:`src`) are what the chapter prints — a table row a
+    reader can scan in a second.  The long ones (:attr:`mechanism`,
+    :attr:`costs`, :attr:`evidence`) are the tooltip: the reasoning is still
+    one hover away, it is just no longer in the way.
+    """
 
     objective: str            # decide-axis key
     knob: str                 # human name
     path: str                 # dotted study path, so "already swept" can be told
     move: str                 # "increase" / "decrease"
-    mechanism: str            # why it works
-    costs: tuple[str, ...]    # what it takes away — never empty
-    evidence: str             # "[model-v3]" / "[theory] @citekey"
+    mechanism: str            # why it works (tooltip)
+    costs: tuple[str, ...]    # what it takes away — never empty (tooltip)
+    evidence: str             # "[model-v3]" / "[theory] @citekey" (tooltip)
+    scaling: str = ""         # the effect, in a few characters: "∝ 1/h³"
+    cost_tags: tuple[str, ...] = ()   # the costs, in a few characters each
+    src: str = "model-v3"     # shortest honest attribution
 
     @property
     def headline(self) -> str:
         arrow = "↑" if self.move == "increase" else "↓"
         return f"{arrow} {self.knob}"
+
+    @property
+    def tooltip(self) -> str:
+        return (self.mechanism + "  COSTS: " + "; ".join(self.costs)
+                + "  " + self.evidence)
 
 
 #: The registry.  Every entry names a cost: a lever with no downside would
@@ -339,129 +355,175 @@ class StructuralLever:
 STRUCTURAL: tuple[StructuralLever, ...] = (
     # ── throughput ──────────────────────────────────────────────────────────
     StructuralLever(
-        "throughput", "Exit / rung depth", "junction.exit_depth_um", "increase",
-        "Rung resistance scales as 1/h³, so depth is the steepest throughput knob "
-        "there is — doubling it moves roughly 8× the oil at the same pressure.",
-        ("Droplet diameter tracks depth (d ≈ 4h), so the product size changes with it "
-         "[theory] @montessori2020-step-emulsification.",
-         "Exit velocity rises with the extra flow, and exit Ca with it — this is the "
-         "fastest route out of the step-emulsification regime.",
-         "Beyond 12 µm the droplet power-law is extrapolated, so size and frequency "
-         "become soft numbers while throughput stays sound."),
-        "[model-v3] + [theory] @montessori2020-step-emulsification",
+        objective="throughput", knob="Exit / rung depth",
+        path="junction.exit_depth_um", move="increase",
+        scaling="flow ∝ 1/h³ — 2× depth ≈ 8× oil",
+        cost_tags=("droplet ∝ h", "exit Ca ↑ toward SE ceiling", "size unfitted >12 µm"),
+        src="model-v3 · @montessori2020",
+        mechanism="Rung resistance scales as 1/h³, so depth is the steepest throughput "
+                  "knob there is — doubling it moves roughly 8× the oil at the same "
+                  "pressure.",
+        costs=("Droplet diameter tracks depth (d ≈ 4h), so the product size changes with "
+               "it [theory] @montessori2020-step-emulsification.",
+               "Exit velocity rises with the extra flow, and exit Ca with it — this is "
+               "the fastest route out of the step-emulsification regime.",
+               "Beyond 12 µm the droplet power-law is extrapolated, so size and frequency "
+               "become soft numbers while throughput stays sound."),
+        evidence="[model-v3] + [theory] @montessori2020-step-emulsification",
     ),
     StructuralLever(
-        "throughput", "Rung width", "rung.upstream_width_um", "increase",
-        "Rung resistance falls as 1/w, so a wider rung draws more oil at the same ΔP.",
-        ("The ladder gets less flat: droop is set by main resistance *relative to* rung "
-         "resistance, and lowering the rung's share hands the main more authority.",
-         "The rectangular-duct correction is only trustworthy to h/w ≈ 0.8, so widening "
-         "is what buys a deeper exit its validity, not a free gain on its own."),
-        "[model-v3]",
+        objective="throughput", knob="Rung width",
+        path="rung.upstream_width_um", move="increase",
+        scaling="flow ∝ w",
+        cost_tags=("flatness ↓", "keep h/w ≤ 0.8"),
+        mechanism="Rung resistance falls as 1/w, so a wider rung draws more oil at the "
+                  "same ΔP.",
+        costs=("The ladder gets less flat: droop is set by main resistance *relative to* "
+               "rung resistance, and lowering the rung's share hands the main more "
+               "authority.",
+               "The rectangular-duct correction is only trustworthy to h/w ≈ 0.8, so "
+               "widening is what buys a deeper exit its validity, not a gain on its own."),
+        evidence="[model-v3]",
     ),
     StructuralLever(
-        "throughput", "Pitch", "junction.pitch_um", "decrease",
-        "N is main length ÷ pitch, so a tighter pitch packs more DFUs into the same "
-        "channel run and each one adds its rung flow.",
-        ("Wall thickness between DFUs shrinks toward the fab minimum.",
-         "More rungs on one main means more droop — the far end starves first."),
-        "[model-v3]",
+        objective="throughput", knob="Pitch", path="junction.pitch_um", move="decrease",
+        scaling="N = main length ÷ pitch",
+        cost_tags=("wall → fab minimum", "flatness ↓"),
+        mechanism="N is main length ÷ pitch, so a tighter pitch packs more DFUs into the "
+                  "same channel run and each one adds its rung flow.",
+        costs=("Wall thickness between DFUs shrinks toward the fab minimum.",
+               "More rungs on one main means more droop — the far end starves first."),
+        evidence="[model-v3]",
     ),
     StructuralLever(
-        "throughput", "Rung length", "rung.length_mm", "decrease",
-        "Rung resistance is linear in length; a shorter rung is a cheaper path for oil.",
-        ("Same flatness cost as widening — the rung stops dominating the network.",
-         "Layout: the DFU span is what the serpentine fold is built around."),
-        "[model-v3]",
+        objective="throughput", knob="Rung length", path="rung.length_mm", move="decrease",
+        scaling="flow ∝ 1/L_rung",
+        cost_tags=("flatness ↓", "shortens the DFU span"),
+        mechanism="Rung resistance is linear in length; a shorter rung is a cheaper path "
+                  "for oil.",
+        costs=("Same flatness cost as widening — the rung stops dominating the network.",
+               "Layout: the DFU span is what the serpentine fold is built around."),
+        evidence="[model-v3]",
     ),
     # ── flatness ────────────────────────────────────────────────────────────
     StructuralLever(
-        "flatness", "Main depth", "main.depth_um", "increase",
-        "Main resistance scales as 1/(W·D³). Deepening the main flattens the ladder "
-        "without touching a single DFU — the rungs keep their geometry and their "
-        "droplet size, they just see a stiffer supply.",
-        ("Etch depth is the fab cap most likely to bind; this is a process purchase, "
-         "not a design change.",
-         "Deeper mains hold more dead volume, which costs priming and flush time."),
-        "[model-v3]",
+        objective="flatness", knob="Main depth", path="main.depth_um", move="increase",
+        scaling="R_main ∝ 1/D³ — costs no DFU",
+        cost_tags=("fab depth cap", "dead volume ↑"),
+        mechanism="Main resistance scales as 1/(W·D³). Deepening the main flattens the "
+                  "ladder without touching a single DFU — the rungs keep their geometry "
+                  "and their droplet size, they just see a stiffer supply.",
+        costs=("Etch depth is the fab cap most likely to bind; this is a process "
+               "purchase, not a design change.",
+               "Deeper mains hold more dead volume, which costs priming and flush time."),
+        evidence="[model-v3]",
     ),
     StructuralLever(
-        "flatness", "Main width", "main.width_um", "increase",
-        "Also lowers main resistance, by the same ladder argument as depth.",
-        ("Width is charged to the footprint: a wider main is fewer parallel lanes on "
-         "the same die, so it trades against DFU count directly.",),
-        "[model-v3]",
+        objective="flatness", knob="Main width", path="main.width_um", move="increase",
+        scaling="R_main ∝ 1/W",
+        cost_tags=("fewer lanes on the die",),
+        mechanism="Also lowers main resistance, by the same ladder argument as depth.",
+        costs=("Width is charged to the footprint: a wider main is fewer parallel lanes "
+               "on the same die, so it trades against DFU count directly.",),
+        evidence="[model-v3]",
     ),
     StructuralLever(
-        "flatness", "Rung width", "rung.upstream_width_um", "decrease",
-        "Raising rung resistance restores its authority over the network, so every "
-        "DFU sees nearly the same ΔP regardless of where it sits on the main.",
-        ("Throughput falls roughly in proportion — this is the throughput lever run "
-         "backwards.",
-         "Watch h/w: narrowing at fixed exit depth walks toward the h/w ≥ 1 region "
-         "where the resistance correction is silently wrong."),
-        "[model-v3]",
+        objective="flatness", knob="Rung width",
+        path="rung.upstream_width_um", move="decrease",
+        scaling="rung keeps ΔP authority",
+        cost_tags=("throughput ↓ ∝ w", "keep h/w ≤ 0.8"),
+        mechanism="Raising rung resistance restores its authority over the network, so "
+                  "every DFU sees nearly the same ΔP regardless of where it sits.",
+        costs=("Throughput falls roughly in proportion — this is the throughput lever "
+               "run backwards.",
+               "Watch h/w: narrowing at fixed exit depth walks toward the h/w ≥ 1 region "
+               "where the resistance correction is silently wrong."),
+        evidence="[model-v3]",
     ),
     StructuralLever(
-        "flatness", "Main length / DFU count", "main.length_mm", "decrease",
-        "Droop accumulates along the main, so a shorter ladder is a flatter one.",
-        ("Throughput falls with the DFUs you remove.",
-         "Per-DFU flow rises to hold total flow, which raises exit Ca — the flatness "
-         "and regime levers pull against each other here."),
-        "[model-v3] + [[open-questions/deep-dfu-se-regime]]",
+        objective="flatness", knob="Main length / DFU count",
+        path="main.length_mm", move="decrease",
+        scaling="droop grows with N",
+        cost_tags=("throughput ↓", "per-DFU Ca ↑"),
+        mechanism="Droop accumulates along the main, so a shorter ladder is a flatter one.",
+        costs=("Throughput falls with the DFUs you remove.",
+               "Per-DFU flow rises to hold total flow, which raises exit Ca — the "
+               "flatness and regime levers pull against each other here."),
+        evidence="[model-v3] + [[open-questions/deep-dfu-se-regime]]",
+        src="model-v3 · deep-dfu-se-regime",
     ),
     # ── drive pressure ──────────────────────────────────────────────────────
     StructuralLever(
-        "drive_pressure", "Exit / rung depth", "junction.exit_depth_um", "increase",
-        "The same 1/h³ that buys throughput buys pressure: a deeper rung reaches the "
-        "target flow at a fraction of the drive.",
-        ("Droplet size grows with depth — this only helps if the bigger droplet is "
-         "acceptable [theory] @montessori2020-step-emulsification.",
-         "Ca is set by exit velocity, not by pressure, so a lower Po at the same flow "
-         "does not by itself buy regime margin."),
-        "[model-v3]",
+        objective="drive_pressure", knob="Exit / rung depth",
+        path="junction.exit_depth_um", move="increase",
+        scaling="same flow at Po ∝ 1/h³",
+        cost_tags=("droplet ∝ h", "no Ca gain — Ca is velocity"),
+        mechanism="The same 1/h³ that buys throughput buys pressure: a deeper rung "
+                  "reaches the target flow at a fraction of the drive.",
+        costs=("Droplet size grows with depth — this only helps if the bigger droplet is "
+               "acceptable [theory] @montessori2020-step-emulsification.",
+               "Ca is set by exit velocity, not by pressure, so a lower Po at the same "
+               "flow does not by itself buy regime margin."),
+        evidence="[model-v3]",
     ),
     StructuralLever(
-        "drive_pressure", "DFU count", "main.length_mm", "increase",
-        "More rungs in parallel means the target throughput is reached at lower ΔP per "
-        "rung, so the whole device runs gentler.",
-        ("Droop grows with N; past a point the far rungs stop producing and the extra "
-         "DFUs are not paying their way.",
-         "Area grows with the channel run."),
-        "[model-v3]",
+        objective="drive_pressure", knob="DFU count", path="main.length_mm",
+        move="increase",
+        scaling="ΔP per rung ∝ 1/N",
+        cost_tags=("droop ∝ N", "area ↑"),
+        mechanism="More rungs in parallel means the target throughput is reached at "
+                  "lower ΔP per rung, so the whole device runs gentler.",
+        costs=("Droop grows with N; past a point the far rungs stop producing and the "
+               "extra DFUs are not paying their way.",
+               "Area grows with the channel run."),
+        evidence="[model-v3]",
     ),
     # ── margin / staying in regime ──────────────────────────────────────────
     StructuralLever(
-        "margin", "Drive pressure", "operating.Po_mbar", "decrease",
-        "Exit Ca is proportional to exit velocity and therefore to drive pressure. "
-        "Backing off pressure is the only lever that lowers Ca without changing the "
-        "device, and in the SE regime it costs no droplet size at all — size is "
-        "Ca-independent, frequency carries the flow.",
-        ("Throughput falls in proportion — regime margin is bought with output.",
-         "Below the production threshold the far rungs stop producing entirely, which "
-         "is a cliff, not a gradient."),
-        "[theory] @chakraborty2017-step-emulsification, @montessori2020-step-emulsification "
-        "· [[claims/step-emulsification-ca-independent-size]]",
+        objective="margin", knob="Drive pressure", path="operating.Po_mbar",
+        move="decrease",
+        scaling="Ca ∝ Po; droplet size flat in SE",
+        cost_tags=("throughput ∝ Po", "production cliff at low Po"),
+        src="@chakraborty2017 · @montessori2020",
+        mechanism="Exit Ca is proportional to exit velocity and therefore to drive "
+                  "pressure. Backing off pressure is the only lever that lowers Ca "
+                  "without changing the device, and in the SE regime it costs no droplet "
+                  "size at all — size is Ca-independent, frequency carries the flow.",
+        costs=("Throughput falls in proportion — regime margin is bought with output.",
+               "Below the production threshold the far rungs stop producing entirely, "
+               "which is a cliff, not a gradient."),
+        evidence="[theory] @chakraborty2017-step-emulsification, "
+                 "@montessori2020-step-emulsification "
+                 "· [[claims/step-emulsification-ca-independent-size]]",
     ),
     StructuralLever(
-        "margin", "DFU count", "main.length_mm", "increase",
-        "Spreading the same total flow over more DFUs lowers per-DFU velocity, which "
-        "is what exit Ca actually measures. The in-regime shape of this device is many "
-        "DFUs run slowly, not few run fast.",
-        ("A longer ladder droops: flatness is the price of regime margin, and it is "
-         "the trade this whole family is stuck in.",
-         "Area and priming volume grow with the run."),
-        "[model-v3, 2026-07] · [[open-questions/deep-dfu-se-regime]]",
+        objective="margin", knob="DFU count", path="main.length_mm", move="increase",
+        scaling="Ca ∝ Q/N — many slow DFUs",
+        cost_tags=("droop ∝ N", "area ↑"),
+        src="model-v3 · deep-dfu-se-regime",
+        mechanism="Spreading the same total flow over more DFUs lowers per-DFU velocity, "
+                  "which is what exit Ca actually measures. The in-regime shape of this "
+                  "device is many DFUs run slowly, not few run fast.",
+        costs=("A longer ladder droops: flatness is the price of regime margin, and it "
+               "is the trade this whole family is stuck in.",
+               "Area and priming volume grow with the run."),
+        evidence="[model-v3, 2026-07] · [[open-questions/deep-dfu-se-regime]]",
     ),
     StructuralLever(
-        "margin", "Exit depth", "junction.exit_depth_um", "decrease",
-        "A shallower exit makes smaller droplets at lower velocity, moving the design "
-        "back toward the band Peak has actually measured (exit Ca ≤ 0.0017).",
-        ("Throughput per DFU falls as 1/h³ — this is the most expensive lever in the "
-         "set, and only worth pulling if the size target allows it.",
-         "The device needs proportionally more DFUs to hold throughput, which costs "
-         "flatness and area."),
-        "[experimental] @ws-2026-07-13-po-sweep-v5-8-1 · [[claims/step-emulsification-ca-independent-size]]",
+        objective="margin", knob="Exit depth", path="junction.exit_depth_um",
+        move="decrease",
+        scaling="velocity and droplet both fall with h",
+        cost_tags=("throughput ∝ h³", "needs more DFUs"),
+        src="@ws-2026-07-13-po-sweep",
+        mechanism="A shallower exit makes smaller droplets at lower velocity, moving the "
+                  "design back toward the band Peak has actually measured "
+                  "(exit Ca ≤ 0.0017).",
+        costs=("Throughput per DFU falls as 1/h³ — this is the most expensive lever in "
+               "the set, and only worth pulling if the size target allows it.",
+               "The device needs proportionally more DFUs to hold throughput, which "
+               "costs flatness and area."),
+        evidence="[experimental] @ws-2026-07-13-po-sweep-v5-8-1 "
+                 "· [[claims/step-emulsification-ca-independent-size]]",
     ),
 )
 

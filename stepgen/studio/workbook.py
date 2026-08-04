@@ -881,10 +881,10 @@ def _advice_html(
         OBJECTIVE_METRIC, best_step_for, structural_levers,
     )
 
-    cards: list[str] = []
+    rows: list[str] = []
     for axis in dec_axes:
         metric = OBJECTIVE_METRIC.get(axis.key)
-        bits: list[str] = []
+        first = True
 
         step = best_step_for(spans, metric, scored) if metric else None
         if step is not None:
@@ -892,37 +892,41 @@ def _advice_html(
             costs = [e for k, e in step.effects.items()
                      if k != metric and e.direction == "worse" and e.delta != 0
                      and (e.rel is None or abs(e.rel) > 0.02)]
-            cost_txt = ("costs " + ", ".join(e.text() for e in costs)
-                        if costs else "no watched metric got worse")
-            bits.append(
-                f'<li><span class="tag measured">measured here</span> '
-                f'<b>{html.escape(step.label)}</b> → {html.escape(gain.text())} '
-                f'<span class="muted">(median of {step.n_pairs} matched pairs)</span>'
-                f'<div class="cost">{html.escape(cost_txt)}</div></li>'
+            rows.append(
+                f'<tr title="median over {step.n_pairs} row pairs differing only on '
+                f'{html.escape(step.axis.label)}">'
+                f'<td>{html.escape(axis.label)}</td>'
+                f'<td><span class="tag measured">measured</span>'
+                f'{html.escape(step.label)}</td>'
+                f'<td class="gain">{html.escape(gain.text())}</td>'
+                f'<td>{html.escape(" · ".join(e.text() for e in costs)) or "—"}</td>'
+                f'<td class="muted">this study</td></tr>'
             )
+            first = False
 
-        for lever in structural_levers(axis.key, swept_paths)[:3]:
-            costs = "".join(f"<li>{html.escape(c)}</li>" for c in lever.costs)
-            bits.append(
-                f'<li><span class="tag model">not swept here</span> '
-                f'<b>{html.escape(lever.headline)}</b> — {html.escape(lever.mechanism)}'
-                f'<div class="cost"><b>Costs:</b><ul>{costs}</ul>'
-                f'<span class="muted">{html.escape(lever.evidence)}</span></div></li>'
+        for lever in structural_levers(axis.key, swept_paths)[:2]:
+            rows.append(
+                f'<tr title="{html.escape(lever.tooltip)}">'
+                f'<td>{html.escape(axis.label) if first else ""}</td>'
+                f'<td><span class="tag model">model</span>'
+                f'{html.escape(lever.headline)}</td>'
+                f'<td class="gain">{html.escape(lever.scaling)}</td>'
+                f'<td>{html.escape(" · ".join(lever.cost_tags))}</td>'
+                f'<td class="muted">{html.escape(lever.src)}</td></tr>'
             )
+            first = False
 
-        if not bits:
-            continue
-        cards.append(f'<div class="advice"><h4>To improve {html.escape(axis.label)}</h4>'
-                     f'<ul>{"".join(bits)}</ul></div>')
-
-    if not cards:
+    if not rows:
         return ""
-    return ('<h3>How to push this design further</h3>'
-            '<p class="muted">Every direction carries its cost — a lever with no '
-            'downside would already be the default. "Measured here" is this study\'s '
-            'own matched-pair result; "not swept here" comes from the model\'s scaling '
-            'and the cited literature, and has not been evaluated in this run.</p>'
-            f'<div class="advicegrid">{"".join(cards)}</div>')
+    return (
+        '<h3>How to push this design further</h3>'
+        '<table class="pareto advice"><thead><tr><th>To improve</th><th>Change</th>'
+        '<th>Effect</th><th>Costs</th><th>Source</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+        '<p class="muted">Hover a row for the reasoning. <b>measured</b> = this study\'s '
+        'own matched pairs; <b>model</b> = a knob it did not sweep, from the model\'s '
+        'scaling and the cited literature.</p>'
+    )
 
 
 def _design_sections_html(
@@ -1442,13 +1446,12 @@ details.notches{margin:.4rem 0 0;font-size:12px;}
 details.notches summary{cursor:pointer;color:#57606a;}
 
 /* ── improvement advice ─────────────────────────────────────────────────── */
-.advicegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem;}
-.advice{border:1px solid #d0d7de;border-radius:8px;padding:.6rem .8rem;}
-.advice h4{margin:.1rem 0 .5rem;font-size:13px;}
-.advice ul{margin:0;padding-left:1.1rem;font-size:12px;}
-.advice>ul>li{margin-bottom:.7rem;}
-.cost{color:#57606a;font-size:11.5px;margin-top:.2rem;}
-.cost ul{padding-left:1rem;margin:.15rem 0;}
+table.advice{width:100%;}
+table.advice td{white-space:normal;}
+table.advice td:first-child{font-weight:600;}
+table.advice td.gain{color:#1a7f37;}
+table.advice td:nth-child(4){color:#57606a;}
+table.advice tr{cursor:help;}
 .tag{display:inline-block;border-radius:9px;padding:0 6px;font-size:10px;
   font-weight:700;text-transform:uppercase;letter-spacing:.02em;margin-right:.3rem;}
 .tag.measured{background:rgba(26,127,55,.15);color:#1a7f37;}
