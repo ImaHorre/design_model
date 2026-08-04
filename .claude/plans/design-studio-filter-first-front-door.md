@@ -1,18 +1,45 @@
 # Design Studio — the filter-first front door
 
-**Anchor**: `6db6405` (branch `fix/stage1-reset-length-and-cycle-metrics`, pushed)
-**Baseline at anchor**: `pytest -q` → **531 passed, 5 failed, 5 skipped**. The 5 are
-pre-existing (3 `test_cli` png, 2 `test_design_search`), verified unchanged from `306a4bc`.
-Do not chase them.
+**Anchor**: `5674636` on `master`, pushed (was `6db6405` when this plan was written)
+**Baseline now**: `pytest -q` → **534 passed, 5 failed, 5 skipped**. The 5 are pre-existing
+(3 `test_cli` png, 2 `test_design_search`), unchanged since `306a4bc`. **Do not chase
+them.** 534 = the plan's original 531 + 3 tests added by Batch 1.
 **Supersedes**: Phase 6 ("Form-driven UI") in `docs/06_design_studio/roadmap_studio_v1.md`
-**Status**: **Batch 1 complete** (B0 `e53ddc6`, B1 `e21798e`, A4a+A4b `39e7342`); W1-4
-landed early (`77ac36a`). Wave 1 otherwise not started; Wave 2 not started. **Part of D
-shipped early** — see "What landed ahead of the plan".
 **Derived from**: `/grill-me` sessions with Conor, 2026-08-03 and 2026-08-04
 
-> Rewritten 2026-08-04 and re-anchored `306a4bc` → `a0e82a1` → `6db6405`. Earlier vintages
-> are in git history. Everything below is one vintage, verified against the tree at
-> `912c74c`; `6db6405` landed during the review and changed no physics (see below).
+> Rewritten 2026-08-04 and re-anchored `306a4bc` → `a0e82a1` → `6db6405` → `5674636`.
+> Earlier vintages are in git history. Everything below is one vintage; items marked ✅
+> were executed and verified on 2026-08-04, and carry what implementation found that the
+> plan did not.
+
+---
+
+## Where this stands — read this first
+
+| | State |
+|---|---|
+| **Batch 1** | ✅ **complete.** B0 `e53ddc6` · B1 `e21798e` · A4a+A4b `39e7342` · plan `5674636` |
+| **Wave 1** | W1-4 ✅ `77ac36a`. **W1-1, W1-2, W1-3, W1-5, W1-6 are the next work.** |
+| **Wave 2** | not started. The risk item — it changes what every number means |
+| **C (server)** | not started, and must not start until W2-8 passes |
+| **D (explorer)** | D1 ✅, D4 ✅, D2 partly, all in the chapter (`912c74c`, `6db6405`). D5 unblocked |
+| **E** | not started |
+
+**Start here**: Wave 1, in order W1-1 → W1-2 → W1-3 → W1-6, with W1-5 (comment hygiene)
+whenever convenient. It is measurement-determined — every constant it needs is already
+measured and committed in `reference_devices/README.md`. **Read that README; do not
+re-derive its numbers from the model or from this plan's summary table.**
+
+**Two things Batch 1 learned that generalise**, and that Wave 1 should expect to hit again:
+
+1. **The site count in this plan is a lower bound.** A4a was documented as two places and
+   was three — `radial` and `manifold` never filled `CommonMetrics.gamma_Nm`, so per-row γ
+   was unreachable until that was fixed. W2-2 exists for exactly this; apply it early.
+   W1-1 already names three copies of the lane-pitch formula. Grep before editing.
+2. **Batch 1 was inert as claimed** — no physics moved, and the only test-count change was
+   the three tests it added. Wave 1 should be similarly inert *for a pinned N*: it moves
+   `area_used_cm2`, `fits_square` and `packing_capacity`, never throughput or ΔP. If a
+   throughput number moves during Wave 1, stop — something is wrong.
 
 ---
 
@@ -372,6 +399,10 @@ V6-30 ->  3,000 DFUs at R = 36.0 mm
 Constants asserted as literals citing `reference_devices/`, so neither `gdstk` nor 2.2 MB
 of binaries becomes a test dependency.
 
+**11,154 here is correct and is not superseded by the 11,565 ruling.** These assert that
+`compute_layout` reproduces the geometry in the GDS; the ruling is about what N
+`configs/v5_30.yaml` drives the model at. See W1-5.
+
 ### W1-4 — commit the reference devices ✅ `77ac36a`
 
 `reference_devices/` at top level: the three GDS files (`v5_30umV1.1.gds`,
@@ -379,12 +410,27 @@ of binaries becomes a test dependency.
 table above and the script that produced it. **Read the README — it is ground truth for
 layout and packing; do not re-derive its numbers from the model.**
 
-### W1-5 — fix `configs/v5_30.yaml`
+### W1-5 — fix `configs/v5_30.yaml` — **unblocked** (ruled 2026-08-04)
 
-`Mcl = 693 mm` implies 11,550 DFUs; the GDS has 11,154, i.e. **669 mm**. The comments
-("Mcl=2040 mm, pitch=3 µm, Nmc=680 000", "0.3 µm depth", "1 µm width") are stale template
-text describing nothing in the file. Correct against the GDS and delete the comments.
-**Blocked on** reconciling 11,154 vs 11,565 — see open question 1.
+**Conor's ruling: use 11,565; the 3.7% gap to the GDS does not matter.** So `Mcl` stays at
+**693 mm** (which implies 11,550, within 0.13% of 11,565) and the DFU count is *not*
+re-cut to the GDS's 11,154. This also keeps `comp_deep_dfu_main_mods`, calibrated at
+11,550, valid — see the memory note.
+
+What W1-5 still is, therefore, is **comment hygiene only**: the block
+("Mcl=2040 mm, pitch=3 µm, Nmc=680 000", "0.3 µm depth", "1 µm width") is stale template
+text describing nothing in the file. Delete it and state the real numbers.
+
+**Do not propagate 11,565 into W1-3.** The two numbers answer different questions:
+
+| Number | What it is | Where it belongs |
+|---|---|---|
+| **11,565** | Conor's device figure, the N the model is driven at | `configs/v5_30.yaml` (`Mcl = 693 mm`) |
+| **11,154** | polygons counted in the GDS, residual 0 | W1-3's `packing_capacity` acceptance test |
+
+W1-3 tests that `compute_layout` reproduces *the geometry it is given*. Asserting 11,565
+there would be asserting the model against a number the GDS does not contain, which is the
+one thing the acceptance tests exist to prevent.
 
 ### W1-6 — migrate the study configs off `reserve_border` *(new)*
 
@@ -658,10 +704,12 @@ Wave 1 or 2.
 
 ## Open questions
 
-1. **11,154 vs 11,565.** The GDS gives 11,154 (10,000 straight + 1,154 curve) with all
-   31,674 layer-2 polygons accounted for and nothing left over. Conor's figure is 11,565 —
-   3.7% apart. Possibly a revision difference (this is V1.1) or a different convention on
-   the curve DFUs. **Blocks W1-5.**
+1. ~~**11,154 vs 11,565.**~~ **Closed 2026-08-04 — Conor ruled 11,565, 3.7% is close
+   enough.** No reconciliation needed and none is being sought; the likely cause (a
+   revision difference — this is V1.1 — or a different convention on the curve DFUs) is
+   recorded only so nobody re-opens it. W1-5 is unblocked and reduced to comment hygiene.
+   **The GDS's 11,154 still stands as the layout acceptance number in W1-3** — see the
+   table there for why the two numbers do not compete.
 2. **Is Stage 3 a real capillary floor or a frame-rate artefact?** S2+S3 flatten above
    400 mbar, but there they are 2–3 frames at 50 fps and every value is an exact multiple
    of 0.02 s. If physical, per-DFU frequency saturates and conservation over-predicts at
