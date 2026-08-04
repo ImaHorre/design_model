@@ -78,6 +78,37 @@ def exp_csv(tmp_path) -> Path:
 # No command → returns 1, prints help
 # ---------------------------------------------------------------------------
 
+class TestConsoleEncoding:
+    """
+    `stepgen study` prints `─`, `→`, `γ` and `Δ`, none of which cp1252 can
+    encode.  On a Windows console it wrote its chapter and *then* died on the
+    summary — the worst possible ordering, a completed run lost to a print.
+    """
+
+    def test_reconfigures_a_cp1252_stream(self, monkeypatch):
+        import io
+        import sys
+        from stepgen.cli import _force_utf8_console
+
+        raw = io.BytesIO()
+        monkeypatch.setattr(
+            sys, "stdout",
+            io.TextIOWrapper(raw, encoding="cp1252", errors="strict"))
+        _force_utf8_console()
+        print("ΔP flatness → γ ─")            # would raise before the fix
+        sys.stdout.flush()
+        assert "ΔP flatness" in raw.getvalue().decode("utf-8")
+
+    def test_survives_a_stream_that_cannot_reconfigure(self, monkeypatch):
+        """pytest capture and plain StringIO have no .reconfigure — never raise."""
+        import io
+        import sys
+        from stepgen.cli import _force_utf8_console
+
+        monkeypatch.setattr(sys, "stdout", io.StringIO())
+        _force_utf8_console()          # must be a no-op, not an AttributeError
+
+
 class TestNoCommand:
     def test_returns_one(self, capsys):
         rc = main([])

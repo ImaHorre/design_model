@@ -963,11 +963,33 @@ def _build_parser() -> argparse.ArgumentParser:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _force_utf8_console() -> None:
+    """
+    Make stdout/stderr tolerate the non-ASCII glyphs this CLI prints.
+
+    On Windows the console defaults to cp1252, which cannot encode the box-drawing
+    rules (`─`), arrows (`→`), `γ` or `✗` used throughout the study output.  Without
+    this, `stepgen study` writes its chapter *and then dies* printing the summary —
+    a completed run lost to a console encoding.
+
+    `errors="replace"` is deliberate: a glyph the terminal cannot render must never
+    kill a run that has already produced its results.  Streams that do not support
+    `reconfigure` (pytest capture, pipes replaced by StringIO) are left alone.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """
     Parse *argv* (defaults to sys.argv[1:]) and dispatch to the appropriate
     subcommand.  Returns an integer exit code (0 = success).
     """
+    _force_utf8_console()
+
     parser = _build_parser()
     args   = parser.parse_args(argv)
 
