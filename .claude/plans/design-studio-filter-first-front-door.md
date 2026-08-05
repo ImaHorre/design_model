@@ -22,13 +22,18 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 |---|---|
 | **Batch 1** | ✅ **complete.** B0 `e53ddc6` · B1 `e21798e` · A4a+A4b `39e7342` · plan `5674636` |
 | **Wave 1** | ✅ **complete.** W1-4 `77ac36a` · W1-1 `d347643` · W1-2 `747a3ce` · W1-3 `9556202` · W1-6 `fd99045` · W1-5 `6ad1f33` |
-| **Wave 2** | **in progress.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · remaining: W2-1a, W2-7, W2-3, W2-4, W2-5, W2-6, W2-8 |
-| **C (server)** | not started, and must not start until W2-8 passes |
+| **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
+| **C (server)** | **unblocked** — W2-8 passed. Not started |
 | **D (explorer)** | D1 ✅, D4 ✅, D2 partly, all in the chapter (`912c74c`, `6db6405`). D5 unblocked |
 | **E** | not started |
 
-**Start here**: Wave 2, in the order **W2-2 → W2-1 (+ the viscosity, together) → W2-1a →
-W2-7 → W2-3 → W2-4 → W2-5 → W2-6 → W2-8**. Do not start C until W2-8 passes.
+**Start here**: **C — the server.** Wave 2 is complete and W2-8 passed, so C is
+unblocked. D5 (the Ca ceiling control with `passes_at_gamma_lo` beside it) is the
+other thing ready to go and depends on nothing in C.
+
+**Baseline is now `pytest -q` → 599 passed, 3 failed, 5 skipped.** The 3 are still
+the `test_cli` ones, but they are **not one thing** — two are a real defect in
+`stepgen report` and one is a stale assertion. See W2-8, which diagnoses both.
 
 **Read "What the ×0.68 costs" in Measured evidence before touching W2-1** — and read
 the correction stapled to it. The headline still holds: the model matched experiment
@@ -957,7 +962,44 @@ returns a silently wrong number"*, with a `upstream_width_um >= 1.25 × exit_dep
 floor. After W2-1 all of that is false and the floor is unnecessary. Update the comment
 block and the same warning wherever it is repeated. Grep for `1.587` and `h/w`.
 
-### W2-8 — exit criteria: re-validate before C starts *(was W2-7)*
+### W2-8 — exit criteria: re-validate before C starts ✅ `<this commit>` *(was W2-7)*
+
+**Wave 2 is complete. C is unblocked.**
+
+| Criterion | Result |
+|---|---|
+| `pytest -q` | **599 passed, 3 failed, 5 skipped** (from 560/3/5). 39 tests added, no new failures |
+| po_sweep re-validation | done — see the viscosity item; Stage 1 **−14.5% → +0.9%** at Qw = 5 with zero correction terms |
+| `C_visc` deleted | done, `71be939`, and a config that sets it now raises |
+| oil viscosity set | **deliberately not set** — the fit is refuted, see below |
+
+**The ±8% target was not met and must not be chased.** It is unreachable without a
+per-condition fitted µ, which is `C_visc` under another name. What was achieved
+instead: Stage 1 to within 15% at the config's own operating condition, with no
+correction term anywhere in the model, and the residual **located** rather than
+absorbed. The data cannot support better — its two independent measures of Q
+disagree with each other by 16–26%.
+
+#### The three "known failures" — looked at, as instructed, and they are two different things
+
+Wave 1's lesson was that a known-failures list is where bugs hide. Checked:
+
+1. **`TestReport::test_creates_png_files` and `test_pressure_profiles_png_exists`
+   are a REAL DEFECT, not noise.** `stepgen report` emits **2 PNGs** where
+   `CLAUDE.md` and `configs/v5_30.yaml` both document **6** ("layout schematic +
+   5 simulation plots"). `_cmd_report` (`cli.py:234-246`) calls
+   `plot_layout_schematic` and `plot_pressure_sweep` and nothing else —
+   `plot_pressure_profiles`, `plot_rung_dP`, `plot_rung_flows`,
+   `plot_rung_frequencies` and `plot_combined_profiles` all **exist in
+   `viz/plots.py` and are never called.** The tests are right and the command is
+   incomplete. Wiring five existing functions is a small, contained fix, but it is
+   a CLI change nothing in Wave 2 asked for — **left for a decision, not done
+   silently.**
+2. **`TestMap::test_creates_png_files` is a stale test**, failing the other way:
+   `stepgen map` now emits **8** PNGs and the test pins exactly 5. The command
+   grew metrics; nobody updated the assertion.
+
+Neither is flaky, and neither was caused by Wave 2.
 
 Wave 2 is not done until:
 
@@ -1146,7 +1188,7 @@ remains:
 ## Sequencing
 
 ```
-B0 ✅ -> B1 ✅ -> A4a/A4b ✅ -> Wave 1 ✅ -> Wave 2 -> C -> D-rest -> E
+B0 ✅ -> B1 ✅ -> A4a/A4b ✅ -> Wave 1 ✅ -> Wave 2 ✅ -> C -> D-rest -> E
                           \                    │
                            \                   ├─ W2-2 audit  (FIRST — see W1-1)
                             \                  ├─ W2-1 + measured viscosity
@@ -1156,21 +1198,27 @@ B0 ✅ -> B1 ✅ -> A4a/A4b ✅ -> Wave 1 ✅ -> Wave 2 -> C -> D-rest -> E
                                 └─ D5 unblocked: it needed A4a only, which has landed
 ```
 
-Batch 1 and Wave 1 are both done, and both were inert as expected: no throughput or ΔP
-number moved at a pinned N. 560 pass against 3 known failures (down from 5 — see W1-1).
-**Next up is Wave 2**, the risk item: it changes what every number means, and C does not
-start until W2-8 passes. Start with W2-2 (the duplicate-formula audit) *before* W2-1 rather
-than after — Wave 1 found a fourth copy of a formula documented as having three, and W2-1
-edits the site with the most copies of all.
+**Batch 1, Wave 1 and Wave 2 are all done.** Batch 1 and Wave 1 were inert, as designed.
+Wave 2 was not, also as designed: the rung resistance fell to 0.65× on V5-30, so
+throughput, ΔP, frequency and exit Ca moved on every serpentine row, and the chapter
+schema was bumped to 2 so pre- and post-wave chapters cannot be pooled. Baseline
+**599 passed, 3 failed, 5 skipped**.
 
-**Note for W2-8's exit criteria**: the `pytest -q` line there still reads "531 passed, same
-5 known failures". The current baseline is **560 passed, 3 failed** (the `test_cli` png
-ones). The two `test_design_search` failures are gone for a reason and must not come
-back.
+**What Wave 2 turned out to be about.** On paper it was a resistance fix with a viscosity
+attached. In practice the resistance fix was the easy half — one function, verified against
+the exact series — and the viscosity was the item that mattered, because checking the
+plan's own 83 cP against the two conditions it had never been tested at **refuted it**. The
+lesson generalises past this wave: *a constant that fits one condition perfectly is not
+evidence; it is an untested hypothesis with a good disguise.* The cross-check cost one
+afternoon and was worth more than everything else in the wave.
 
-**The one item worth pulling forward now**: D5's ceiling control with `passes_at_gamma_lo`
-beside it. Its prerequisite (γ on the page) landed in `39e7342`; it depends on nothing in
-Wave 1 or 2.
+**Next**: C is unblocked. So is D5 — its prerequisite (γ on the page) landed in `39e7342`
+and it depended on nothing in Wave 1 or 2. D5 is still the single highest-value item
+outstanding, because it is the only thing that makes the Ca ceiling — the binding
+constraint on every large-droplet design — visible as a control the reader can move.
+
+**Also outstanding, found during W2-8 and not fixed**: `stepgen report` emits 2 of the 6
+PNGs it documents, with five existing plot functions never called. See W2-8.
 
 ---
 
