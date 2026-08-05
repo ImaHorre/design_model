@@ -27,8 +27,14 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **D (explorer)** | D1 ✅, D4 ✅, D2 partly, all in the chapter (`912c74c`, `6db6405`). D5 unblocked |
 | **E** | not started |
 
-**Start here**: Wave 2, beginning with W2-1 (one rung-resistance implementation) and
-W2-2 (the duplicate-formula audit). **Do not start C until W2-8 passes.**
+**Start here**: Wave 2, in the order **W2-2 → W2-1 (+ the viscosity, together) → W2-1a →
+W2-7 → W2-3 → W2-4 → W2-5 → W2-6 → W2-8**. Do not start C until W2-8 passes.
+
+**Read "What the ×0.68 costs" in Measured evidence before touching W2-1.** The headline:
+the model matches experiment today because two errors cancel, W2-1 removes only one of
+them, and `C_visc ≈ 0.7` is sitting there ready to hide the difference. **Conor ruled
+2026-08-05 that it must not be used.** The replacement is a measured oil viscosity, which
+predicts frequency to ±8% over 200–800 mbar with no correction term anywhere.
 
 **Three things Batch 1 and Wave 1 learned that generalise:**
 
@@ -881,9 +887,14 @@ remains:
 ## Sequencing
 
 ```
-B0 ✅ -> B1 ✅ -> A4a/A4b ✅  ->  Wave 1  ->  Wave 2 (+ re-validation, C_visc refit)  ->  C  ->  D-rest  ->  E
-                          \
-                           └─ D5 unblocked: it needed A4a only, which has landed
+B0 ✅ -> B1 ✅ -> A4a/A4b ✅ -> Wave 1 ✅ -> Wave 2 -> C -> D-rest -> E
+                          \                    │
+                           \                   ├─ W2-2 audit  (FIRST — see W1-1)
+                            \                  ├─ W2-1 + measured viscosity
+                             \                 │     ONE step, not two: W2-1 alone
+                              \                │     breaks the po_sweep validation
+                               \               └─ W2-8 re-validation
+                                └─ D5 unblocked: it needed A4a only, which has landed
 ```
 
 Batch 1 and Wave 1 are both done, and both were inert as expected: no throughput or ΔP
