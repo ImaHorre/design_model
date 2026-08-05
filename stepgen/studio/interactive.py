@@ -43,15 +43,26 @@ from stepgen.studio.scoring import BUILD_GATES, ScoredRow, build_gate_state
 #: Metrics offered as plot axes, in menu order: key -> (label, format, log-by-default).
 #: Anything a family cannot compute is dropped from the menu at build time, so a
 #: serpentine-only chapter never offers hub ΔP.
+#:
+#: **This list and ``workbook._COLUMNS`` must not drift.**  They did: ``t_stage1_s``
+#: was a table column and not a plot axis for no stated reason, which is W2-2's
+#: bug class arriving inside the studio.  Every key here except ``margin`` (which
+#: is a scored quantity, not a ``CommonMetrics`` field) must be a column, and
+#: every column not plottable here must be listed in
+#: ``test_the_two_metric_lists_have_not_drifted`` with a reason.  The check is a
+#: test rather than an import-time assert because ``workbook`` imports this
+#: module, not the other way round.
 PLOT_METRICS: list[tuple[str, str, str, bool]] = [
     ("throughput_mlhr", "Throughput", "f1", False),
     ("uniformity_pct", "ΔP flatness (%)", "f1", False),
     ("regime_Ca", "Exit Ca", "ca", True),
     ("v_vs_demonstrated", "x vs demonstrated", "f1", True),
     ("operating_Po_mbar", "Drive pressure (mbar)", "int", False),
+    ("Po_min_production_mbar", "Po min production (mbar)", "int", False),
     ("N_dfu", "N DFU", "int", False),
     ("frequency_hz", "Frequency (Hz)", "freq", False),
     ("dP_rung_mbar", "ΔP across rung (mbar)", "f1", False),
+    ("t_stage1_s", "Stage-1 refill (s)", "g3", True),
     ("t_cycle_s", "Cycle time (s)", "g3", True),
     ("droplet_um", "Droplet (µm)", "f1", False),
     ("area_used_cm2", "Area (cm²)", "f1", False),

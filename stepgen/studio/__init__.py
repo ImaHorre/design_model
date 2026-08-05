@@ -48,7 +48,7 @@ from stepgen.studio.levers import (
     structural_levers,
 )
 from stepgen.studio.ranking import decide, decide_subset
-from stepgen.studio.run import StudyResult, run_study
+from stepgen.studio.run import StudyResult, fill_production_thresholds, run_study
 from stepgen.studio.scoring import ScoredRow, score_metrics, score_result
 from stepgen.studio.diagnosis import Diagnosis, binding_gates, diagnose
 from stepgen.studio.references import (
@@ -87,6 +87,7 @@ __all__ = [
     "has_intent",
     "load_study",
     "load_study_text",
+    "fill_production_thresholds",
     "run_study",
     "score_metrics",
     "score_result",

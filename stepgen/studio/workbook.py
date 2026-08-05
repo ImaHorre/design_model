@@ -103,6 +103,11 @@ _COLUMNS: list[tuple[str, str, str]] = [
     ("dP_rung_mbar", "ΔP rung (mbar)", "f1"),
     ("t_stage1_s", "t Stage-1 (s)", "g3"),
     ("t_cycle_s", "t cycle (s)", "g3"),
+    # Lowest Po at which EVERY DFU produces — the number a build has to be driven
+    # above, set by the worst-placed DFU rather than the mean ΔP.  Blank unless
+    # the study asked for it: it costs ~40 network solves per design (D6), and it
+    # is a property of the design at a given Qw, not of the swept pressure.
+    ("Po_min_production_mbar", "Po min production (mbar)", "int"),
     ("regime_Ca", "Exit Ca", "ca"),
     # The gamma-free regime number and, next to it, the only comparison in the
     # table with no unmeasured constant in it: how much harder this design
@@ -118,6 +123,19 @@ _COLUMNS: list[tuple[str, str, str]] = [
     ("bend_radius_um", "Fold radius (µm)", "f1"),
     ("wall_at_turn_um", "Wall at turn (µm)", "f1"),
 ]
+
+#: Deliberately **not** a column, recorded so it is not re-added by someone who
+#: notices it missing from a table that carries every other cycle diagnostic.
+#:
+#: ``stage1_fraction`` is ``t_S1/t_cycle = V_reset/V_drop``, a ratio of two
+#: geometric volumes — so in this model it is **constant by construction**, one
+#: value at every pressure (0.63 for a 30x10 exit).  A column of 350 identical
+#: numbers is noise.  The measurement is not constant: 0.63 / 0.63 / 0.65 / 0.54
+#: / 0.46 across 200→800 mbar, and that drift is real physics the model does not
+#: have.  It is therefore a **diagnostic of the model, not a guard on a design**
+#: — it belongs in a stage-timing comparison (`scripts/compare_designs.py`, the
+#: po_sweep workspace), never in a scored column.
+_NOT_A_COLUMN = ("stage1_fraction",)
 
 _FMT_BY_KEY = {key: spec for key, _, spec in _COLUMNS}
 

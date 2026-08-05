@@ -15,6 +15,7 @@ Commands
     stepgen compare  <config.yaml>  <experiments.csv>
                                     [--out compare.csv] [--calibrate]
     stepgen study    <study.yaml>   [--book DIR] [--diagnose auto|always|never]
+                                    [--production-threshold]
     stepgen studio-ui [study.yaml]  [--port N]   (interactive Design Studio; needs .[ui])
 
 Experimental Testing Commands
@@ -492,6 +493,11 @@ def _cmd_study(args: argparse.Namespace) -> int:
     print(f"  Points    : {len(study.points)}")
 
     result = run_study(study, progress=True)
+    if getattr(args, "production_threshold", False):
+        from stepgen.studio.run import fill_production_thresholds
+        print("  Po min production: ~40 solves per DESIGN (not per point)…")
+        n = fill_production_thresholds(result)
+        print(f"  Po min production: {n} design(s) solved")
     scored = score_result(result, study.scoring)
 
     diag = diagnose(study, scored, price=getattr(args, "diagnose", "auto"),
@@ -893,6 +899,11 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="Price what relaxing each active constraint would buy. "
                               "Costs one full re-run per constraint, so the default "
                               "`auto` only prices when nothing scored green.")
+    p_study.add_argument("--production-threshold", action="store_true",
+                         help="Also solve the lowest Po at which EVERY DFU produces, "
+                              "and add it as a column. ~40 network solves per DESIGN "
+                              "(not per point) — it does not depend on the swept Po. "
+                              "Serpentine only; other families stay N-A.")
 
     # ── studio-ui ─────────────────────────────────────────────────────────
     p_ui = sub.add_parser(

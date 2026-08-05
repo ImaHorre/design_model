@@ -25,13 +25,13 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
 | **C (server)** | **unblocked** — W2-8 passed. Not started |
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
-| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `c20df77`, D2 ✅ `<this commit>`, all in the chapter (`912c74c`, `6db6405`) |
+| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `c20df77`, D2 ✅ `6e34dc8`, D6 ✅ `<this commit>`, all in the chapter (`912c74c`, `6db6405`) |
 | **E** | not started |
 
-**Start here**: **D6**, then D7 → D3. D5 and D2 are done. C (the server) is also
+**Start here**: **D7**, then D3. D5, D2 and D6 are done. C (the server) is also
 unblocked but is a separate front.
 
-**Baseline is now `pytest -q` → 619 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
+**Baseline is now `pytest -q` → 622 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
 The 3 are still the `test_cli` ones and are still two different things — see W2-8.
 
 **Baseline is now `pytest -q` → 599 passed, 3 failed, 5 skipped.** The 3 are still
@@ -1283,18 +1283,44 @@ remains:
   — in the example above **both** designs pass at γ = 5 mN/m and **both** fail at 3, and
   only the ceiling control can say that at the moment the reader filters. A4a's
   prerequisite is done, so D5 is unblocked.
-- **D6.** Columns to add: `dP_rung_mbar` ✅, `t_cycle_s` ✅, `t_stage1_s` (in `workbook.py`,
-  **missing from `interactive.py:PLOT_METRICS`**), `Po_min_production_mbar` (missing
-  everywhere). Two caveats ship with them:
-  - **`stage1_fraction` is constant by construction** — the geometric ratio V_reset/V_drop,
-    one value at every pressure (0.63 for a 30×10 exit). Measurement gives
-    0.63/0.63/0.65/0.54/0.46 across 200→800 mbar. A **diagnostic, not a guard**.
-  - **`Po_min_production_mbar` costs ~40 solves** and is a property of the *design* at a
-    given Qw, independent of swept Po. Compute once per design.
+- **D6.** ✅ `<this commit>`
 
-  **Keep the two metric lists in sync or merge them** — `workbook.py:78` and
-  `interactive.py:PLOT_METRICS` are already diverging. This is W2-2's bug class arriving
-  inside the studio.
+  **What implementation found:**
+
+  1. **`Po_min_production_mbar` is a post-pass, not a solve option** — `stepgen study
+     --production-threshold`, `studio.run.fill_production_thresholds()`. Computing it
+     inside `solve()` would have meant either paying per point or threading a
+     "compute this once" flag through the whole family interface. A post-pass gets
+     "once per design" for free, because the cache key *is* the design. **Measured on
+     `study_my_designs`: 32 designs for 352 rows — an 11× saving**, and the collapse is
+     exactly the 11 swept pressures.
+  2. **The cache key is built from the compile inputs, not the label.** A label is a
+     display string; two designs that render identically must not share an answer. Key
+     is `(family, params, fluids, footprint, manufacturing, Qw)`.
+  3. **`target_emulsion_pct` defeats the caching by construction, and that is correct.**
+     When Qw is *derived* per point it differs at every pressure, so the key is unique
+     per row and the cost returns to ~40 solves per point. The threshold genuinely does
+     differ there. Said out loud in the docstring, because it is the difference between
+     seconds and minutes.
+  4. **Serpentine only.** Radial and manifold have no threshold model, so those rows stay
+     `None` / grey rather than being given a borrowed number.
+  5. **The two lists are now guarded by a test, not merged.** Merging them was the
+     obvious move and the wrong one: they hold different tuples for different jobs (a
+     table column has a header; a plot axis has a log-by-default flag), and collapsing
+     them would have meant one list with two half-used shapes. Instead
+     `test_the_two_metric_lists_have_not_drifted` asserts every plot axis is a column,
+     every column is a plot axis **unless it is in `_TABLE_ONLY` with a written reason**,
+     and every key in either is a real `CommonMetrics` field. `t_stage1_s` had left the
+     plot menu for no reason; a key can now only leave by someone stating why.
+     Five deliberate exclusions came out of doing this — `Qw_mlhr`, `v_exit_mps`,
+     `hub_budget_pct`, `bend_radius_um`, `wall_at_turn_um`.
+  6. **`stage1_fraction` is deliberately not a column**, recorded as `_NOT_A_COLUMN` so it
+     is not re-added by someone noticing it missing. It is V_reset/V_drop, a ratio of two
+     geometric volumes — **constant down every column in this model**, so 350 identical
+     numbers. The measurement is *not* constant (0.63/0.63/0.65/0.54/0.46 across
+     200→800 mbar) and that drift is physics the model does not have, which is exactly
+     why it is a diagnostic of the model and never a guard on a design. The caveat now
+     prints where the number actually appears, in `compare_designs.py`.
 - **D7.** Gate and filter evaluation in **one shared module**. Reworded: this is no longer
   prevention, it is consolidation. Three surfaces exist — `ui.py`, the chapter JS,
   `studio-serve`. The JS holds the line today by filtering on Python's `verdict` rather

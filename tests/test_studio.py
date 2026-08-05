@@ -1050,6 +1050,85 @@ def test_the_gate_control_only_offers_sub_gates_some_row_can_answer():
         assert isinstance(row["pin"], bool)
 
 
+# ── D6: the columns, and the two metric lists ────────────────────────────────
+
+#: Table columns deliberately NOT offered as plot axes, each with the reason.
+#: This is the whole point of the test below: a key can leave one list only by
+#: someone writing down why, which is what did not happen to `t_stage1_s`.
+_TABLE_ONLY = {
+    "Qw_mlhr": "an operating input, already a filter axis when the study sweeps it",
+    "v_exit_mps": "v_vs_demonstrated is the same number with the units removed",
+    "hub_budget_pct": "radial-only; the menu already drops family-specific keys",
+    "bend_radius_um": "determined by the lane pitch — plotting it plots the pitch",
+    "wall_at_turn_um": "reported geometry, never gated (decision 9 / W2-5)",
+}
+
+
+def test_the_two_metric_lists_have_not_drifted():
+    """
+    `workbook._COLUMNS` and `interactive.PLOT_METRICS` are two hand-kept lists of
+    the same quantities, which is exactly the shape of W2-2's bug -- and they had
+    already drifted: `t_stage1_s` was a column and not a plot axis, for no stated
+    reason. Neither may lose a key silently again.
+    """
+    from stepgen.families import CommonMetrics
+    from stepgen.studio.interactive import PLOT_METRICS
+    from stepgen.studio.workbook import _COLUMNS, _NOT_A_COLUMN
+
+    cols = {k for k, _, _ in _COLUMNS}
+    plots = {k for k, _, _, _ in PLOT_METRICS}
+
+    # `margin` is a scored quantity, not a solved one, so it has no column
+    assert plots - cols == {"margin"}, "plot axis with no table column"
+    assert cols - plots == set(_TABLE_ONLY), (
+        "a column left the plot menu without a reason in _TABLE_ONLY")
+
+    # and every key in either list must be a real field, not a typo
+    fields = set(CommonMetrics.__dataclass_fields__)
+    for key in (cols | plots) - {"margin"}:
+        assert key in fields, f"{key} is not a CommonMetrics field"
+    for key in _NOT_A_COLUMN:
+        assert key in fields and key not in cols
+
+
+def test_production_threshold_is_solved_once_per_design_not_per_point():
+    """
+    ~40 network solves each, and it does not depend on the swept Po -- so a
+    pressure sweep must pay for the designs, not the points.
+    """
+    import dataclasses
+
+    from stepgen.studio.run import fill_production_thresholds, run_study
+    from stepgen.studio.study import load_study
+
+    study = load_study(TEMPLATE)
+    base = next(p for p in study.points if p.family == "serpentine")
+    # ONE design at four pressures -- the cache must collapse them to a single solve
+    study.points = [
+        dataclasses.replace(base, label=f"{base.label}_Po{po}",
+                            operating={**base.operating, "Po_mbar": po})
+        for po in (200.0, 400.0, 600.0, 800.0)
+    ]
+    result = run_study(study)
+
+    assert fill_production_thresholds(result) == 1
+    solved = [cm.Po_min_production_mbar for cm in result.metrics]
+    assert len(set(solved)) == 1, "the threshold moved with the swept Po"
+    assert solved[0] is not None, "this design never reaches full production"
+    assert "Po_min_production_mbar" in result.frame.columns
+
+
+def test_production_threshold_is_absent_unless_asked():
+    """It costs ~40 solves per design; nobody pays for it by accident."""
+    from stepgen.studio.run import run_study
+    from stepgen.studio.study import load_study
+
+    study = load_study(TEMPLATE)
+    study.points = study.points[:2]
+    result = run_study(study)
+    assert all(cm.Po_min_production_mbar is None for cm in result.metrics)
+
+
 # ── W2-5: fold geometry, reported not gated ──────────────────────────────────
 
 def test_bend_radius_is_half_the_lane_pitch():

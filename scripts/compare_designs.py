@@ -175,6 +175,12 @@ def main() -> int:
         print(f"    That ceiling is at lambda ~ 1; Peak runs lambda ~ 0.015, and the highest exit")
         print(f"    Ca Peak has MEASURED is {CA_MEASURED_MAX}. gamma has never been measured for")
         print(f"    this fluid system, which is why it no longer decides anything here.")
+    if "stage1_fraction" in per_point.columns:
+        print(f"  * stage1_fraction is CONSTANT down each design's column, and that is")
+        print(f"    the model, not the device: it is V_reset/V_drop, a ratio of two")
+        print(f"    geometric volumes, so nothing makes it move with pressure. The V5-8-1")
+        print(f"    measurement gives 0.63/0.63/0.65/0.54/0.46 across 200-800 mbar. Read it")
+        print(f"    as a diagnostic of the model, never as a property of a design.")
     deep = frame.get("exit_depth_um")
     if deep is not None and (deep > 12.0).any():
         print(f"  * Exits deeper than 12 um extrapolate the droplet power law (~2x), so")
