@@ -192,11 +192,20 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
 def _cmd_report(args: argparse.Namespace) -> int:
     import matplotlib
     matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
 
     from stepgen.config import load_config
     from stepgen.design.layout import compute_layout
     from stepgen.models.generator import iterative_solve
-    from stepgen.viz.plots import plot_layout_schematic, plot_pressure_sweep
+    from stepgen.viz.plots import (
+        plot_combined_profiles,
+        plot_layout_schematic,
+        plot_pressure_profiles,
+        plot_pressure_sweep,
+        plot_rung_dP,
+        plot_rung_flows,
+        plot_rung_frequencies,
+    )
 
     config  = load_config(args.config)
     out_dir = Path(args.out_dir)
@@ -237,21 +246,72 @@ def _cmd_report(args: argparse.Namespace) -> int:
     fig = plot_layout_schematic(config, layout)
     path = out_dir / "layout_schematic.png"
     fig.savefig(path, dpi=150)
+    plt.close(fig)
     print(f"  layout_schematic saved")
+
+    # ── Spatial profiles at ONE operating point ───────────────────────────────
+    # `report` documented six figures — "layout schematic + 5 simulation plots"
+    # (CLAUDE.md, configs/v5_30.yaml) — and emitted two.  The five plot builders
+    # existed in viz/plots.py all along and were simply never called; the
+    # `iterative_solve` import at the top of this function was already here,
+    # unused, which is what the missing solve looked like from the outside.
+    #
+    # The profiles are per-rung curves, so they need a SINGLE operating point,
+    # not the sweep.  The first point is used and PRINTED — a spatial profile
+    # with no stated Po/Qw is a picture of an unnamed device.
+    Po_ref, Qw_ref = float(Po_vals[0]), float(Qw_vals[0])
+    print(f"  profiles at Po = {Po_ref:g} mbar, Qw = {Qw_ref:g} mL/hr"
+          + ("  (first point of the sweep)" if sweep_mode else ""))
+    result = iterative_solve(config, Po_in_mbar=Po_ref, Qw_in_mlhr=Qw_ref)
+
+    profiles = [
+        ("pressure_profiles", lambda: plot_pressure_profiles(result, config)),
+        ("rung_dP", lambda: plot_rung_dP(result, config)),
+        ("rung_flows", lambda: plot_rung_flows(result, config)),
+        ("rung_frequencies", lambda: plot_rung_frequencies(result, config)),
+        ("combined_profiles", lambda: plot_combined_profiles(result, config)),
+    ]
+    for name, build in profiles:
+        fig = build()
+        fig.savefig(out_dir / f"{name}.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  {name} saved")
 
     # ── Pressure sweep plot ───────────────────────────────────────────────────
     print(f"  running pressure sweep ({len(Po_vals)} × {len(Qw_vals)} points) ...")
     fig = plot_pressure_sweep(config, Po_vals, Qw_vals)
     path = out_dir / "pressure_sweep.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
     print(f"  pressure_sweep saved -> {path}")
 
     return 0
 
 
+#: Metrics `stepgen map` draws, one PNG each.  Named here rather than inline so
+#: the test can assert against the command's own list: the assertion used to pin
+#: the literal 5, the command grew to 8, and nobody updated it — a "known
+#: failure" that was only ever a stale number.
+MAP_METRICS: list[str] = [
+    "active_fraction", "reverse_fraction",
+    "Q_spread_pct", "dP_spread_pct", "P_peak_Pa",
+    "f_mean", "dP_avg_mbar", "Q_rung_nL_hr",
+]
+
+#: Figures `stepgen report` writes: the layout schematic, five spatial profiles
+#: at one operating point, and the pressure sweep.  Same reason as above.
+REPORT_FIGURES: list[str] = [
+    "layout_schematic",
+    "pressure_profiles", "rung_dP", "rung_flows", "rung_frequencies",
+    "combined_profiles",
+    "pressure_sweep",
+]
+
+
 def _cmd_map(args: argparse.Namespace) -> int:
     import matplotlib
     matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     import numpy as np
 
     from stepgen.config import load_config
@@ -274,17 +334,12 @@ def _cmd_map(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    metrics = [
-        "active_fraction", "reverse_fraction",
-        "Q_spread_pct", "dP_spread_pct", "P_peak_Pa",
-        "f_mean", "dP_avg_mbar", "Q_rung_nL_hr",
-    ]
-
     print("=== map ===")
-    for m in metrics:
+    for m in MAP_METRICS:
         fig  = plot_operating_map(map_result, metric=m)
         path = out_dir / f"map_{m}.png"
         fig.savefig(path, dpi=150)
+        plt.close(fig)
         print(f"  → {path}")
 
     # Window summary

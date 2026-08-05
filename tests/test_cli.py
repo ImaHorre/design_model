@@ -225,10 +225,20 @@ class TestReport:
         rc = main(["report", str(cfg), "--out-dir", str(tmp_path)])
         assert rc == 0
 
-    def test_creates_png_files(self, cfg, tmp_path):
+    def test_creates_every_documented_figure(self, cfg, tmp_path):
+        """
+        `report` documented "layout schematic + 5 simulation plots" and emitted
+        two: the five profile builders existed in viz/plots.py and were never
+        called. Asserted against the command's own list so the count cannot go
+        stale the way TestMap's did.
+        """
+        from stepgen.cli import REPORT_FIGURES
+
         main(["report", str(cfg), "--out-dir", str(tmp_path)])
-        pngs = list(tmp_path.glob("*.png"))
-        assert len(pngs) >= 5   # now includes layout_schematic
+        missing = [n for n in REPORT_FIGURES
+                   if not (tmp_path / f"{n}.png").exists()]
+        assert not missing, f"documented figures never written: {missing}"
+        assert len(list(tmp_path.glob("*.png"))) == len(REPORT_FIGURES)
 
     def test_layout_schematic_png_exists(self, cfg, tmp_path):
         main(["report", str(cfg), "--out-dir", str(tmp_path)])
@@ -264,8 +274,14 @@ class TestMap:
             "--Qw-min", "2",   "--Qw-max", "10",  "--Qw-n",  "2",
             "--out-dir", str(tmp_path),
         ])
-        pngs = list(tmp_path.glob("map_*.png"))
-        assert len(pngs) == 5   # one per metric
+        # one per metric, asserted against the command's own list. This used to
+        # pin the literal 5; `map` grew to 8 metrics and nobody updated it, so
+        # it sat on the known-failures list as "noise" while saying something
+        # true (the count had changed) about nothing that was wrong.
+        from stepgen.cli import MAP_METRICS
+
+        pngs = sorted(p.stem for p in tmp_path.glob("map_*.png"))
+        assert pngs == sorted(f"map_{m}" for m in MAP_METRICS)
 
     def test_prints_window_summary(self, cfg, tmp_path, capsys):
         main([

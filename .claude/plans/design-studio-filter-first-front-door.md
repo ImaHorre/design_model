@@ -31,8 +31,17 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 **Start here**: **C — the server**, the only section left before E. Section D is
 complete.
 
-**Baseline is now `pytest -q` → 633 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
-The 3 are still the `test_cli` ones and are still two different things — see W2-8.
+**Baseline is now `pytest -q` → 636 passed, 0 failed, 5 skipped** (from 605/3/5 at
+`bf8afd4`). **The known-failures list is empty for the first time.** Both `test_cli`
+defects W2-8 diagnosed are fixed in `<this commit>`: `stepgen report` now writes the six
+figures it documents (it wrote two; the five profile builders existed and were never
+called), and `stepgen map`'s stale count is gone. Both assertions now check the command's
+own list — `cli.REPORT_FIGURES` / `cli.MAP_METRICS` — so neither can go stale again.
+
+**Wave 1's lesson closes out three for three.** Every item that sat on the
+known-failures list turned out to be a real defect or a stale assertion, never noise:
+the two `test_design_search` failures were the duplicated lane-pitch formula (W1-1), and
+these three were a half-implemented command plus a count nobody updated.
 
 **Baseline is now `pytest -q` → 599 passed, 3 failed, 5 skipped.** The 3 are still
 the `test_cli` ones, but they are **not one thing** — two are a real defect in
@@ -1455,8 +1464,13 @@ D3 this commit). What it turned out to be about, in one line each:
 
 **Next**: C, the server — the last section before E.
 
-**Also outstanding, found during W2-8 and not fixed**: `stepgen report` emits 2 of the 6
-PNGs it documents, with five existing plot functions never called. See W2-8.
+~~**Also outstanding, found during W2-8 and not fixed**: `stepgen report` emits 2 of the 6
+PNGs it documents.~~ **Fixed 2026-08-05.** The five profile builders needed one solve at a
+single operating point — and the `iterative_solve` import was already sitting at the top of
+`_cmd_report`, unused, which is what the missing solve looked like from the outside. The
+operating point is printed, because a spatial profile with no stated Po/Qw is a picture of
+an unnamed device. `stepgen map`'s stale assertion went with it. **`pytest -q` is now
+clean: 636 passed, 0 failed, 5 skipped.**
 
 ---
 
