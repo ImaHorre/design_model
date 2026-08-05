@@ -56,7 +56,13 @@ from stepgen.studio.references import (
     ReferenceSeries,
     resolve_references,
 )
-from stepgen.studio.workbook import write_book_index, write_workbook
+from stepgen.studio.workbook import (
+    LineageError,
+    chapter_id,
+    load_lineage,
+    write_book_index,
+    write_workbook,
+)
 
 __all__ = [
     "Study",
@@ -68,6 +74,7 @@ __all__ = [
     "Grouping",
     "Diagnosis",
     "IntentPlan",
+    "LineageError",
     "LeverStep",
     "ReferencePoint",
     "ReferenceSeries",
@@ -75,6 +82,7 @@ __all__ = [
     "binding_gates",
     "build_grouping",
     "build_study",
+    "chapter_id",
     "decide",
     "decide_subset",
     "diagnose",
@@ -85,6 +93,7 @@ __all__ = [
     "expand_intent",
     "generated_yaml",
     "has_intent",
+    "load_lineage",
     "load_study",
     "load_study_text",
     "fill_production_thresholds",

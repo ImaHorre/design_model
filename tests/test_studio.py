@@ -1217,6 +1217,173 @@ def test_no_surface_re_derives_a_verdict_from_a_threshold():
             f"comparison to scoring.py -- that is a second scorer")
 
 
+# ── D3: swept range, lineage, and the pooling guard ──────────────────────────
+
+def _mini_chapter(tmp_path, name, *, parent=None, points=3):
+    """
+    Build a real chapter + sidecar from the template, small enough to be fast.
+
+    *points* is what makes a child different from its parent -- the id is a
+    content hash over the points actually solved, so a child that ran the same
+    points IS its parent (see chapter_id).
+    """
+    from stepgen.studio.run import run_study
+    from stepgen.studio.study import load_study
+    from stepgen.studio.workbook import write_workbook
+
+    study = load_study(TEMPLATE)
+    study.points = study.points[:points]
+    result = run_study(study)
+    out = write_workbook(result, tmp_path / f"{name}.html", price="never",
+                         parent=parent)
+    return out.with_suffix(".json")
+
+
+def test_the_payload_states_what_was_actually_swept():
+    """
+    Decision 6. An empty result means two different things -- "no design does
+    this" and "no design was TRIED at this" -- and a filter box that does not say
+    what the study covered cannot tell them apart.
+    """
+    from stepgen.studio.grouping import build_grouping
+    from stepgen.studio.interactive import chapter_payload
+    from stepgen.studio.run import run_study
+    from stepgen.studio.scoring import score_result
+    from stepgen.studio.study import load_study
+
+    study = load_study(TEMPLATE)
+    study.points = study.points[:6]
+    result = run_study(study)
+    scored = score_result(result, study.scoring)
+    grouping = build_grouping(study, study.points)
+    payload = chapter_payload(scored, grouping, {}, [], {}, study.scoring,
+                              source_path="configs/study_template.yaml")
+
+    ranges = payload["ranges"]
+    assert ranges, "no swept range recorded at all"
+    for key in payload["limits"]:
+        assert key in ranges, f"{key} is a filter control with no stated range"
+        rg = ranges[key]
+        assert rg["lo"] <= rg["hi"] and rg["n"] >= 1
+        # and it must bracket every row's value -- it IS the swept range
+        vals = [r["m"][key] for r in payload["rows"] if r["m"].get(key) is not None]
+        assert min(vals) == pytest.approx(rg["lo"])
+        assert max(vals) == pytest.approx(rg["hi"])
+    assert payload["sourcePath"] == "configs/study_template.yaml"
+
+
+def test_a_chapter_has_a_stable_id_and_no_parent_by_default(tmp_path):
+    import json
+
+    from stepgen.studio.workbook import load_lineage
+
+    side = _mini_chapter(tmp_path, "solo")
+    data = json.loads(side.read_text(encoding="utf-8"))
+    assert len(data["chapter_id"]) == 12
+    assert data["parent"] is None
+    assert load_lineage(side) == [data]
+
+
+def test_a_child_records_its_parent_and_the_pair_pools(tmp_path):
+    from stepgen.studio.workbook import load_lineage
+
+    parent = _mini_chapter(tmp_path, "parent")
+    child = _mini_chapter(tmp_path, "child", parent=parent, points=4)
+
+    chain = load_lineage(child)
+    assert len(chain) == 2
+    assert chain[0]["chapter_id"] != chain[1]["chapter_id"], "id is not per-run"
+    assert chain[1]["parent"]["chapter_id"] == chain[0]["chapter_id"]
+    assert chain[0]["parent"] is None      # oldest first
+
+
+def test_the_id_is_content_not_wall_clock(tmp_path):
+    """
+    Two runs of the same study at the same commit are ONE chapter, and must get
+    one id. The first version of chapter_id hashed the run timestamp instead,
+    which gave two ids for one chapter -- and at one-second resolution collided
+    anyway, so a genuine parent and child could share an id.
+    """
+    import json
+
+    a = json.loads(_mini_chapter(tmp_path, "a").read_text(encoding="utf-8"))
+    b = json.loads(_mini_chapter(tmp_path, "b").read_text(encoding="utf-8"))
+    assert a["chapter_id"] == b["chapter_id"], "identical content, two ids"
+
+    wider = json.loads(_mini_chapter(tmp_path, "wider", points=6)
+                       .read_text(encoding="utf-8"))
+    assert wider["chapter_id"] != a["chapter_id"], "extended axis, same id"
+
+
+def test_declaring_a_chapter_to_extend_itself_is_a_loop(tmp_path):
+    """The other half of a content id: it makes self-extension detectable."""
+    from stepgen.studio.workbook import LineageError, load_lineage
+
+    parent = _mini_chapter(tmp_path, "parent")
+    same = _mini_chapter(tmp_path, "same", parent=parent)   # identical points
+    with pytest.raises(LineageError, match="loops back"):
+        load_lineage(same)
+
+
+def test_pooling_is_refused_when_the_model_commit_differs(tmp_path):
+    """
+    W2-1 moved throughput, ΔP, frequency and exit Ca on every serpentine row.
+    Pooling rows solved by two models is how a study argues with itself.
+    """
+    import json
+
+    from stepgen.studio.workbook import LineageError, load_lineage
+
+    parent = _mini_chapter(tmp_path, "parent")
+    child = _mini_chapter(tmp_path, "child", parent=parent, points=5)
+
+    data = json.loads(parent.read_text(encoding="utf-8"))
+    data["git_hash"] = "0000000000000000000000000000000000000000"
+    parent.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(LineageError, match="model commit"):
+        load_lineage(child)
+
+
+def test_pooling_is_refused_when_the_schema_differs_and_absent_means_v1(tmp_path):
+    """
+    **An absent `schema_version` is version 1, not "current".** That is the whole
+    reason W2-6 added it: treating missing as current re-opens exactly the silent
+    pooling the version exists to prevent.
+    """
+    import json
+
+    from stepgen.studio.workbook import SCHEMA_VERSION, LineageError, load_lineage
+
+    assert SCHEMA_VERSION > 1, "this test needs a schema past v1 to be meaningful"
+
+    parent = _mini_chapter(tmp_path, "parent")
+    child = _mini_chapter(tmp_path, "child", parent=parent, points=5)
+
+    data = json.loads(parent.read_text(encoding="utf-8"))
+    del data["schema_version"]                    # a pre-W2-6 chapter
+    parent.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(LineageError, match="schema"):
+        load_lineage(child)
+
+
+def test_the_refusal_says_what_to_do_about_it(tmp_path):
+    import json
+
+    from stepgen.studio.workbook import LineageError, load_lineage
+
+    parent = _mini_chapter(tmp_path, "parent")
+    child = _mini_chapter(tmp_path, "child", parent=parent, points=5)
+    data = json.loads(parent.read_text(encoding="utf-8"))
+    data["git_hash"] = "deadbeef"
+    parent.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(LineageError) as exc:
+        load_lineage(child)
+    assert "re-run the parent" in str(exc.value).lower()
+
+
 # ── W2-5: fold geometry, reported not gated ──────────────────────────────────
 
 def test_bend_radius_is_half_the_lane_pitch():

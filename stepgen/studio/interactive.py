@@ -160,6 +160,32 @@ def verdict_reason(row: ScoredRow) -> tuple[str, str]:
     return worst, reason
 
 
+def _swept_ranges(rows: Sequence[dict[str, Any]],
+                  metrics_menu: Sequence[dict[str, Any]],
+                  axes: Sequence[Axis]) -> dict[str, dict[str, Any]]:
+    """
+    ``key -> {lo, hi, n}`` over every solved row — the range the study covers.
+
+    Computed over **all** rows, never the filtered subset: this is a property of
+    what was run, and a range that shrank as the reader filtered would defeat the
+    one thing it is for.  ``n`` is the count of distinct values, which is what
+    tells a reader whether 200–1000 mbar is eleven levels or two.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    keys = [m["key"] for m in metrics_menu] + [a.path for a in axes if a.is_numeric]
+    for key in keys:
+        vals = []
+        for r in rows:
+            v = r["m"].get(key)
+            if v is None:
+                v = _num(r["v"].get(key))
+            if v is not None:
+                vals.append(float(v))
+        if vals:
+            out[key] = {"lo": min(vals), "hi": max(vals), "n": len(set(vals))}
+    return out
+
+
 def build_gate_json(sr: ScoredRow, scoring: dict[str, Any]) -> dict[str, Any]:
     """
     One row's build sub-gates, as the browser's three-state control needs them.
@@ -202,6 +228,7 @@ def chapter_payload(
     decisions: dict[str, Decision],
     scoring: dict[str, Any],
     refs: Sequence[Any] = (),
+    source_path: str | None = None,
 ) -> dict[str, Any]:
     """Everything the browser needs to recompute the chapter over a subset."""
     axes = list(grouping.design_axes) + list(grouping.condition_axes)
@@ -291,6 +318,15 @@ def chapter_payload(
         "weights": dict(next(iter(decisions.values())).weights) if decisions else {},
         "metrics": metrics_menu,
         "limits": [m for m in LIMIT_METRICS if m in {x["key"] for x in metrics_menu}],
+        # ── D3 / decision 6: what was actually swept ─────────────────────────
+        # A filter box with no idea what the study covered invites a threshold
+        # nobody simulated, and an empty result then reads as "no design does
+        # this" when it means "no design was TRIED at this". Every numeric
+        # control states its swept range, and a limit outside it says so.
+        "ranges": _swept_ranges(rows, metrics_menu, axes),
+        # the study file, so the out-of-range warning can name the command that
+        # would widen the axis rather than just saying it is too narrow
+        "sourcePath": source_path,
         "presets": presets,
         "rows": rows,
         "refs": ref_series,
@@ -332,6 +368,9 @@ INTERACTIVE_CSS = """
 /* the three-state gate control (D2 / decision 10) */
 .glabel{font-size:11px;font-weight:600;color:#57606a;align-self:center;
   text-transform:uppercase;letter-spacing:.03em;}
+/* the swept range under each numeric limit (D3 / decision 6) */
+.swept{font-size:11px;color:#57606a;align-self:center;max-width:34rem;}
+.swept.dead{color:#cf222e;font-weight:600;}
 .tabbar{display:flex;gap:.3rem;margin-top:.5rem;border-bottom:1px solid #d0d7de;}
 .tabbtn{font-size:12.5px;padding:.35rem .9rem;border:1px solid transparent;
   border-bottom:none;border-radius:7px 7px 0 0;background:transparent;color:inherit;
@@ -367,7 +406,7 @@ tr.hit td{background:rgba(9,105,218,.18)!important;}
 @media (prefers-color-scheme:dark){
   .rail{background:#0d1117;border-color:#30363d;}
   .line select,.line input,.plotwrap,.tabbar,.tabbtn.on{border-color:#30363d;}
-  .line label,.plotnote,.dparams li span,.glabel{color:#8b949e;}
+  .line label,.plotnote,.dparams li span,.glabel,.swept{color:#8b949e;}
 }
 """
 
@@ -527,6 +566,7 @@ function buildRail(){
       + '</select></label>');
     h.push('<label>min<input type="number" step="any" data-lim="'+i+'" data-part="min"></label>');
     h.push('<label>max<input type="number" step="any" data-lim="'+i+'" data-part="max"></label>');
+    h.push('<span class="swept" id="swept'+i+'"></span>');
   }
   h.push('<button class="btn" onclick="resetAll()">Reset filters</button>');
   h.push('<button class="btn" onclick="clearPins()">Clear pins</button>');
@@ -574,6 +614,36 @@ function buildRail(){
       paint();
     });
   });
+}
+
+// ── what was actually swept (D3 / decision 6) ──────────────────────────────
+// An empty result has two completely different meanings — "no design does this"
+// and "no design was TRIED at this" — and a filter box that does not say what
+// the study covered cannot tell them apart. So every numeric limit states its
+// swept range, and a bound outside that range says so and names the fix.
+function extendHint(){
+  var src = CHAPTER.sourcePath;
+  return src ? ('widen the axis in ' + src + ' and re-run with '
+                + '`stepgen study ' + src + ' --extends <this chapter>.json`')
+             : 'widen the axis in the study YAML and re-run with --extends';
+}
+function paintSwept(){
+  for(var i=0;i<S.lim.length;i++){
+    var el=document.getElementById('swept'+i);
+    if(!el) continue;
+    var L=S.lim[i], rg=L.k ? (CHAPTER.ranges||{})[L.k] : null;
+    if(!L.k || !rg){ el.textContent=''; el.className='swept'; continue; }
+    var f=fmtOf(L.k);
+    var txt='swept '+fmtN(rg.lo,f)+'–'+fmtN(rg.hi,f)+' ('+rg.n+' level'+(rg.n===1?'':'s')+')';
+    // Outside the swept range in the direction that CANNOT be answered: a min
+    // above everything simulated, or a max below it. The other direction is
+    // merely loose, not unanswerable, so it is not flagged.
+    var dead = (L.min!==null && L.min>rg.hi) || (L.max!==null && L.max<rg.lo);
+    if(dead) txt += ' — nothing was simulated there, so an empty result here '
+                  + 'means UNTRIED, not impossible. To find out: ' + extendHint();
+    el.textContent=txt;
+    el.className='swept'+(dead?' dead':'');
+  }
 }
 
 // ── "you set this" ─────────────────────────────────────────────────────────
@@ -1044,7 +1114,7 @@ function paint(){
   var rows=shown();
   document.getElementById('railcount').textContent =
     rows.length+' of '+CHAPTER.rows.length+' rows';
-  paintGamma(rows); paintGateNote(rows);
+  paintGamma(rows); paintGateNote(rows); paintSwept();
   paintPins(); paintPinTable(); paintDesigns(rows); paintTable(rows);
   paintLevers(); paintPlot(rows);
 }

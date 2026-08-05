@@ -15,7 +15,7 @@ Commands
     stepgen compare  <config.yaml>  <experiments.csv>
                                     [--out compare.csv] [--calibrate]
     stepgen study    <study.yaml>   [--book DIR] [--diagnose auto|always|never]
-                                    [--production-threshold]
+                                    [--production-threshold] [--extends PARENT.json]
     stepgen studio-ui [study.yaml]  [--port N]   (interactive Design Studio; needs .[ui])
 
 Experimental Testing Commands
@@ -505,8 +505,22 @@ def _cmd_study(args: argparse.Namespace) -> int:
 
     book_dir = Path(args.book)
     chapter = book_dir / (Path(args.study).stem + ".html")
-    write_workbook(result, chapter, diagnosis=diag)
+    parent = getattr(args, "extends", None)
+    if parent:
+        print(f"  Extends   : {parent}")
+    write_workbook(result, chapter, diagnosis=diag, parent=parent)
     index = write_book_index(book_dir)
+
+    if parent:
+        # Fail loudly HERE rather than when someone later tries to read the two
+        # together: a lineage that cannot be pooled is worth knowing about at the
+        # moment it is created, while re-running the parent is still cheap.
+        from stepgen.studio.workbook import LineageError, load_lineage
+        try:
+            chain = load_lineage(chapter.with_suffix(".json"))
+            print(f"  Lineage   : {len(chain)} chapters, poolable")
+        except LineageError as exc:
+            print(f"  ! lineage : {exc}")
 
     n_err = sum(1 for m in result.metrics if m.error)
     print(f"  Solved    : {len(result.metrics) - n_err}/{len(result.metrics)} "
@@ -899,6 +913,11 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="Price what relaxing each active constraint would buy. "
                               "Costs one full re-run per constraint, so the default "
                               "`auto` only prices when nothing scored green.")
+    p_study.add_argument("--extends", type=str, default=None, metavar="PARENT.json",
+                         help="Record this chapter as extending PARENT (its JSON "
+                              "sidecar), making the two a lineage that may be read "
+                              "as one table. Pooling is refused unless both agree "
+                              "on model commit AND chapter schema.")
     p_study.add_argument("--production-threshold", action="store_true",
                          help="Also solve the lowest Po at which EVERY DFU produces, "
                               "and add it as a column. ~40 network solves per DESIGN "

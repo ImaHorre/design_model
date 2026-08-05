@@ -25,13 +25,13 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
 | **C (server)** | **unblocked** — W2-8 passed. Not started |
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
-| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `c20df77`, D2 ✅ `6e34dc8`, D6 ✅ `7f346f4`, D7 ✅ `<this commit>` |
-| **E** | not started |
+| **D (explorer)** | ✅ **complete.** D1 · D4 · D5 `c20df77` · D2 `6e34dc8` · D6 `7f346f4` · D7 `f54ee49` · D3 `<this commit>` |
+| **E** | not started. **E2 is part-done**: D3 defined the stable chapter id it was blocked on |
 
-**Start here**: **D3** — the last of section D. C (the server) is also unblocked but is
-a separate front.
+**Start here**: **C — the server**, the only section left before E. Section D is
+complete.
 
-**Baseline is now `pytest -q` → 625 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
+**Baseline is now `pytest -q` → 633 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
 The 3 are still the `test_cli` ones and are still two different things — see W2-8.
 
 **Baseline is now `pytest -q` → 599 passed, 3 failed, 5 skipped.** The 3 are still
@@ -1175,11 +1175,51 @@ remains:
      therefore sits on the rail ("⚪ you set this geometry") and on the row, not on
      individual axis controls. Building per-field provenance to decorate a dropdown would
      be new machinery for a cosmetic gain.
-- **D3.** Swept-range display per control, out-of-range warning, and "extend this axis"
-  → **a child chapter recording its parent**, loaded with the parent as one lineage table.
-  Safe where arbitrary pooling is not, because a lineage holds family, exits and fluids
-  fixed by construction. **Guard**: pool only when `git_hash` *and* `schema_version` match;
-  otherwise refuse and offer to re-run the parent.
+- **D3.** ✅ `<this commit>`
+
+  Swept range under every numeric limit, an out-of-range warning that names the fix, a
+  `chapter_id` + `parent` in the sidecar, `stepgen study --extends PARENT.json`, and
+  `load_lineage()` with the git_hash + schema_version guard.
+
+  **What implementation found:**
+
+  1. **`chapter_id` must be a CONTENT hash, and the first version was wrong twice.**
+     Hashing the run timestamp gave *two ids for one chapter* — and at one-second
+     resolution it **collided anyway**: a parent and its child, built back to back in a
+     test, got the same id and `load_lineage` reported a loop. It now hashes title +
+     study text + git_hash + **the labels of every point solved**. Consequences, all of
+     them the right ones: extending an axis changes the labels so a child gets a new id;
+     **re-running the identical study at the same commit gives the same id**, because
+     same inputs and same model means one chapter and a second copy of it; and declaring
+     a chapter to extend one with identical content is therefore a **detectable loop**
+     rather than a chapter silently pooled with itself. Pinned by
+     `test_the_id_is_content_not_wall_clock`.
+  2. **The guard fires at creation, not at read.** `stepgen study --extends` calls
+     `load_lineage` immediately and prints the refusal, because a lineage that cannot be
+     pooled is worth knowing about while re-running the parent is still cheap — not
+     months later when someone tries to read the two together.
+  3. **"An absent `schema_version` means version 1" is now enforced, not just written
+     down.** `_assert_poolable` defaults to 1, never to the current version, and a test
+     deletes the key from a parent sidecar and asserts the refusal. That default is the
+     whole reason W2-6 exists and it is one `.get(k, SCHEMA_VERSION)` away from being
+     undone.
+  4. **The out-of-range warning is one-sided, deliberately.** Only a `min` above
+     everything swept or a `max` below it is flagged: those cannot be answered from this
+     chapter, and an empty result there means **untried, not impossible** — which is the
+     distinction decision 6 exists to draw. A bound that is merely wider than the sweep
+     is loose, not unanswerable, and flagging it would train the reader to ignore the
+     warning.
+  5. **"Offer to extend that axis" is a command, not a button.** The chapter is a static
+     file; it cannot run a solve. It prints the exact
+     `stepgen study <source> --extends <this chapter>.json` to run, using the study path
+     carried in the payload. When C lands, that is the invocation the button fires.
+  6. **Ranges are computed over ALL rows, never the filtered subset.** A swept range that
+     shrank as the reader filtered would defeat the one thing it is for. `n` (distinct
+     values) ships beside lo/hi, because "200–1000 mbar" is a different claim at eleven
+     levels than at two.
+  7. Verified end to end: an 11-point parent extended to 33 points reports
+     `Lineage: 2 chapters, poolable`; editing the parent's `git_hash` produces the
+     refusal naming both commits and saying to re-run the parent.
 - **D4.** ✅ *Landed* — click-to-pin, a Pinned-runs table carrying every design and
   condition axis with verdict and reason, "pinned only" on the plot, and "mark best" over
   the *visible* rows (`6db6405`). Phase 3 schematic in the detail panel still to wire.
@@ -1357,9 +1397,12 @@ remains:
 
 - **E1.** Sweep → chapter, reusing `write_workbook()` unchanged.
 - **E2.** Filter views as small saved JSON (thresholds, sort, demoted gates, starred rows),
-  shareable as a URL. **Needs a stable chapter id** — undefined today; a view must be able
-  to name the chapter it points at. Now also needs to serialise the in-chapter filter
-  state that `912c74c` introduced.
+  shareable as a URL. ~~**Needs a stable chapter id** — undefined today~~ — **D3 defined
+  it**: `workbook.chapter_id()`, a content hash over title + study text + git_hash + the
+  labels of every point solved, recorded as `chapter_id` in every sidecar. A view can now
+  name the chapter it points at, and two chapters with the same id genuinely hold the same
+  rows. Still needs to serialise the in-chapter filter state, which since D2 also includes
+  the three-state gate overrides (`S.gate`).
 - **E3.** Refine sweep → child chapter recording parent + the starred designs it was built
   around. Same lineage mechanism as D3.
 
@@ -1368,7 +1411,7 @@ remains:
 ## Sequencing
 
 ```
-B0 ✅ -> B1 ✅ -> A4a/A4b ✅ -> Wave 1 ✅ -> Wave 2 ✅ -> C -> D-rest -> E
+B0 ✅ -> B1 ✅ -> A4a/A4b ✅ -> Wave 1 ✅ -> Wave 2 ✅ -> D ✅ -> C -> E
                           \                    │
                            \                   ├─ W2-2 audit  (FIRST — see W1-1)
                             \                  ├─ W2-1 + measured viscosity
@@ -1392,10 +1435,25 @@ lesson generalises past this wave: *a constant that fits one condition perfectly
 evidence; it is an untested hypothesis with a good disguise.* The cross-check cost one
 afternoon and was worth more than everything else in the wave.
 
-**Next**: D2 → D6 → D7 → D3, then C. D5 landed and re-pointed the operating gate off Ca
-onto `v_vs_demonstrated`; the thing it made visible was not the Ca ceiling but **how far
-past recorded experience every large-droplet design sits** — 4 of 88 rows in the
-checked-in study survive `k = 1`, and the ceiling it replaced was `8.35×` demonstrated.
+**Section D is complete** (D5 `c20df77`, D2 `6e34dc8`, D6 `7f346f4`, D7 `f54ee49`,
+D3 this commit). What it turned out to be about, in one line each:
+
+* **D5** re-pointed the operating gate off Ca onto `v_vs_demonstrated`, and what it made
+  visible was not the Ca ceiling but **how far past recorded experience every
+  large-droplet design sits** — 4 of 88 rows in the checked-in study survive `k = 1`, and
+  the ceiling it replaced was **8.35× demonstrated**.
+* **D2** made decision 10 movable rather than fixed, and the safety of that rests on a
+  single testable equivalence: with no override the browser reproduces Python's verdict
+  on every row (verified on 352 and 1368 real rows).
+* **D6** cost one column and bought a guard — the two metric lists can no longer drift
+  without someone writing down why.
+* **D7** found that the only rule genuinely duplicated across surfaces was the margin
+  banding, **and the two copies already disagreed**.
+* **D3** found that a chapter's identity is its content, not when it was run — the
+  timestamp version gave two ids for one chapter and collided between a real parent and
+  child anyway.
+
+**Next**: C, the server — the last section before E.
 
 **Also outstanding, found during W2-8 and not fixed**: `stepgen report` emits 2 of the 6
 PNGs it documents, with five existing plot functions never called. See W2-8.

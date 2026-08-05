@@ -1564,6 +1564,7 @@ def write_workbook(
     *,
     diagnosis: Diagnosis | None = None,
     price: str = "auto",
+    parent: str | Path | None = None,
 ) -> Path:
     """
     Render *result* to a self-contained HTML chapter and emit its JSON sidecar.
@@ -1571,6 +1572,11 @@ def write_workbook(
     Pass an already-computed *diagnosis* to avoid re-running the analysis (the
     UI does); otherwise one is computed here, with *price* controlling whether
     relaxation pricing runs (``auto`` = only when nothing scored green).
+
+    *parent* is the sidecar of the chapter this one **extends** (D3).  Recording
+    it makes the pair a lineage, which :func:`load_lineage` may pool because the
+    child holds family, exits and fluids fixed and only widens an axis — unlike
+    arbitrary cross-chapter pooling, which stays out (see "Explicitly deferred").
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1600,7 +1606,8 @@ def write_workbook(
     refs = resolve_references(result.study)
 
     payload = chapter_payload(scored, grouping, leaves, dec.axes, decisions,
-                              result.study.scoring, refs)
+                              result.study.scoring, refs,
+                              source_path=result.provenance.source_path)
 
     doc = f"""<!doctype html>
 <html><head><meta charset="utf-8">
@@ -1652,9 +1659,123 @@ one for a green row, the binding one otherwise.</p>
     # JSON sidecar for cross-chapter reference
     sidecar = out_path.with_suffix(".json")
     sidecar.write_text(
-        json.dumps(_chapter_json(result, scored, dec, diagnosis), indent=2, default=str),
+        json.dumps(_chapter_json(result, scored, dec, diagnosis, parent),
+                   indent=2, default=str),
         encoding="utf-8")
     return out_path
+
+
+def chapter_id(result: StudyResult) -> str:
+    """
+    A stable, short identity for one chapter — what a child names its parent by.
+
+    **A content hash, deliberately, and not a timestamp.**  It covers the title,
+    the study text, the model commit and the labels of every point actually
+    solved — that is, *what was run*, which is the only thing a lineage cares
+    about.  Consequences worth stating, because the first version of this used
+    the run timestamp and both were wrong:
+
+    * Extending an axis changes the point labels, so a child gets a new id.  That
+      is the case lineage exists for.
+    * Re-running the identical study at the same commit gives the **same** id.
+      That is correct: same inputs and same model means the same numbers, so
+      there is no second chapter, only a second copy of one.
+    * Therefore declaring a chapter to extend one with identical content is a
+      **loop**, and :func:`load_lineage` says so rather than pooling a chapter
+      with itself.  A wall-clock id hid that behind two ids for one chapter —
+      and, at one-second resolution, collided anyway.
+    """
+    import hashlib
+
+    blob = "\x00".join([
+        result.study.title or "",
+        result.provenance.source_text or result.provenance.source_path or "",
+        result.provenance.git_hash,
+        *[p.label for p in result.study.points],
+    ])
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _parent_json(parent_sidecar: str | Path | None) -> dict[str, Any] | None:
+    """The parent's identity, read from its sidecar — see :func:`load_lineage`."""
+    if parent_sidecar is None:
+        return None
+    path = Path(parent_sidecar)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "chapter_id": data.get("chapter_id"),
+        "title": data.get("title"),
+        "sidecar": str(path),
+        # Recorded on the CHILD as well as being checkable against the parent
+        # file, because the file may move or be re-run. If they ever disagree the
+        # lineage is broken, and that is exactly what load_lineage must catch.
+        "git_hash": data.get("git_hash"),
+        # absent means version 1, never "current" — see SCHEMA_VERSION
+        "schema_version": data.get("schema_version", 1),
+    }
+
+
+class LineageError(RuntimeError):
+    """A parent and child chapter cannot be pooled, with the reason why."""
+
+
+def load_lineage(child_sidecar: str | Path) -> list[dict[str, Any]]:
+    """
+    The chapters of one lineage, oldest first, ready to be read as one table.
+
+    A lineage is a chapter and the chapters it was extended from.  Pooling these
+    is safe where pooling arbitrary chapters is not, because a child is built by
+    *extending an axis* of its parent: family, exits and fluids are held fixed by
+    construction, so the rows answer the same question at more conditions.
+
+    **The guard.**  Pool only when the parent and child agree on **both**
+    ``git_hash`` and ``schema_version``.  Either differing means the numbers were
+    produced by different models, or mean different things, or both — W2-1 moved
+    throughput, ΔP, frequency and exit Ca on every serpentine row, and W1-2
+    changed what ``area_used_cm2`` measures.  A mismatch raises
+    :class:`LineageError` naming what differs and saying to re-run the parent;
+    it never silently drops rows or, worse, pools them anyway.
+
+    **An absent ``schema_version`` is version 1, not "current"** — that is the
+    whole reason W2-6 added it, and treating missing as current would re-open
+    exactly the silent pooling it exists to prevent.
+    """
+    chain: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    path: Path | None = Path(child_sidecar)
+
+    while path is not None:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        cid = data.get("chapter_id") or str(path)
+        if cid in seen:
+            raise LineageError(f"lineage loops back on itself at {cid}")
+        seen.add(cid)
+        chain.append(data)
+        parent = data.get("parent")
+        path = Path(parent["sidecar"]) if parent and parent.get("sidecar") else None
+
+    chain.reverse()          # oldest first
+    root = chain[0]
+    for other in chain[1:]:
+        _assert_poolable(root, other)
+    return chain
+
+
+def _assert_poolable(a: dict[str, Any], b: dict[str, Any]) -> None:
+    differs = []
+    if a.get("git_hash") != b.get("git_hash"):
+        differs.append(f"model commit ({a.get('git_hash')} vs {b.get('git_hash')})")
+    # absent means 1 (see SCHEMA_VERSION); do not default to the current version
+    if a.get("schema_version", 1) != b.get("schema_version", 1):
+        differs.append(f"chapter schema (v{a.get('schema_version', 1)} vs "
+                       f"v{b.get('schema_version', 1)})")
+    if differs:
+        raise LineageError(
+            f"cannot pool {a.get('title')!r} with {b.get('title')!r}: they "
+            f"disagree on " + " and ".join(differs) + ". Re-run the parent at "
+            f"the current commit and extend that instead — pooling rows solved "
+            f"by different models is how a study argues with itself."
+        )
 
 
 def _fluids_json(result: StudyResult) -> dict[str, Any]:
@@ -1697,6 +1818,7 @@ def _chapter_json(
     scored: list[ScoredRow],
     dec: Decision | None = None,
     diagnosis: Diagnosis | None = None,
+    parent: str | Path | None = None,
 ) -> dict[str, Any]:
     dec = dec or decide(scored, result.study.decide, result.study.goal)
     plan = result.study.intent_plan
@@ -1707,6 +1829,12 @@ def _chapter_json(
         "schema_version": SCHEMA_VERSION,
         "git_hash": result.provenance.git_hash,
         "timestamp": result.provenance.timestamp,
+        # lineage (D3): who this chapter is, and which chapter it extends. Null
+        # parent is the common case — a chapter stands alone unless it was built
+        # by extending an axis of another.
+        "chapter_id": chapter_id(result),
+        "parent": _parent_json(parent),
+        "source_path": result.provenance.source_path,
         # the constants the Ca column rests on; see _fluids_json
         "fluids": _fluids_json(result),
         # the question as asked, when it was asked as a target rather than a grid
