@@ -147,6 +147,13 @@ def verdict_reason(row: ScoredRow) -> tuple[str, str]:
     return worst, reason
 
 
+def _schema_version() -> int:
+    """The chapter schema version, from its one definition in ``workbook``."""
+    from stepgen.studio.workbook import SCHEMA_VERSION
+
+    return SCHEMA_VERSION
+
+
 def chapter_payload(
     scored: Sequence[ScoredRow],
     grouping: Grouping,
@@ -213,6 +220,12 @@ def chapter_payload(
             ref_series.append({"label": rs.label, "kind": rs.kind, "points": pts})
 
     return {
+        # The payload is a SECOND row serialiser beside `_chapter_json`, and it is
+        # the one a reader filters in the browser — so it carries the schema
+        # version too. A chapter whose page lets you narrow to a subset must be
+        # able to say which vintage of the model produced that subset.
+        # Imported here rather than at module scope: workbook imports interactive.
+        "schemaVersion": _schema_version(),
         "axes": ([axis_json(a, "design") for a in grouping.design_axes]
                  + [axis_json(a, "condition") for a in grouping.condition_axes]),
         "groups": [

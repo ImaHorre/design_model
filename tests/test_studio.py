@@ -941,3 +941,39 @@ def test_bend_radius_tracks_the_stackup_not_turn_radius():
     a = solve_config(cfg, Po_mbar=200.0, Qw_mlhr=5.0, label="a")
     b = solve_config(wide, Po_mbar=200.0, Qw_mlhr=5.0, label="b")
     assert a.bend_radius_um == pytest.approx(b.bend_radius_um)
+
+
+# ── W2-6: schema bump ────────────────────────────────────────────────────────
+
+def test_both_sidecars_carry_the_same_schema_version():
+    """
+    Two row serialisers exist -- the JSON sidecar and the in-browser payload --
+    and a version on only one of them is worse than none, because the surface a
+    reader actually filters would be the unlabelled one.
+    """
+    from stepgen.studio.interactive import _schema_version
+    from stepgen.studio.workbook import SCHEMA_VERSION
+
+    assert _schema_version() == SCHEMA_VERSION
+    assert SCHEMA_VERSION >= 2      # Wave 2 moved every serpentine number
+
+
+def test_chapter_json_and_payload_are_stamped():
+    from stepgen.studio.run import run_study
+    from stepgen.studio.scoring import score_result
+    from stepgen.studio.study import load_study
+    from stepgen.studio.workbook import SCHEMA_VERSION, _chapter_json
+
+    study = load_study(TEMPLATE)
+    study.points = study.points[:2]
+    result = run_study(study)
+    scored = score_result(result, study.scoring)
+
+    assert _chapter_json(result, scored)["schema_version"] == SCHEMA_VERSION
+
+    from stepgen.studio.grouping import build_grouping
+    from stepgen.studio.interactive import chapter_payload
+
+    grouping = build_grouping(study, study.points)
+    payload = chapter_payload(scored, grouping, {}, [], {}, study.scoring)
+    assert payload["schemaVersion"] == SCHEMA_VERSION

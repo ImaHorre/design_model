@@ -46,6 +46,32 @@ from stepgen.studio.ranking import (
 from stepgen.studio.run import StudyResult, resolved_constants
 from stepgen.studio.scoring import ScoredRow, score_result
 
+#: Chapter schema version — bumped when a change makes chapters **incomparable**,
+#: not merely different.
+#:
+#: `git_hash` has always been recorded and nothing has ever read it, because a
+#: hash cannot answer the only question that matters: *may these two chapters be
+#: pooled?* Every commit changes the hash; almost none change what a column means.
+#:
+#: The rule for bumping: bump when a number that survives into a chapter would
+#: mean something different, so that pooling old and new rows would be comparing
+#: unlike things.
+#:
+#:   1  everything up to and including Batch 1 and Wave 1 (implicit; chapters
+#:      written then carry no `schema_version` at all, which is how they are
+#:      recognised)
+#:   2  **Wave 2.** W2-1 changed the rung resistance (0.65x on V5-30), so
+#:      throughput, ΔP, frequency and exit Ca all moved on every serpentine row.
+#:      W1-2 had already changed what `area_used_cm2` MEANS — die area consumed
+#:      rather than active area. A version-1 row and a version-2 row of the same
+#:      design disagree, and neither is wrong for its own vintage.
+#:
+#: D3's lineage pooling must refuse across versions and offer to re-run the
+#: parent, per the guard in the plan. An ABSENT field means version 1 — pre-Wave-2
+#: chapters cannot be retro-stamped, and treating "missing" as "current" is
+#: exactly the silent pooling this exists to prevent.
+SCHEMA_VERSION = 2
+
 _CAT_COLOR = {"green": "#1a7f37", "orange": "#bf8700", "red": "#cf222e", "grey": "#8b949e"}
 _CONF_LABEL = {
     "validated": ("validated", "#1a7f37", "compared against experiment"),
@@ -1319,6 +1345,9 @@ def _provenance_html(result: StudyResult, refs=None) -> str:
     return (
         f'<h2>Constants &amp; provenance</h2>'
         f'<p><b>Model commit:</b> <code>{html.escape(prov.git_hash)}</code> · '
+        # The version is what says whether this chapter may be pooled with
+        # another; the hash only says they were built from different trees.
+        f'<b>Chapter schema:</b> v{SCHEMA_VERSION} · '
         f'<b>Run:</b> {html.escape(prov.timestamp)} · '
         f'<b>Points:</b> {prov.n_points} · '
         f'<b>Source:</b> <code>{html.escape(prov.source_path or "")}</code></p>'
@@ -1620,6 +1649,7 @@ def _chapter_json(
         "title": result.study.title,
         "goal": result.study.goal,
         "families": result.study.families,
+        "schema_version": SCHEMA_VERSION,
         "git_hash": result.provenance.git_hash,
         "timestamp": result.provenance.timestamp,
         # the constants the Ca column rests on; see _fluids_json

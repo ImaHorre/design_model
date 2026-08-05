@@ -926,7 +926,23 @@ grows only vertically and `ff = 1.0` **is** "fill the die".
 fold the centreline radius is ≈ half the lane pitch, so turn radius is *determined by*
 pitch, not a free input that adds to it.
 
-### W2-6 — schema bump
+### W2-6 — schema bump ✅ `<this commit>`
+
+`SCHEMA_VERSION = 2` in `workbook.py`, on the sidecar (`schema_version`), on the
+payload (`schemaVersion`) and printed in the chapter's provenance line beside the
+commit hash. A test asserts the two serialisers agree — a version on only one of
+them would be worse than none, because the surface a reader actually filters would
+be the unlabelled one.
+
+**The rule, written where it will be read** (the constant's docstring): bump when a
+number that survives into a chapter would *mean* something different. Version 1 is
+everything through Wave 1; version 2 is Wave 2, because W2-1 moved throughput, ΔP,
+frequency and exit Ca on every serpentine row and W1-2 had already changed what
+`area_used_cm2` means.
+
+**An absent field means version 1, not "current".** Pre-Wave-2 chapters cannot be
+retro-stamped, and treating missing as current is exactly the silent pooling this
+exists to prevent. D3's guard reads both this and `git_hash`.
 
 `schema_version` on the chapter sidecar **and on `chapter_payload`**. `git_hash` is already
 recorded but nothing reads it; the version is what makes the pooling guard in D3
