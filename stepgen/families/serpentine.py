@@ -674,36 +674,59 @@ def qw_for_emulsion(
     return 0.5 * (lo + hi)
 
 
-def ca_gated_summary(
+def gated_summary(
     frame: "pd.DataFrame",
     *,
-    ca_max: float = 0.0125,
-    gamma_ref: float | None = None,
-    gamma_range: tuple[float, float] = (0.003, 0.020),
+    max_v_vs_demonstrated: float = 1.0,
     design_keys: Sequence[str] | None = None,
 ) -> "pd.DataFrame":
     """
-    Gate an already-solved study frame at a Ca ceiling and report what each
-    design is worth at its own highest passing pressure.
+    Gate an already-solved study frame against **recorded experience** and report
+    what each design is worth at its own highest passing pressure.
 
-    **This re-solves nothing.**  ``regime_Ca`` is a solved field and γ enters it
-    as an exact 1/γ, so both moving the ceiling and moving γ are arithmetic on
-    the existing rows — which is what makes this usable as a live filter control
-    rather than a re-run (see the filter-first studio front door).
+    The predicate is ``v_vs_demonstrated <= max_v_vs_demonstrated`` — exit
+    velocity as a multiple of :data:`~stepgen.families.base.V_EXIT_DEMONSTRATED_MAX`,
+    the fastest DFU Peak has run with monodisperse output.  Default 1.0: *stay
+    inside what we have actually run.*
+
+    **Why not the exit-Ca ceiling this used to gate on** (Conor's ruling,
+    2026-08-05).  ``Ca = µv/γ`` and γ has never been measured for the Peak fluid
+    system, so a Ca ceiling is a hard verdict resting on a guessed constant.  In a
+    *ratio of velocities* γ cancels exactly, and against the same fluid so does µ
+    — so this gate carries no unmeasured constant at all.  Ca is still reported
+    below (``regime_Ca_gated``, with the γ behind it), because "what the
+    literature threshold would say" is worth seeing; it just does not decide
+    anything.  The same reversal is why ``regime_Ca`` can no longer fail a row
+    in scoring (:data:`~stepgen.studio.scoring.CAPPED_AT_ORANGE`).
+
+    **This re-solves nothing.**  ``v_vs_demonstrated`` is a solved field, so
+    moving the multiple is arithmetic on the existing rows — which is what makes
+    this usable as a live filter control rather than a re-run (see the
+    filter-first studio front door).
 
     One row per design, with:
 
-    ``Po_gated_mbar``      highest *simulated* Po whose Ca passes
-    ``throughput_gated``   throughput there — the number the design can claim
-    ``Po_next_failed``     lowest simulated Po that failed; the true ceiling lies
-                           between the two, so the gap is unsimulated headroom
-    ``passes_at_gamma_lo`` whether it still passes at the pessimistic γ
+    ``Po_gated_mbar``           highest *simulated* Po that passes
+    ``throughput_gated``        throughput there — the number the design can claim
+    ``v_vs_demonstrated_gated`` the velocity multiple at that point
+    ``regime_Ca_gated``         exit Ca there — **reported, not gated**
+    ``gamma_Nm``                the γ that Ca was computed at, so it is auditable
+    ``Po_next_failed``          lowest simulated Po that failed; the true ceiling
+                                lies between the two, so the gap is unsimulated
+                                headroom, not absent headroom
 
-    Designs with no passing pressure appear with NaN — they have no
-    step-emulsification window anywhere in the swept range.
+    Designs with no passing pressure appear with NaN — every simulated pressure
+    drives them harder than anything Peak has run.
     """
     import numpy as np
     import pandas as pd
+
+    if "v_vs_demonstrated" not in frame.columns:
+        raise KeyError(
+            "frame carries no 'v_vs_demonstrated' column — it predates the "
+            "2026-08-05 regime change and cannot be gated against recorded "
+            "experience. Re-solve the study."
+        )
 
     if design_keys is None:
         # Group by the label with its _Po<n> segment removed, NOT by the p.*
@@ -726,42 +749,37 @@ def ca_gated_summary(
         frame = frame.assign(_design="all")
         design_keys = ["_design"]
 
-    ca = frame["regime_Ca"]
+    vr = frame["v_vs_demonstrated"]
 
-    # Ca ∝ 1/γ: at the pessimistic end of the band Ca scales up by γ_row/γ_lo.
-    # Prefer the γ carried on each row — a study may hold several fluid systems
-    # with different interfacial tensions, and scaling every row by one study-level
-    # γ would report the robustness of a verdict nobody computed.  The *_ref
-    # argument stays as the fallback for frames produced before gamma_Nm existed.
-    if "gamma_Nm" in frame.columns and frame["gamma_Nm"].notna().any():
-        row_gamma = frame["gamma_Nm"]
-    else:
-        row_gamma = None
+    def _report(row: "pd.Series", column: str) -> float:
+        """A column that is shown but never gated on; absent or None -> NaN."""
+        value = row.get(column)
+        return float(value) if pd.notna(value) else float(np.nan)
 
     out = []
     for key, grp in frame.groupby([frame[c].astype(str) for c in design_keys], sort=False):
-        ok = grp[ca.loc[grp.index].notna() & (ca.loc[grp.index] <= ca_max)]
-        bad = grp[ca.loc[grp.index].notna() & (ca.loc[grp.index] > ca_max)]
+        v = vr.loc[grp.index]
+        ok = grp[v.notna() & (v <= max_v_vs_demonstrated)]
+        bad = grp[v.notna() & (v > max_v_vs_demonstrated)]
         rec: dict[str, Any] = {c: grp.iloc[0][c] for c in design_keys}
         rec["label"] = grp.iloc[0].get("label", "")
         if len(ok):
             best = ok.loc[ok["operating_Po_mbar"].idxmax()]
-            g = (float(row_gamma.loc[best.name]) if row_gamma is not None
-                 and pd.notna(row_gamma.loc[best.name]) else gamma_ref)
-            scale_lo = (g / gamma_range[0]) if g else None
             rec.update(
                 Po_gated_mbar=float(best["operating_Po_mbar"]),
                 throughput_gated=float(best["throughput_mlhr"]),
-                frequency_gated_hz=float(best.get("frequency_hz", np.nan)),
-                regime_Ca_gated=float(best["regime_Ca"]),
-                gamma_Nm=g or np.nan,
-                passes_at_gamma_lo=(bool(best["regime_Ca"] * scale_lo <= ca_max)
-                                    if scale_lo else None),
+                frequency_gated_hz=_report(best, "frequency_hz"),
+                v_vs_demonstrated_gated=float(best["v_vs_demonstrated"]),
+                # Reported, not gated — see the docstring.  γ travels beside it so
+                # the Ca can be read against a literature ceiling by anyone who
+                # wants to, with the constant it rests on visible.
+                regime_Ca_gated=_report(best, "regime_Ca"),
+                gamma_Nm=_report(best, "gamma_Nm"),
             )
         else:
             rec.update(Po_gated_mbar=np.nan, throughput_gated=np.nan,
-                       frequency_gated_hz=np.nan, regime_Ca_gated=np.nan,
-                       gamma_Nm=np.nan, passes_at_gamma_lo=False)
+                       frequency_gated_hz=np.nan, v_vs_demonstrated_gated=np.nan,
+                       regime_Ca_gated=np.nan, gamma_Nm=np.nan)
         rec["Po_next_failed"] = (float(bad["operating_Po_mbar"].min())
                                  if len(bad) else np.nan)
         out.append(rec)

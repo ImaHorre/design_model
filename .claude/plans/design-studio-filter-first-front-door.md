@@ -25,12 +25,13 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
 | **C (server)** | **unblocked** — W2-8 passed. Not started |
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
-| **D (explorer)** | D1 ✅, D4 ✅, D2 partly, all in the chapter (`912c74c`, `6db6405`). D5 unblocked |
+| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `<this commit>`, D2 partly, all in the chapter (`912c74c`, `6db6405`) |
 | **E** | not started |
 
-**Start here**: **C — the server.** Wave 2 is complete and W2-8 passed, so C is
-unblocked. D5 (the Ca ceiling control with `passes_at_gamma_lo` beside it) is the
-other thing ready to go and depends on nothing in C.
+**Start here**: **D2**, then D6 → D7 → D3. D5 is done — the operating gate is
+`v_vs_demonstrated ≤ k`, not a Ca ceiling, and the retired ceiling turns out to have
+been `8.35×` demonstrated experience (see D5). D2 is unblocked by W2-4. C (the server)
+is also unblocked but is a separate front.
 
 **Baseline is now `pytest -q` → 599 passed, 3 failed, 5 skipped.** The 3 are still
 the `test_cli` ones, but they are **not one thing** — two are a real defect in
@@ -1139,7 +1140,61 @@ remains:
 - **D4.** ✅ *Landed* — click-to-pin, a Pinned-runs table carrying every design and
   condition axis with verdict and reason, "pinned only" on the plot, and "mark best" over
   the *visible* rows (`6db6405`). Phase 3 schematic in the detail panel still to wire.
-- **D5.** ⚠️ **RE-SPECIFIED 2026-08-05 — read this before executing the text below.**
+- **D5.** ✅ `<this commit>` *(re-specified 2026-08-05; executed against the re-spec)*
+
+  **What implementation found:**
+
+  1. **The retired ceiling, read back in units of experience, is `8.35x`.** Under one
+     fluid the two predicates are the *same* predicate up to a constant — `Ca = µv/γ`,
+     so `Ca ≤ 0.0125` at µ = 60 cP and γ = 5 mN/m **is** `v ≤ 1.0417 mm/s`, which is
+     8.35 × `V_EXIT_DEMONSTRATED_MAX`. Gating at `k = 8.35` reproduces the old gate's
+     operating points exactly. That is the sharpest statement of what the ruling was
+     about: the borrowed ceiling was not cautious, it licensed driving every DFU
+     **eight times harder than anything Peak has made work**, and it took that licence
+     from a constant nobody has measured. Pinned by
+     `test_the_retired_ca_ceiling_expressed_in_units_of_experience`.
+  2. **The ranking inversion survives, and at k = 1 it is larger.** Re-measured
+     post-Wave-2 (the plan's 18.87 / 4.35 / 3.29 predate W2-1's 0.65× resistance):
+
+     ```
+     60x20 exit, N=1000, o/w      wide main 200x1000   narrow main 100x500
+     ungated at 1000 mbar            20.43 mL/hr           6.414 mL/hr
+     gated v<=1     Po/Q          40 mbar / 0.1822    100 mbar / 0.2703   <- inverts
+     gated v<=10    Po/Q         200 mbar / 3.557     700 mbar / 4.366    <- inverts
+     retired Ca<=0.0125           200 mbar / 3.557     700 mbar / 4.366    identical
+     ```
+
+     The wide main wins ungated by 3.2× and loses under every gate. The effect is a
+     **velocity** effect, exactly as the re-spec predicted, and it does not depend on
+     which multiple you pick.
+  3. **The function was renamed, not just re-pointed**: `ca_gated_summary` →
+     `gated_summary`, because a name saying "ca" on something Ca no longer decides is
+     the next reader's trap. `ca_max`/`gamma_ref`/`gamma_range` → one
+     `max_v_vs_demonstrated` (default 1.0). Only one caller existed
+     (`scripts/compare_designs.py`), so no compatibility shim was warranted — grepped,
+     including the workspaces.
+  4. **`regime_Ca_gated` and `gamma_Nm` were KEPT as reported columns**, and this is a
+     deliberate reading of "γ-robustness stays where it is": the gated point still shows
+     its Ca and the γ behind it, and `compare_designs.py` prints how many gated points
+     the literature ceiling *would* have failed, at the solved γ and at the pessimistic
+     3 mN/m. A footnote, not a verdict. `passes_at_gamma_lo` is gone from the summary;
+     `ca_limited_operating_point` / `CaLimit` (the real γ-band analysis) is untouched.
+  5. **A frame with no `v_vs_demonstrated` column raises rather than gating nothing.**
+     A pre-2026-08 frame passed silently would read as *every design is inside
+     experience*, which is the worst available answer — the same argument A4a made
+     about a Ca detached from its γ.
+  6. **On the checked-in `study_my_designs.yaml`, only 4 of 88 rows gate in at k = 1**,
+     all of them the 60×20 exit in o/w at 40 mbar. That is not a defect in the designs;
+     it is what "nobody has run a DFU past 0.1247 mm/s" costs when stated honestly. The
+     config now says so, and points at `--max-v`.
+  7. **Downstream text falsified and fixed**: `study_my_designs.yaml`'s fluids block
+     claimed γ "alone decides the Ca verdict" and the operating block quoted per-phase
+     "Ca ceiling 93–195 / 374–678 mbar" windows. Both are dead. Grepped for `ca_max`,
+     `Ca gate`, `Ca ceiling`, `SE window`; the remaining hits are `SE_CEILING_CA`
+     scoring prose (still true — Ca is still *scored*, capped at orange) and
+     `ca_limited_operating_point` (untouched by design).
+
+  *Re-spec follows, for the record:*
 
   Conor's call: **judge a design by how far it is from experiments we have already
   run, not by a threshold resting on a γ nobody has measured.** Landed in
@@ -1244,10 +1299,10 @@ lesson generalises past this wave: *a constant that fits one condition perfectly
 evidence; it is an untested hypothesis with a good disguise.* The cross-check cost one
 afternoon and was worth more than everything else in the wave.
 
-**Next**: C is unblocked. So is D5 — its prerequisite (γ on the page) landed in `39e7342`
-and it depended on nothing in Wave 1 or 2. D5 is still the single highest-value item
-outstanding, because it is the only thing that makes the Ca ceiling — the binding
-constraint on every large-droplet design — visible as a control the reader can move.
+**Next**: D2 → D6 → D7 → D3, then C. D5 landed and re-pointed the operating gate off Ca
+onto `v_vs_demonstrated`; the thing it made visible was not the Ca ceiling but **how far
+past recorded experience every large-droplet design sits** — 4 of 88 rows in the
+checked-in study survive `k = 1`, and the ceiling it replaced was `8.35×` demonstrated.
 
 **Also outstanding, found during W2-8 and not fixed**: `stepgen report` emits 2 of the 6
 PNGs it documents, with five existing plot functions never called. See W2-8.

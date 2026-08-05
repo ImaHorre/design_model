@@ -1065,3 +1065,151 @@ def test_the_velocity_ratio_is_scored_without_the_study_asking():
                                                 "higher_better": True}},
                        {"throughput_mlhr", "v_vs_demonstrated"})
     assert sr.cells["v_vs_demonstrated"].category == "orange"
+
+
+# ── gated_summary: the operating gate, re-pointed off Ca (D5, 2026-08-05) ────
+#
+# The predicate is v_vs_demonstrated <= k, not Ca <= ca_max.  These tests exist
+# mostly to stop Ca creeping back into it: the whole value of the change is that
+# no unmeasured constant decides which pressure a design may claim.
+
+def _gated_frame():
+    """
+    Two designs x four pressures, hand-built so the expected answer is readable.
+
+    A's velocity crosses 1.0 between 400 and 600 mbar; B is over everywhere.
+    Ca is set to DISAGREE with the velocity ordering on purpose -- B has the
+    lower Ca at every point, so anything gating on Ca would pick B.
+    """
+    import pandas as pd
+
+    rows = []
+    for po, va, vb in [(200, 0.4, 3.0), (400, 0.9, 6.0),
+                       (600, 1.4, 9.0), (800, 2.0, 12.0)]:
+        rows.append(dict(label=f"A_Po{po}", operating_Po_mbar=float(po),
+                         v_vs_demonstrated=va, regime_Ca=0.02,
+                         throughput_mlhr=va * 10, frequency_hz=va * 2,
+                         gamma_Nm=0.005))
+        rows.append(dict(label=f"B_Po{po}", operating_Po_mbar=float(po),
+                         v_vs_demonstrated=vb, regime_Ca=0.001,
+                         throughput_mlhr=vb * 10, frequency_hz=vb * 2,
+                         gamma_Nm=0.005))
+    return pd.DataFrame(rows)
+
+
+def test_gate_picks_the_highest_pressure_inside_experience():
+    from stepgen.families.serpentine import gated_summary
+
+    out = gated_summary(_gated_frame())
+    a = out[out["label"].str.startswith("A")].iloc[0]
+
+    assert a["Po_gated_mbar"] == 400.0          # 600 mbar is 1.4x
+    assert a["v_vs_demonstrated_gated"] == pytest.approx(0.9)
+    assert a["throughput_gated"] == pytest.approx(9.0)
+    assert a["Po_next_failed"] == 600.0         # unsimulated headroom, 400->600
+
+
+def test_a_design_outside_experience_everywhere_gates_to_nan():
+    import pandas as pd
+
+    from stepgen.families.serpentine import gated_summary
+
+    out = gated_summary(_gated_frame())
+    b = out[out["label"].str.startswith("B")].iloc[0]
+    assert pd.isna(b["Po_gated_mbar"])
+    assert pd.isna(b["throughput_gated"])
+    assert b["Po_next_failed"] == 200.0
+
+
+def test_ca_is_reported_but_does_not_decide():
+    """
+    B has the lower Ca at every pressure and the higher velocity at every
+    pressure. A Ca gate would hand B the win; the experience gate refuses it.
+    This is the 2026-08-05 ruling, expressed as a test.
+    """
+    import pandas as pd
+
+    from stepgen.families.serpentine import gated_summary
+
+    out = gated_summary(_gated_frame())
+    a = out[out["label"].str.startswith("A")].iloc[0]
+    b = out[out["label"].str.startswith("B")].iloc[0]
+
+    assert a["regime_Ca_gated"] == pytest.approx(0.02)   # reported...
+    assert a["Po_gated_mbar"] == 400.0                   # ...but not consulted
+    assert pd.isna(b["regime_Ca_gated"])                 # B has no passing point
+    assert "passes_at_gamma_lo" not in out.columns
+
+
+def test_moving_the_multiple_re_gates_without_re_solving():
+    from stepgen.families.serpentine import gated_summary
+
+    frame = _gated_frame()
+    loose = gated_summary(frame, max_v_vs_demonstrated=10.0)
+    b = loose[loose["label"].str.startswith("B")].iloc[0]
+    assert b["Po_gated_mbar"] == 600.0     # 9.0x passes, 12.0x does not
+    assert b["Po_next_failed"] == 800.0
+
+
+def test_the_gate_is_unmoved_by_gamma():
+    """
+    The point of the change: re-solve at 4x the interfacial tension and the
+    gated pressure and throughput are identical, because gamma is not in the
+    predicate. Every Ca in the frame moves; nothing the gate reads does.
+    """
+    import dataclasses
+
+    import pandas as pd
+
+    from stepgen.config import load_config
+    from stepgen.families.serpentine import gated_summary
+
+    cfg = load_config(V5_30)
+    hi = dataclasses.replace(cfg, fluids=dataclasses.replace(cfg.fluids, gamma=0.020))
+
+    def frame_for(config):
+        rows = []
+        for po in (200.0, 400.0, 600.0, 800.0):
+            cm = solve_config(config, Po_mbar=po, Qw_mlhr=5.0, label=f"v5_30_Po{po:.0f}")
+            rows.append(cm.to_row())
+        return pd.DataFrame(rows).drop(columns=["_raw"])
+
+    ref, wide = frame_for(cfg), frame_for(hi)
+    assert not ref["regime_Ca"].equals(wide["regime_Ca"])      # Ca did move
+
+    g_ref = gated_summary(ref).iloc[0]
+    g_wide = gated_summary(wide).iloc[0]
+    assert g_ref["Po_gated_mbar"] == g_wide["Po_gated_mbar"]
+    assert g_ref["throughput_gated"] == pytest.approx(g_wide["throughput_gated"])
+
+
+def test_the_retired_ca_ceiling_expressed_in_units_of_experience():
+    """
+    Under a single fluid the two predicates are the SAME predicate up to a
+    constant: Ca = µv/γ, so ``Ca <= 0.0125`` at µ = 60 cP and γ = 5 mN/m is
+    exactly ``v <= 1.0417 mm/s``, which is 8.35x V_EXIT_DEMONSTRATED_MAX.
+
+    This is the number the 2026-08-05 ruling turned on, and it is worth pinning
+    because it reads the borrowed ceiling back in units we can check. It was not
+    a cautious bound: it permitted driving every DFU eight times harder than
+    anything Peak has made work, and it took that permission from a gamma nobody
+    has measured. Measured on the D5 worked example, gating at k = 8.35 selects
+    the same operating points the retired Ca gate did.
+    """
+    from stepgen.families.base import V_EXIT_DEMONSTRATED_MAX
+
+    mu, gamma, ca_ceiling = 0.06, 0.005, 0.0125
+    v_allowed = ca_ceiling * gamma / mu
+    assert v_allowed / V_EXIT_DEMONSTRATED_MAX == pytest.approx(8.35, abs=0.01)
+
+
+def test_a_frame_without_the_velocity_column_refuses_rather_than_passes_all():
+    """
+    A pre-2026-08 frame silently gating nothing would read as 'every design is
+    inside experience', which is the worst available answer.
+    """
+    from stepgen.families.serpentine import gated_summary
+
+    frame = _gated_frame().drop(columns=["v_vs_demonstrated"])
+    with pytest.raises(KeyError, match="v_vs_demonstrated"):
+        gated_summary(frame)

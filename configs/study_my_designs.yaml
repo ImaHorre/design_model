@@ -131,8 +131,13 @@ serpentine:
 # exist (mu_dispersed = mu_continuous). One block per real fluid system.
 #
 # `mu_dispersed` is the phase driven by Po (the one forming droplets).
-# `gamma` is UNMEASURED for this system; Ca ∝ 1/γ, so it alone decides the Ca
-# verdict. The runner reports which designs flip across 3–20 mN/m.
+# `gamma` is UNMEASURED for this system and Ca ∝ 1/γ, so it alone would decide a
+# Ca verdict. Since 2026-08-05 nothing is decided on Ca: the operating gate is
+# `v_vs_demonstrated`, a ratio of exit velocities to the fastest DFU Peak has
+# actually run, in which γ cancels exactly. Ca is still solved, scored and
+# plotted — it just cannot fail a row or cap a pressure. The runner prints what
+# the borrowed literature ceiling would have said, across 3–20 mN/m, as a
+# footnote rather than a verdict.
 # NOTE: `emulsion_ratio` is deliberately NOT here. It is inert on this path —
 # nothing in the studio or serpentine solve reads it — and the emulsion fraction
 # is set by operating.target_emulsion_pct below. Leaving it in a fluids block
@@ -155,14 +160,21 @@ manufacturing:
   min_wall_um: 5.0
 
 operating:
-  # Sweep finer than feels necessary — the Ca gate can only quote a pressure
-  # you actually simulated, so coarse steps leave real throughput unclaimed
+  # Sweep finer than feels necessary — the gate can only quote a pressure you
+  # actually simulated, so coarse steps leave real throughput unclaimed
   # (reported as Po_next_failed).
   # Spans BOTH fluid systems, which have very different windows:
-  #   o/w  produces from ~31 mbar, Ca ceiling  93–195 mbar  → the low end matters
-  #   w/o  produces from ~50 mbar, Ca ceiling 374–678 mbar  → the high end matters
-  # A range starting at 100 mbar missed the o/w window entirely and returned
-  # "no SE window" for the two largest exits.
+  #   o/w  produces from ~31 mbar and is driven by the 60 cP phase, so it reaches
+  #        1x demonstrated exit velocity by ~40–60 mbar → the LOW end matters
+  #   w/o  produces from ~50 mbar and needs far more pressure to move the same
+  #        volume → the high end matters
+  # A range starting at 100 mbar missed the o/w window entirely and returned "no
+  # in-experience point" for the two largest exits.
+  #
+  # Expect most rows to gate out: at 1x demonstrated, only the 60x20 exit has any
+  # passing pressure in this sweep, and only in o/w. That is the honest reading of
+  # "nobody has run a DFU harder than 0.1247 mm/s" — not a defect in the designs.
+  # Run with --max-v to see what a given step past experience would buy.
   Po_mbar: [25, 40, 60, 80, 100, 150, 200, 300, 500, 700, 1000]
 
   # Continuous-phase flow. Give ONE of these two (giving both raises).
