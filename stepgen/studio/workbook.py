@@ -44,7 +44,7 @@ from stepgen.studio.ranking import (
     Decision, ValueAxis, axis_value, decide, decide_subset,
 )
 from stepgen.studio.run import StudyResult, resolved_constants
-from stepgen.studio.scoring import ScoredRow, score_result
+from stepgen.studio.scoring import BUILD_GATES, ScoredRow, score_result
 
 #: Chapter schema version — bumped when a change makes chapters **incomparable**,
 #: not merely different.
@@ -1245,10 +1245,14 @@ def _table_html(
         if len(families) > 1:
             cells.append(f'<td data-v="{html.escape(m.family)}">{html.escape(m.family)}</td>')
         cat, why = verdict_reason(sr)
+        # ids so the chapter's three-state gate control can repaint these two
+        # cells when the reader re-states a build sub-gate (D2).  The verdict
+        # they show is still Python's — the control chooses which of Python's
+        # categories applies, it does not compute a new one.
         cells.append(
-            f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(sr.overall,3) }">'
+            f'<td id="v{i}" data-v="{ {"green":0,"orange":1,"red":2}.get(sr.overall,3) }">'
             f'{_light(sr.overall)}{sr.overall}</td>')
-        cells.append(f'<td class="why" data-v="{html.escape(why)}" '
+        cells.append(f'<td id="w{i}" class="why" data-v="{html.escape(why)}" '
                      f'title="{html.escape(" · ".join(sr.chips) or why)}">'
                      f'{html.escape(why)}</td>')
 
@@ -1263,7 +1267,8 @@ def _table_html(
         cells.append(_margin_cell(sr))
         build_cell = sr.cells.get("build")
         bcat = build_cell.category if build_cell else "grey"
-        cells.append(f'<td data-v="{ {"green":0,"orange":1,"red":2}.get(bcat,3) }">{_light(bcat)}</td>')
+        cells.append(f'<td id="g{i}" data-v="{ {"green":0,"orange":1,"red":2}.get(bcat,3) }">'
+                     f'{_light(bcat)}</td>')
         val_cell = sr.cells.get("validity")
         vcat = val_cell.category if val_cell else "grey"
         vtip = val_cell.reason if val_cell and val_cell.reason else vcat
@@ -1307,6 +1312,15 @@ def _gate_table(sr: ScoredRow, scoring: dict[str, Any]) -> str:
                  else fmt_metric(cell.value, _FMT_BY_KEY.get(key, "g3")))
         margin = "—" if cell.margin is None else f"{cell.margin * 100:.0f}%"
         detail = cell.reason or ("; ".join(cell.detail) if cell.detail else "")
+        # A sub-gate that FAILED but was demoted to a report (decision 10) left
+        # this cell green with nothing to say — so the drill-down, which exists
+        # precisely to explain the colour, was silent about the one thing the
+        # reader would want explained. Same regression W2-4 fixed in the chips.
+        if cell.reported:
+            named = ", ".join(BUILD_GATES.get(k, (k, k))[1] for k in cell.reported)
+            detail = ((detail + " · ") if detail else "") + (
+                f"⚪ {named} — no. You set this geometry, so it is reported, not "
+                f"gated (build.{cell.reported[0]}: required to gate)")
         rows.append(
             f'<tr><td>{_light(cell.category)}{html.escape(key)}</td>'
             f'<td class="num">{value}</td><td>{bound}</td>'

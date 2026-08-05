@@ -25,13 +25,14 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
 | **C (server)** | **unblocked** — W2-8 passed. Not started |
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
-| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `<this commit>`, D2 partly, all in the chapter (`912c74c`, `6db6405`) |
+| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `c20df77`, D2 ✅ `<this commit>`, all in the chapter (`912c74c`, `6db6405`) |
 | **E** | not started |
 
-**Start here**: **D2**, then D6 → D7 → D3. D5 is done — the operating gate is
-`v_vs_demonstrated ≤ k`, not a Ca ceiling, and the retired ceiling turns out to have
-been `8.35×` demonstrated experience (see D5). D2 is unblocked by W2-4. C (the server)
-is also unblocked but is a separate front.
+**Start here**: **D6**, then D7 → D3. D5 and D2 are done. C (the server) is also
+unblocked but is a separate front.
+
+**Baseline is now `pytest -q` → 619 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
+The 3 are still the `test_cli` ones and are still two different things — see W2-8.
 
 **Baseline is now `pytest -q` → 599 passed, 3 failed, 5 skipped.** The 3 are still
 the `test_cli` ones, but they are **not one thing** — two are a real defect in
@@ -1129,9 +1130,51 @@ D1, most of D2 and D4 landed in `912c74c`, in the chapter rather than the server
 remains:
 
 - **D1.** ✅ *Landed.* Columnar payload + client-side filter/sort, no round-trip.
-- **D2.** *Partly landed.* The filter bar has verdict and numeric limits. **Missing**: the
-  three-state *gate / report / off* control, and the "you set this" marker on pinned
-  values. Blocked on W2-4.
+- **D2.** ✅ `<this commit>` *(the rest of it — filter bar had verdict + numeric limits)*
+
+  The three-state **gate / report / off** control is in the rail, one select per build
+  sub-gate, plus the "you set this geometry" marker. **What implementation found:**
+
+  1. **The control has four states, not three, and that is what makes it safe.** The
+     fourth is **"as scored"**, the default, which uses each row's *own* resolved state.
+     Without it a global three-state control would flatten the per-family answer
+     `geometry_is_pinned` gives — a chapter with a generated serpentine and a pinned
+     manifold has two different correct defaults, and one dropdown cannot hold both.
+  2. **How this does not breach D7.** Python ships `vnb` (the verdict with `build` left
+     out, `ScoredRow.verdict_without_build`) and the sub-gate pass/fail booleans; the
+     browser takes the worse of `vnb` and a build category that is a **lookup**, never a
+     comparison. Every category on the page is still one Python computed. Written at the
+     top of `INTERACTIVE_JS` and guarded by a test that greps that string for a threshold
+     comparison — the regex has to allow *reading* `th.green` (the plot draws the ceiling
+     as a band) while banning a comparison against it.
+  3. **Verified against real chapters, not just unit tests.** The browser's recombination
+     was re-run in node over the payload extracted from two built chapters:
+     **0 mismatches against Python's verdict on 352 rows (`study_my_designs`) and 1368
+     (`study_dp15`)** with no override. And the control does real work: flipping
+     `manufacturable` to *gate* on `study_my_designs` moves **170 rows orange → red** —
+     that is the 400 µm main depth against the study's own 200 µm cap, previously visible
+     only as a chip.
+  4. **`no_crossing` correctly never appears on a serpentine chapter.** Serpentine and
+     radial both set it `None` (N-A by construction); only manifold computes it. The
+     multi-family `study_dp15` chapter offers all three. This is worth recording because
+     W2-4's regression was *about* `no_crossing`, and "the control is missing" looks like
+     the same bug returning when it is the opposite.
+  5. **A second silence of the same shape was still live, one panel down.** `_gate_table`
+     in the drill-down showed the build cell green with an **empty note** when a failure
+     had been demoted — the drill-down exists to explain the colour and was mute about the
+     only thing needing explanation. W2-4 fixed this in the chips and not here. Fixed.
+  6. **`BUILD_GATES` is now one definition** (key → attribute + human label) read by
+     `score_metrics`, the payload and the drill-down. The labels had already been written
+     twice; a third copy in the UI is exactly W2-2's bug class arriving in the studio.
+  7. **No schema bump.** W2-6's rule is *bump when a number that survives into a chapter
+     would mean something different*. Nothing's meaning moved — the invariant test proves
+     default verdicts are bit-identical; the payload only gained fields. Schema stays at 3.
+  8. **Per-axis provenance does not exist and was not invented.** `IntentPlan` records
+     generated / user_supplied per *block*, so "you set this" is answerable per family,
+     not per field — the same conclusion W2-4 reached about the gates. The marker
+     therefore sits on the rail ("⚪ you set this geometry") and on the row, not on
+     individual axis controls. Building per-field provenance to decorate a dropdown would
+     be new machinery for a cosmetic gain.
 - **D3.** Swept-range display per control, out-of-range warning, and "extend this axis"
   → **a child chapter recording its parent**, loaded with the parent as one lineage table.
   Safe where arbitrary pooling is not, because a lineage holds family, exits and fluids

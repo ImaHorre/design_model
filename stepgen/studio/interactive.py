@@ -38,7 +38,7 @@ from typing import Any, Sequence
 from stepgen.families.base import CA_MEASURED_MAX, SE_CEILING_CA
 from stepgen.studio.grouping import Axis, Grouping
 from stepgen.studio.ranking import Decision, ValueAxis
-from stepgen.studio.scoring import ScoredRow
+from stepgen.studio.scoring import BUILD_GATES, ScoredRow, build_gate_state
 
 #: Metrics offered as plot axes, in menu order: key -> (label, format, log-by-default).
 #: Anything a family cannot compute is dropped from the menu at build time, so a
@@ -149,6 +149,33 @@ def verdict_reason(row: ScoredRow) -> tuple[str, str]:
     return worst, reason
 
 
+def build_gate_json(sr: ScoredRow, scoring: dict[str, Any]) -> dict[str, Any]:
+    """
+    One row's build sub-gates, as the browser's three-state control needs them.
+
+    ``g``  which applicable sub-gates passed (``True``) or failed (``False``)
+    ``s``  the state the *study* resolved each to — gate / report / off (W2-4)
+    ``why`` Python's sentence for a failure, so an override that turns a gate
+           back on can say why the row went red without composing English in JS
+
+    **This is not scoring in the browser.**  The categories the page combines are
+    all Python's: what moves under the control is *which* of them apply, exactly
+    as the verdict filter already chooses which rows apply.  See the invariant
+    note at the top of :data:`INTERACTIVE_JS`.
+    """
+    build_spec = (scoring or {}).get("build", {}) or {}
+    gates, states, why = {}, {}, []
+    for key, (attr, human) in BUILD_GATES.items():
+        val = getattr(sr.metrics, attr, None)
+        if val is None:
+            continue                       # not applicable to this family
+        gates[key] = bool(val)
+        states[key] = build_gate_state(build_spec, key, pinned=sr.pinned)
+        if val is False:
+            why.append(f"{human} — no")
+    return {"g": gates, "s": states, "why": "; ".join(why)}
+
+
 def _schema_version() -> int:
     """The chapter schema version, from its one definition in ``workbook``."""
     from stepgen.studio.workbook import SCHEMA_VERSION
@@ -199,6 +226,14 @@ def chapter_payload(
             # Ca-distance column.  min_margin cannot answer "how far is the Ca".
             "margins": {k: c.margin for k, c in sr.cells.items()
                         if c.category != "grey" and c.margin is not None},
+            # ── D2: the three-state gate control ────────────────────────────
+            # `vnb` is the verdict with `build` left out, so the browser can
+            # recombine it with a build category the reader has re-stated
+            # without re-deriving a single threshold.  `pin` is decision 10's
+            # provenance: did the USER choose this geometry?
+            "b": build_gate_json(sr, scoring),
+            "vnb": sr.verdict_without_build,
+            "pin": bool(sr.pinned),
         })
 
     # only offer plot axes some row can actually place
@@ -250,6 +285,11 @@ def chapter_payload(
         "refs": ref_series,
         "thresholds": {k: v for k, v in (scoring or {}).items()
                        if isinstance(v, dict) and "green" in v},
+        # sub-gates some row can actually answer, in BUILD_GATES order.  A radial
+        # chapter offers no `no_crossing` control rather than a dead one.
+        "buildGates": [{"key": k, "label": human}
+                       for k, (_, human) in BUILD_GATES.items()
+                       if any(k in r["b"]["g"] for r in rows)],
         "caCeiling": SE_CEILING_CA,
         "caMeasured": CA_MEASURED_MAX,
     }
@@ -278,6 +318,9 @@ INTERACTIVE_CSS = """
    its interfacial tension is a physics claim with an invisible constant */
 .gnote{font-size:11.5px;color:#57606a;align-self:center;flex-basis:100%;}
 .gnote.mixed{color:#9a6700;font-weight:600;}
+/* the three-state gate control (D2 / decision 10) */
+.glabel{font-size:11px;font-weight:600;color:#57606a;align-self:center;
+  text-transform:uppercase;letter-spacing:.03em;}
 .tabbar{display:flex;gap:.3rem;margin-top:.5rem;border-bottom:1px solid #d0d7de;}
 .tabbtn{font-size:12.5px;padding:.35rem .9rem;border:1px solid transparent;
   border-bottom:none;border-radius:7px 7px 0 0;background:transparent;color:inherit;
@@ -313,12 +356,29 @@ tr.hit td{background:rgba(9,105,218,.18)!important;}
 @media (prefers-color-scheme:dark){
   .rail{background:#0d1117;border-color:#30363d;}
   .line select,.line input,.plotwrap,.tabbar,.tabbtn.on{border-color:#30363d;}
-  .line label,.plotnote,.dparams li span{color:#8b949e;}
+  .line label,.plotnote,.dparams li span,.glabel{color:#8b949e;}
 }
 """
 
 
 INTERACTIVE_JS = r"""
+// ── THE INVARIANT THIS FILE EXISTS UNDER (D7) ──────────────────────────────
+// No threshold comparison happens in JavaScript. Every category on this page —
+// green / orange / red / grey, per metric and per row — was computed in Python
+// against the study's scoring block, once, and travels here as data. The browser
+// chooses which rows and which gates apply; it never decides what a number means.
+//
+// The three-state gate control (D2) is the one place that looks like an
+// exception and is not: it recombines `row.vnb` (Python's verdict with `build`
+// left out) with a build category that is a lookup over Python's own pass/fail
+// booleans. Nothing is compared against a bound. If you ever find yourself
+// comparing a row value against one of the payload's thresholds here, stop —
+// that is scoring, it belongs in scoring.py, and there is a test in
+// tests/test_studio.py that greps this string and fails.
+//
+// (The thresholds ARE read here — the plot draws the ceiling as a band. Reading
+// one is fine; deciding a colour with one is not.)
+//
 // ── formatting ─────────────────────────────────────────────────────────────
 // Never toLocaleString() with the default locale: the reader's browser decides
 // the decimal separator, and a chapter that prints 144,3 mL/hr next to a
@@ -346,9 +406,52 @@ function esc(s){return String(s).replace(/[&<>"]/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 
 // ── state ──────────────────────────────────────────────────────────────────
+// S.gate maps a build sub-gate to '' (as the study scored it, per row) or one of
+// 'gate' / 'report' / 'off'. Empty is the default and MUST reproduce Python's
+// verdict exactly — that equivalence is what makes the control safe.
 const S = {f:{}, lim:[{k:'',min:null,max:null},{k:'',min:null,max:null}],
            pin:[], plot:0, x:null, y:null, logx:false, logy:false, colour:'verdict',
-           pinOnly:false, showBest:true, tab:'explore'};
+           pinOnly:false, showBest:true, tab:'explore', gate:{}};
+
+// ── the three-state gate control (D2 / decision 10) ────────────────────────
+// Decision 10: a gate exists to stop the TOOL proposing something you would not
+// want; it does not exist to overrule a choice you have already made. So a
+// failing sub-gate on geometry YOU pinned is reported, not gated. That is a
+// judgement about provenance, and provenance is exactly the thing a reader may
+// legitimately disagree with — hence a control rather than a fixed policy.
+const ORDER={green:0,orange:1,red:2,grey:0};
+function gateState(r, k){ return S.gate[k] || r.b.s[k]; }
+function buildCatOf(r){
+  var g=(r.b&&r.b.g)||{};
+  for(var k in g){
+    if(g[k]!==false) continue;
+    if(gateState(r,k)==='gate') return 'red';
+  }
+  return 'green';
+}
+function verdictOf(r){
+  if(!r.b||!r.b.s) return r.verdict;
+  var a=r.vnb||'green', b=buildCatOf(r);
+  return (ORDER[b]>ORDER[a]) ? b : a;
+}
+// The row's one-line reason, respecting an override. Python wrote both strings;
+// this only picks which of them the current gate states make true.
+function whyOf(r){
+  if(verdictOf(r)==='red' && buildCatOf(r)==='red' && r.vnb!=='red')
+    return r.b.why || 'build gate failed';
+  return r.why;
+}
+function gateOverridden(){
+  for(var k in S.gate){ if(S.gate[k]) return true; }
+  return false;
+}
+// How many rows the reader's override actually moved. A control that silently
+// changes 200 verdicts is worse than no control: this says so, in the rail.
+function gateDelta(rows){
+  var n=0;
+  rows.forEach(function(r){ if(verdictOf(r)!==r.verdict) n++; });
+  return n;
+}
 
 // ── tabs ───────────────────────────────────────────────────────────────────
 // One page, four views. A 4 MB chapter where the plot sits below three screens
@@ -417,7 +520,22 @@ function buildRail(){
   h.push('<button class="btn" onclick="resetAll()">Reset filters</button>');
   h.push('<button class="btn" onclick="clearPins()">Clear pins</button>');
   h.push('<span class="gnote" id="gammanote"></span>');
-  h.push('</div><div class="chipbar" id="pinbar"></div>');
+  h.push('</div>');
+  if((CHAPTER.buildGates||[]).length){
+    h.push('<div class="line" style="margin-top:.35rem">');
+    h.push('<span class="glabel">Build gates</span>');
+    CHAPTER.buildGates.forEach(function(bg){
+      h.push('<label>'+esc(bg.label)+'<select data-gate="'+esc(bg.key)+'">'
+        +'<option value="">as scored</option>'
+        +'<option value="gate">gate — fail the row</option>'
+        +'<option value="report">report — chip only</option>'
+        +'<option value="off">off — silent</option>'
+        +'</select></label>');
+    });
+    h.push('<span class="gnote" id="gatenote"></span>');
+    h.push('</div>');
+  }
+  h.push('<div class="chipbar" id="pinbar"></div>');
   h.push('<div class="tabbar">'
     + [['explore','Explore'],['designs','Designs'],['runs','All runs'],['notes','Notes']]
       .map(function(t){return '<button class="tabbtn" data-tab="'+t[0]+'" onclick="showTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')
@@ -439,11 +557,45 @@ function buildRail(){
       paint();
     });
   });
+  document.querySelectorAll('#rail select[data-gate]').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      S.gate[sel.getAttribute('data-gate')] = sel.value;
+      paint();
+    });
+  });
+}
+
+// ── "you set this" ─────────────────────────────────────────────────────────
+// The marker decision 10 needs on the page: which of the visible rows carry
+// geometry the USER pinned, and therefore have their build sub-gates demoted to
+// reports by default. Without it "why is this green when it does not fit the
+// die?" has no answer anywhere on the page.
+function paintGateNote(rows){
+  var el=document.getElementById('gatenote');
+  if(!el) return;
+  var pinned=0, demoted=0, moved=gateDelta(rows);
+  rows.forEach(function(r){
+    if(!r.b||!r.b.s) return;
+    if(r.pin) pinned++;
+    var g=r.b.g;
+    for(var k in g){
+      if(g[k]===false && gateState(r,k)==='report'){ demoted++; break; }
+    }
+  });
+  var bits=[];
+  if(pinned===rows.length && rows.length)
+    bits.push('⚪ you set this geometry — build failures are reported, not gated');
+  else if(pinned)
+    bits.push('⚪ '+pinned+' of '+rows.length+' rows carry geometry you set');
+  if(demoted) bits.push(demoted+' row'+(demoted===1?'':'s')+' fail a gate that is only reporting');
+  if(gateOverridden()) bits.push('override active — '+moved+' verdict'+(moved===1?'':'s')+' differ from the chapter as scored');
+  el.textContent = bits.join(' · ');
+  el.className = 'gnote' + (gateOverridden() ? ' mixed' : '');
 }
 
 function passes(r){
   if(S.__gid && r.gid!==S.__gid) return false;
-  if(S.__verdict && r.verdict!==S.__verdict) return false;
+  if(S.__verdict && verdictOf(r)!==S.__verdict) return false;
   for(var p in S.f){
     if(S.f[p]==='') continue;
     if(String(r.v[p]) !== S.f[p]) return false;
@@ -460,7 +612,7 @@ function passes(r){
 function shown(){ return CHAPTER.rows.filter(passes); }
 
 function resetAll(){
-  S.f={}; S.__gid=''; S.__verdict='';
+  S.f={}; S.__gid=''; S.__verdict=''; S.gate={};
   S.lim=[{k:'',min:null,max:null},{k:'',min:null,max:null}];
   document.querySelectorAll('#rail select,#rail input').forEach(function(e){e.value='';});
   paint();
@@ -514,13 +666,13 @@ function paintPinTable(){
   S.pin.forEach(function(i){
     var r=CHAPTER.rows[i];
     h.push('<tr><td><b>'+esc(r.gid)+' #'+(i+1)+'</b></td>');
-    h.push('<td><span class="dot" style="background:'+CAT[r.verdict]+'"></span>'+r.verdict+'</td>');
+    h.push('<td><span class="dot" style="background:'+CAT[verdictOf(r)]+'"></span>'+verdictOf(r)+'</td>');
     cols.forEach(function(a){
       var opt=a.values.find(function(o){return String(o.v)===String(r.v[a.path]);});
       h.push('<td class="tight num">'+esc(opt?opt.t:r.v[a.path])+'</td>');
     });
     mets.forEach(function(k){h.push('<td class="tight num">'+fmtN(r.m[k],fmtOf(k))+'</td>');});
-    h.push('<td class="why">'+esc(r.why)+'</td>');
+    h.push('<td class="why">'+esc(whyOf(r))+'</td>');
     h.push('<td><button class="btn" onclick="event.stopPropagation();gotoRow('+i+')">open</button> '
       +'<button class="btn" onclick="event.stopPropagation();togglePin('+i+')">unpin</button></td></tr>');
   });
@@ -542,7 +694,7 @@ function bestPicks(rows){
 
 // ── per-design decision cards, recomputed over the visible rows ────────────
 function bestIn(rows, ax){
-  var pool = rows.filter(function(r){return r.verdict!=='red';});
+  var pool = rows.filter(function(r){return verdictOf(r)!=='red';});
   if(!pool.length) pool = rows;
   var best=null, bv=null;
   pool.forEach(function(r){
@@ -570,7 +722,7 @@ function paintDesigns(rows){
     var cnt = document.getElementById('cnt-'+g.gid);
     if(cnt){
       var c={green:0,orange:0,red:0};
-      mine.forEach(function(r){c[r.verdict]=(c[r.verdict]||0)+1;});
+      mine.forEach(function(r){var v=verdictOf(r);c[v]=(c[v]||0)+1;});
       cnt.innerHTML = mine.length+' shown &middot; '
         +'<span style="color:'+CAT.green+'">'+c.green+'</span> / '
         +'<span style="color:'+CAT.orange+'">'+c.orange+'</span> / '
@@ -586,9 +738,9 @@ function paintDesigns(rows){
                                     : fmtN(v, fmtOf(ax.source))+ax.unit;
       return '<div class="pick" onclick="gotoRow('+r.i+')" title="click to pin and jump to row '+(r.i+1)+'">'
         +'<h4>Best '+esc(ax.label)+'</h4>'
-        +'<div class="pickval"><span class="dot" style="background:'+CAT[r.verdict]+'"></span>'+esc(txt)+'</div>'
+        +'<div class="pickval"><span class="dot" style="background:'+CAT[verdictOf(r)]+'"></span>'+esc(txt)+'</div>'
         +'<div class="pickwhy">'+esc(condText(r))+'</div>'
-        +'<div class="picksub">row #'+(r.i+1)+' · '+esc(r.why)+'</div></div>';
+        +'<div class="picksub">row #'+(r.i+1)+' · '+esc(whyOf(r))+'</div></div>';
     }).join('');
   });
 }
@@ -596,6 +748,7 @@ function paintDesigns(rows){
 // ── table ──────────────────────────────────────────────────────────────────
 function paintTable(rows){
   var on={}; rows.forEach(function(r){on[r.i]=1;});
+  var override=gateOverridden();
   CHAPTER.rows.forEach(function(r){
     var tr=document.getElementById('r'+r.i);
     if(!tr) return;
@@ -603,6 +756,23 @@ function paintTable(rows){
     tr.classList.toggle('pinned', S.pin.indexOf(r.i)>=0);
     var dr=document.getElementById('drill'+r.i);
     if(dr && !on[r.i]) dr.style.display='none';
+    // the verdict, build light and reason are server-rendered; when the reader
+    // re-states a gate they have to follow, or the table argues with the plot
+    if(!override && !r._painted) return;
+    r._painted = override;
+    var v=verdictOf(r), b=buildCatOf(r);
+    var vc=document.getElementById('v'+r.i);
+    if(vc){
+      vc.innerHTML='<span class="dot" style="background:'+CAT[v]+'" title="'+v+'"></span>'+v;
+      vc.setAttribute('data-v', String(ORDER[v]));
+    }
+    var gc=document.getElementById('g'+r.i);
+    if(gc && r.b && Object.keys(r.b.g).length){
+      gc.innerHTML='<span class="dot" style="background:'+CAT[b]+'" title="'+b+'"></span>';
+      gc.setAttribute('data-v', String(ORDER[b]));
+    }
+    var wc=document.getElementById('w'+r.i);
+    if(wc){ wc.textContent=whyOf(r); wc.setAttribute('data-v', whyOf(r)); }
   });
 }
 
@@ -711,13 +881,13 @@ function paintPlot(rows){
   var gidIndex={}; CHAPTER.groups.forEach(function(gr,n){gidIndex[gr.gid]=n;});
   pts.forEach(function(p){
     var pinned = S.pin.indexOf(p.r.i)>=0;
-    var col = S.colour==='design' ? SERIES[gidIndex[p.r.gid]%SERIES.length] : CAT[p.r.verdict];
+    var col = S.colour==='design' ? SERIES[gidIndex[p.r.gid]%SERIES.length] : CAT[verdictOf(p.r)];
     g.push('<circle class="pt" cx="'+sx(p.x).toFixed(1)+'" cy="'+sy(p.y).toFixed(1)+'" r="'+(pinned?6:3.4)+'"'
       +' fill="'+col+'" fill-opacity="'+(pinned?1:.72)+'"'
       +(pinned?' stroke="#0969da" stroke-width="2"':'')
       +' onclick="togglePin('+p.r.i+')"><title>'+esc(p.r.gid+' #'+(p.r.i+1)+'\n'
       +labelOf(xk)+' '+fmtN(p.x,fmtOf(xk))+'\n'+labelOf(yk)+' '+fmtN(p.y,fmtOf(yk))
-      +'\n'+p.r.why)+'</title></circle>');
+      +'\n'+whyOf(p.r))+'</title></circle>');
   });
   // the program's picks: a ring and what it won, so "what does the tool think"
   // and "what have I picked" are both readable at once
@@ -863,7 +1033,7 @@ function paint(){
   var rows=shown();
   document.getElementById('railcount').textContent =
     rows.length+' of '+CHAPTER.rows.length+' rows';
-  paintGamma(rows);
+  paintGamma(rows); paintGateNote(rows);
   paintPins(); paintPinTable(); paintDesigns(rows); paintTable(rows);
   paintLevers(); paintPlot(rows);
 }

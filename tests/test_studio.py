@@ -895,6 +895,161 @@ def test_diagnosis_names_a_reported_breach_instead_of_burying_it():
     assert "within fab caps" in diag.headline()
 
 
+# ── D2: the three-state gate control, in the chapter ─────────────────────────
+#
+# The UI half of W2-4. These tests guard the one thing that makes a client-side
+# gate control safe: with no override set it must reproduce Python's verdict
+# exactly, and every category it can produce must be one Python computed.
+
+def test_build_gate_states_resolve_the_three_words():
+    from stepgen.studio.scoring import build_gate_state
+
+    assert build_gate_state({}, "fits_square", pinned=True) == "report"
+    assert build_gate_state({}, "fits_square", pinned=False) == "gate"
+    assert build_gate_state({"fits_square": "required"}, "fits_square",
+                            pinned=True) == "gate"
+    assert build_gate_state({"fits_square": "off"}, "fits_square",
+                            pinned=False) == "off"
+
+
+def test_verdict_without_build_leaves_the_rest_alone():
+    """
+    The half of the verdict a gate override cannot touch. A row whose ONLY
+    problem is a build gate must be green without it; one that also breaches a
+    physics gate must keep that verdict whatever the reader does to the gates.
+    """
+    only_build = _w24(False, fits_square=False)
+    assert only_build.overall == "red"
+    assert only_build.verdict_without_build == "green"
+
+    also_physics = score_metrics(
+        _cm(throughput_mlhr=0.5, uniformity_pct=5, fits_square=False),
+        _W24_SCORING, _W24_APPLICABLE, pinned=False)
+    assert also_physics.verdict_without_build == "red"
+
+
+def test_the_payload_carries_each_rows_gate_states_and_provenance():
+    from stepgen.studio.interactive import build_gate_json
+
+    sr = _w24(True, fits_square=False, manufacturable=True, no_crossing=False)
+    blob = build_gate_json(sr, _W24_SCORING)
+    assert blob["g"] == {"fits_square": False, "manufacturable": True,
+                         "no_crossing": False}
+    assert blob["s"] == {"fits_square": "report", "manufacturable": "report",
+                         "no_crossing": "report"}
+    assert "fits die square" in blob["why"]
+    assert "within fab caps" not in blob["why"]      # it passed
+    assert sr.pinned is True
+
+
+def test_the_control_reproduces_pythons_verdict_with_no_override():
+    """
+    **The invariant the whole control rests on.** Re-implement the browser's
+    recombination in Python and it must agree with `overall` on every row --
+    otherwise the page shows one verdict and the sidecar another, which is worse
+    than having no control at all.
+    """
+    from stepgen.studio.interactive import build_gate_json
+
+    rank = {"green": 0, "orange": 1, "red": 2, "grey": 0}
+
+    def as_the_browser_would(sr, scoring, override=None):
+        blob = build_gate_json(sr, scoring)
+        override = override or {}
+        build = "green"
+        for key, ok in blob["g"].items():
+            if ok is False and (override.get(key) or blob["s"][key]) == "gate":
+                build = "red"
+                break
+        base = sr.verdict_without_build
+        return build if rank[build] > rank[base] else base
+
+    cases = [
+        (_w24(True,  fits_square=False, manufacturable=False, no_crossing=False), _W24_SCORING),
+        (_w24(False, fits_square=False), _W24_SCORING),
+        (_w24(True,  fits_square=True,  manufacturable=True,  no_crossing=True), _W24_SCORING),
+        (score_metrics(_cm(throughput_mlhr=10, uniformity_pct=5, manufacturable=False),
+                       {**_W24_SCORING, "build": {"manufacturable": "required"}},
+                       _W24_APPLICABLE, pinned=True),
+         {**_W24_SCORING, "build": {"manufacturable": "required"}}),
+        (score_metrics(_cm(throughput_mlhr=10, uniformity_pct=5, no_crossing=False),
+                       {**_W24_SCORING, "build": {"no_crossing": "off"}},
+                       _W24_APPLICABLE, pinned=False),
+         {**_W24_SCORING, "build": {"no_crossing": "off"}}),
+    ]
+    for sr, scoring in cases:
+        assert as_the_browser_would(sr, scoring) == sr.overall
+
+    # ...and an override moves it, in both directions
+    demoted = cases[0][0]
+    assert demoted.overall != "red"
+    assert as_the_browser_would(demoted, _W24_SCORING,
+                                {"fits_square": "gate"}) == "red"
+    gated = cases[1][0]
+    assert gated.overall == "red"
+    assert as_the_browser_would(gated, _W24_SCORING,
+                                {"fits_square": "off"}) == "green"
+
+
+def test_the_drilldown_explains_a_demoted_gate_instead_of_showing_green():
+    """
+    The drill-down exists to explain the colour. A build cell that is green
+    *because* the failure was demoted used to say nothing at all -- the same
+    silence W2-4 fixed in the chips, still live one panel down.
+    """
+    from stepgen.studio.workbook import _gate_table
+
+    sr = _w24(True, fits_square=False, manufacturable=True, no_crossing=True)
+    html_out = _gate_table(sr, _W24_SCORING)
+    assert "fits die square" in html_out
+    assert "You set this geometry" in html_out
+
+
+def test_the_chapter_page_carries_the_gate_control_and_no_thresholds_in_js():
+    """
+    D7's invariant, written as a test rather than a comment: the browser filters
+    on Python's verdict and never re-derives one from a bound.
+
+    Reading a threshold is fine and is what the payload ships it for -- the plot
+    draws the ceiling as a band. What must never happen is COMPARING a row value
+    against one, because that is scoring, and scoring lives in scoring.py.
+    """
+    import re
+
+    from stepgen.studio.interactive import INTERACTIVE_JS
+
+    assert "data-gate" in INTERACTIVE_JS          # the control exists
+    assert "verdictOf" in INTERACTIVE_JS
+
+    thresholdish = r"(?:th\.(?:green|orange)|CHAPTER\.thresholds[\[.]\w*\]?)"
+    compared = re.compile(thresholdish + r"\s*[<>]|[<>]=?\s*" + thresholdish)
+    hit = compared.search(INTERACTIVE_JS)
+    assert hit is None, f"scoring leaked into JS: {hit.group(0)!r}"
+
+
+def test_the_gate_control_only_offers_sub_gates_some_row_can_answer():
+    from stepgen.studio.grouping import build_grouping
+    from stepgen.studio.interactive import chapter_payload
+    from stepgen.studio.run import run_study
+    from stepgen.studio.scoring import score_result
+    from stepgen.studio.study import load_study
+
+    study = load_study(TEMPLATE)
+    study.points = study.points[:3]
+    result = run_study(study)
+    scored = score_result(result, study.scoring)
+    grouping = build_grouping(study, study.points)
+    payload = chapter_payload(scored, grouping, {}, [], {}, study.scoring)
+
+    keys = {bg["key"] for bg in payload["buildGates"]}
+    assert keys, "no build sub-gate offered at all"
+    for row in payload["rows"]:
+        assert set(row["b"]["g"]) <= keys
+        assert set(row["b"]["s"]) == set(row["b"]["g"])
+        assert row["vnb"] in {"green", "orange", "red"}
+        assert isinstance(row["pin"], bool)
+
+
 # ── W2-5: fold geometry, reported not gated ──────────────────────────────────
 
 def test_bend_radius_is_half_the_lane_pitch():

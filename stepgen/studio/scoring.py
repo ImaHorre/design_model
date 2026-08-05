@@ -149,6 +149,27 @@ class ScoredRow:
     cells: dict[str, CellScore]
     overall: str
     chips: list[str] = field(default_factory=list)
+    #: did the **user** choose this row's geometry (:func:`geometry_is_pinned`)?
+    #: Carried on the row rather than recomputed downstream because it is part of
+    #: how this verdict was reached: it decides whether a failing build sub-gate
+    #: coloured the row or only reported.  The chapter's gate control needs it to
+    #: resolve the same three states the scoring resolved.
+    pinned: bool = True
+
+    @property
+    def verdict_without_build(self) -> str:
+        """
+        ``overall`` with the ``build`` composite left out.
+
+        The chapter's three-state gate control lets the reader move a build
+        sub-gate between gate / report / off *after* the study was scored.  This
+        is the half of the verdict that override cannot touch, so the browser can
+        recombine it with a build category without re-deriving any threshold —
+        every category in the answer is still one Python computed.
+        """
+        graded = [c.category for k, c in self.cells.items()
+                  if k != "build" and c.category in _RANK]
+        return GREEN if not graded else max(graded, key=lambda c: _RANK[c])
 
     @property
     def graded_cells(self) -> list[CellScore]:
@@ -299,6 +320,42 @@ def _validity_breaches(cm: CommonMetrics, spec: dict[str, Any]) -> list[str]:
     return breaches
 
 
+#: The ``build`` composite's sub-gates: key -> (CommonMetrics attribute, human
+#: label).  **One definition.**  ``score_metrics`` reads it, and so does the
+#: chapter's gate control — writing "fits die square" a second time in the UI is
+#: how W2-2's bug class gets into the studio.
+BUILD_GATES: dict[str, tuple[str, str]] = {
+    "fits_square": ("fits_square", "fits die square"),
+    "manufacturable": ("manufacturable", "within fab caps"),
+    "no_crossing": ("no_crossing", "no phase crossing"),
+}
+
+
+def build_gate_state(build_spec: dict[str, Any] | None, gate_key: str,
+                     *, pinned: bool) -> str:
+    """
+    ``gate`` | ``report`` | ``off`` for one build sub-gate — decision 10 (W2-4).
+
+    * ``gate``   — a failure turns the row red.  Either the study demanded it
+      (``build: { <gate>: required }``) or the tool generated the geometry, in
+      which case the gate is doing the job it exists for.
+    * ``report`` — the failure is stated in a chip but does not colour the row,
+      because the **user** typed this geometry.  A gate does not exist to
+      overrule a choice the user has already made.
+    * ``off``    — the study silenced it (``build: { <gate>: off }``).  Unlike a
+      demotion this emits no chip, because that is the point of asking.
+
+    Kept as a function rather than inlined so the chapter's three-state control
+    resolves the same defaults the scoring did, out of the same code.
+    """
+    required = (build_spec or {}).get(gate_key, None)
+    if required == "off":
+        return "off"
+    if required == "required":
+        return "gate"
+    return "report" if pinned else "gate"
+
+
 def geometry_is_pinned(study, family: str) -> bool:
     """
     Did the **user** choose this family's geometry, or did the tool generate it?
@@ -342,7 +399,8 @@ def score_metrics(
 
     if cm.error:
         # a failed solve is red with the error as its only chip
-        return ScoredRow(metrics=cm, cells={}, overall=RED, chips=[f"error: {cm.error}"])
+        return ScoredRow(metrics=cm, cells={}, overall=RED,
+                         chips=[f"error: {cm.error}"], pinned=pinned)
 
     # ── per-metric threshold scoring ────────────────────────────────────────
     for key, (attr, label, unit) in _METRIC_FIELDS.items():
@@ -381,18 +439,14 @@ def score_metrics(
     build_spec = scoring.get("build", {}) or {}
     build_cat = GREEN
     if "build" in applicable:
-        gate_map = {
-            "fits_square": (cm.fits_square, "fits die square"),
-            "manufacturable": (cm.manufacturable, "within fab caps"),
-            "no_crossing": (cm.no_crossing, "no phase crossing"),
-        }
+        gate_map = {key: (getattr(cm, attr, None), human)
+                    for key, (attr, human) in BUILD_GATES.items()}
         # which sub-gates actually failed, kept as structured detail rather than
         # collapsed into "gate failed": binding-constraint diagnosis needs to
         # know *which* one, and re-deriving it from chip text would be fragile.
         failed: list[str] = []
         reported: list[str] = []
         for gate_key, (val, human) in gate_map.items():
-            required = build_spec.get(gate_key, None)
             # ── decision 10, in full (W2-4) ─────────────────────────────────
             #
             #   A gate exists to stop the TOOL proposing something the user would
@@ -414,18 +468,14 @@ def score_metrics(
             # a chip; a gate that has been turned off must still be visible.
             if val is None:
                 continue
-            if required == "off":
-                evaluate = False          # explicitly silenced by the study
-            elif required == "required":
-                evaluate = True           # explicitly demanded by the study
-            else:
-                evaluate = not pinned     # decision 10
+            state = build_gate_state(build_spec, gate_key, pinned=pinned)
+            evaluate = state == "gate"
             if val is False:
                 if evaluate:
                     build_cat = RED
                     failed.append(gate_key)
                     chips.append(f"🔴 {human} — no")
-                elif required != "off":
+                elif state != "off":
                     reported.append(gate_key)
                     chips.append(
                         f"⚪ {human} — no. You set this geometry, so it is "
@@ -466,7 +516,8 @@ def score_metrics(
     graded = [c.category for c in cells.values() if c.category in _RANK]
     overall = GREEN if not graded else max(graded, key=lambda c: _RANK[c])
 
-    return ScoredRow(metrics=cm, cells=cells, overall=overall, chips=chips)
+    return ScoredRow(metrics=cm, cells=cells, overall=overall, chips=chips,
+                     pinned=pinned)
 
 
 def score_result(result, scoring: dict[str, Any]) -> list[ScoredRow]:
