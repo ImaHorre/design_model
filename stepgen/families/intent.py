@@ -374,11 +374,19 @@ def pressure_sweep(
 # Shared junction/rung geometry every family derives the same way
 # ---------------------------------------------------------------------------
 
-#: Upstream-channel width as a multiple of the exit depth.  The rectangular
-#: resistance correction ``1 − 0.63·h/w`` requires ``w > 0.63·h`` to stay
-#: positive and the families require ``w > h`` outright, so a deep exit forces a
-#: wide upstream channel.  1.5x and 2.5x straddle that constraint without
-#: wasting in-plane width.
+#: Upstream-channel width as a multiple of the exit depth.
+#:
+#: These two levels used to be justified by a *constraint*: the retired
+#: ``1 − 0.63·h/w`` correction went singular at ``h/w = 1.587`` and the families
+#: rejected ``h ≥ w`` outright, so a deep exit was forced to have a wide upstream
+#: channel.  **W2-1 removed that constraint** — the resistance orders its
+#: dimensions and models any aspect ratio, including the real V5-30 DFU, which is
+#: deeper than it is wide.
+#:
+#: The levels are kept because they remain a sensible *screening* pair — 1.5x is
+#: about as narrow as is worth drawing before drive pressure dominates, 2.5x
+#: about as wide before ladder flatness suffers — but they are now a choice, not
+#: a floor.  Nothing raises below them.
 UPSTREAM_WIDTH_RATIOS: tuple[float, ...] = (1.5, 2.5)
 
 

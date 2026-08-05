@@ -82,16 +82,23 @@ _rung: &rung
 
 # ── THE EXIT DESIGNS — junction and upstream width vary per design ───────────
 # Rung depth == exit depth (single etch), so the rung cross-section is
-# upstream_width_um (w) x exit_depth_um (h). The rectangular resistance model
-# needs h/w < 1, and its correction factor is only trustworthy up to about
-# h/w = 0.8. Above h/w = 1.587 it raises; BETWEEN 1.0 and 1.587 it returns a
-# silently wrong number. So:
+# upstream_width_um (w) x exit_depth_um (h).
 #
-#     upstream_width_um  >=  1.25 x exit_depth_um       (hard floor)
-#     upstream_width_um  >=  2    x exit_depth_um       (comfortable)
+# THE ASPECT-RATIO FLOOR IS GONE (W2-1, 2026-08-05). This block used to state a
+# hard `upstream_width_um >= 1.25 x exit_depth_um` rule, because the resistance
+# model raised above h/w = 1.587 and returned a silently wrong number between 1.0
+# and 1.587. That was never physics — it was one closed form used outside its
+# domain. The real V5-30 DFU is 8 µm wide x 10 µm DEEP (h/w = 1.25), so the rule
+# forbade the geometry of the built device.
 #
-# Widening the rung lowers its resistance, which makes the ladder LESS flat —
-# so this is a real tradeoff against uniformity_pct, not a free parameter.
+# The resistance now orders its dimensions, matches the exact duct solution to
+# four significant figures at every aspect ratio, and has no rejection rule at
+# all. **Deep-and-narrow rungs are modellable; choose the width on physics.**
+#
+# What is still true, and is the actual tradeoff: widening the rung lowers its
+# resistance, which makes the ladder LESS flat — a real cost in uniformity_pct.
+# Narrowing it raises drive pressure. That is the decision; the aspect ratio is
+# not a constraint on it.
 #
 # TO ADD A DESIGN: copy any one of these four blocks and change the numbers.
 # Each list entry is one whole design; they are never crossed with each other.

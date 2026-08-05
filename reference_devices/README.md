@@ -42,7 +42,14 @@ V5-10   2525 µm @  7 µm wide  (90%)
 **Note the aspect ratio.** V5-30's narrow section is 8 µm wide × 10 µm deep — *depth
 exceeds width*. Any resistance model that rejects `h >= w` cannot represent this device.
 The correct handling is to order the dimensions (`h = min`, `w = max`) so α ≤ 1 by
-construction. `families/manifold.py::_R_rect` currently rejects it; that is a known bug.
+construction.
+
+**Fixed 2026-08-05 (W2-1).** All four rectangular-duct implementations were replaced by
+one in `stepgen/models/resistance.py`, which orders its dimensions and carries no
+rejection rule at all. `manifold._R_rect`'s `h < w` guard, `radial._ASPECT_LIMIT` and
+`hydraulic_resistance_rectangular`'s `denom <= 0` raise are all gone. The profile below
+is now integrated **piecewise** rather than approximated by one width, and
+`configs/v5_30.yaml` declares it.
 
 ## What these establish
 
