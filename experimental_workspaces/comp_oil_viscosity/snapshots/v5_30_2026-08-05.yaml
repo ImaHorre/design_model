@@ -1,0 +1,118 @@
+# v5_30.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# V5-30 — a BUILT device (serpentine, 30 µm exit width). See
+# reference_devices/README.md for the measured GDS geometry, which is ground
+# truth; where this file and that README disagree, this file is wrong.
+#
+# Usage:
+#   stepgen simulate configs/v5_30.yaml
+#   stepgen simulate configs/v5_30.yaml --Po 300 --Qw 10
+#   stepgen report   configs/v5_30.yaml --out-dir plots/
+#
+# WHAT YOU GET:
+#   simulate  → printed summary: Nmc, active/reverse %, Q_spread/dP_spread, D_pred, frequency
+#   report    → 6 PNGs in --out-dir: layout schematic + 5 simulation plots
+#   map       → heatmaps over a (Po, Qw) grid
+#   compare   → predicted vs measured scatter + spatial profiles
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+fluids:
+  mu_continuous: 0.00089      # Pa·s  water (continuous / carrier phase)
+  mu_dispersed:  0.06      # Pa·s  oil   (dispersed / droplet phase)
+  emulsion_ratio: 0.3         # Q_oil / Q_water (informational in Mode A)
+  gamma: 0.0
+  temperature_C: 25.0
+
+
+geometry:
+  # ── DFU count ────────────────────────────────────────────────────────────
+  # Nmc is DERIVED: floor(Mcl / pitch) = floor(693 mm / 60 µm). The model
+  # reports 11,549, not the 11,550 the arithmetic suggests — 0.693 / 60e-6 lands
+  # a hair under in binary floating point and the floor takes the hit. One DFU
+  # in 11,550 (0.009%); recorded so nobody re-derives it and thinks it a bug.
+  #
+  # Conor's working figure for this device is 11,565 (ruled 2026-08-04), which
+  # 693 mm reproduces to 0.13%.  The GDS counts 11,154 (10,000 straight + 1,154
+  # curve, residual 0) — 3.7% below.  That gap was examined and closed: 11,565
+  # is the number the model is driven at here, and no reconciliation is being
+  # sought.  Do not re-cut Mcl to the GDS count; comp_deep_dfu_main_mods is
+  # calibrated at 11,550 and stays valid.
+  #
+  # No Nmc_override is set, and none is wanted — Mcl and pitch also set the
+  # ladder resistances, so an override that disagreed with them would make the
+  # count and the hydraulics describe different devices.
+
+  main:
+    Mcd: 200.0e-6     # 200 µm depth
+    Mcw: 1000.0e-6    # 1000 µm width  (measured: 1000 µm)
+    Mcl: 693e-3       # 693 mm routed length → Nmc = 11,549 (see note above)
+
+  rung:
+    # The DFU is two widths in series — measured from the GDS, see
+    # reference_devices/README.md.  As of W2-1 the model integrates that profile
+    # piecewise instead of approximating it with one width and a length scale.
+    # Note 8 µm wide × 10 µm DEEP: depth exceeds width on the real device, which
+    # is why the resistance model orders its dimensions rather than rejecting.
+    mcd: 10e-6        # 10 µm depth (= exit depth, single etch)
+    mcw: 8e-6         # 8 µm width  (narrow section)
+    # mcl stays at the measured 4.0 mm DFU-array gap because it is what the
+    # LAYOUT reads (lane_pitch = 2×main + mcl + wall = 7.00 mm, asserted against
+    # the GDS in tests/test_reference_devices.py).  The hydraulic length is the
+    # profile's 4020 µm, which is the same channel measured end to end.
+    mcl: 4000.0e-6    # 4.0 mm DFU array gap (measured)
+    pitch: 60e-6      # 60 µm DFU pitch (measured)
+    # Retained for callers that read it; the profile below is what the
+    # resistance actually integrates, so this no longer scales any length.
+    constriction_ratio: 0.9
+    microchannel_profile:
+      sections:
+        - {length: 3610.0e-6, width:  8.0e-6, depth: 10.0e-6}   # 98.8% of R
+        - {length:  410.0e-6, width: 30.0e-6, depth: 10.0e-6}   #  1.2% of R
+
+  junction:
+    # Sets D_pred via D = k * exit_width^a * exit_depth^b
+    exit_width: 30e-6    # 30 µm
+    exit_depth: 10e-6    # 10 µm  → D_pred ≈ 25 µm
+    junction_type: step
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+operating:
+  mode: A
+  Po_in_mbar: 200.0      # oil inlet pressure  [mbar]  — override with --Po on CLI
+  Qw_in_mlhr: 5.0        # water inlet flow    [mL/hr] — override with --Qw on CLI
+  P_out_mbar: 0.0
+
+
+# ── REQUIRED ──────────────────────────────────────────────────────────────────
+droplet_model:
+  k: 3.3935
+  a: 0.3390
+  b: 0.7198
+  dP_cap_ow_mbar: 50.0   # capillary threshold oil→water [mbar]
+  dP_cap_wo_mbar: 30.0   # capillary threshold water→oil [mbar]
+
+
+# ── OPTIONAL — layout only.  Never feeds the hydraulic solve; it sets
+#    fits_footprint, footprint_area_used and layout_schematic.png. ────────────
+footprint:
+  # V5-30 is a 100 × 100 mm square die, not a 1.5:1 rectangle.
+  footprint_area_cm2: 100
+  footprint_aspect_ratio: 1.0
+  # Measured: lane_pitch = 2×1.0 + 4.0 + 1.0 = 7.00 mm, 10 lane pairs, and an
+  # active footprint of 69.0 × 74.0 mm = 51% of the die.
+  wall_width: 1.0e-3
+  active_area_fraction: 0.51
+  turn_radius: 500.0e-6
+  # lane_spacing and reserve_border are gone, not merely unset: neither is part
+  # of the stack-up any more (W1-1/W1-2).  Nothing on this device is 500 µm, and
+  # the die it cannot route in is the 49% measured above, not a 2 mm edge.
+
+
+# ── OPTIONAL — only affects 'hard OK' flag, not the simulation ────────────────
+manufacturing:
+  max_main_depth: 200.0e-6
+  min_feature_width: 0.5e-6
+  max_main_width: 1000.0e-6

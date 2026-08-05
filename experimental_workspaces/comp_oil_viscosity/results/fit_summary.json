@@ -1,0 +1,47 @@
+{
+  "config": "v5_30_2026-08-05.yaml",
+  "mu_config_cP": 60.0,
+  "R_rung_Pa_s_per_m3": 9.980983273834655e+17,
+  "Q_disagreement_pct": {
+    "min": 15.638367945219313,
+    "max": 26.029757089207884,
+    "median": 22.698477314216646
+  },
+  "fits": {
+    "qw_5": {
+      "mu_cP": 68.967,
+      "n_pressures": 4,
+      "max_abs_f_err_pct": 9.249709178658641
+    },
+    "qw_10": {
+      "mu_cP": 81.03299999999999,
+      "n_pressures": 4,
+      "max_abs_f_err_pct": 9.511867670803266
+    },
+    "qw_20": {
+      "mu_cP": 95.886,
+      "n_pressures": 2,
+      "max_abs_f_err_pct": 13.699935717507854
+    },
+    "all": {
+      "mu_cP": 78.541,
+      "n_points": 10,
+      "max_abs_f_err_pct": 38.7444830881409
+    }
+  },
+  "stage_split_at_config_mu": {
+    "qw5_t_S1_err_pct": [
+      -14.513896945385403,
+      0.8846118997073739
+    ],
+    "qw5_t_S23_err_pct": [
+      -41.54727859026293,
+      2.871658062809688
+    ]
+  },
+  "at_config_mu": {
+    "mu_cP": 60.0,
+    "max_abs_f_err_pct": 81.47382403330433,
+    "mean_f_err_pct": 32.22423394543519
+  }
+}
