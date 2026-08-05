@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 from stepgen.families.base import (
     SERPENTINE_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
-    exit_capillary_number, register_family,
+    exit_capillary_number, exit_velocity, exit_velocity_ratio, register_family,
 )
 from stepgen.families.intent import (
     Constraints,
@@ -83,7 +83,7 @@ class SerpentineFamily(Family):
         # Serpentine exposes all shared gates. regime_Ca is only meaningful when
         # an interfacial tension is given; otherwise the value is None -> grey.
         return {"throughput_mlhr", "uniformity_pct", "operating_Po_mbar",
-                "regime_Ca", "build", "validity"}
+                "regime_Ca", "v_vs_demonstrated", "build", "validity"}
 
     # -- intent ------------------------------------------------------------
     def grid_from_intent(
@@ -796,6 +796,7 @@ def solve_config(
 
     # ── exit capillary number (diagnostic; the size model is regime-blind) ──
     q_per_rung = row.get("Q_per_rung_avg", 0.0) or 0.0
+    v_exit = exit_velocity(q_per_rung, exit_w, exit_d)
     regime_Ca = exit_capillary_number(
         config.fluids.mu_dispersed, q_per_rung, exit_w, exit_d, gamma)
 
@@ -886,6 +887,8 @@ def solve_config(
             if with_production_threshold else None
         ),
         regime_Ca=regime_Ca,
+        v_exit_mps=v_exit,
+        v_vs_demonstrated=exit_velocity_ratio(v_exit),
         exit_width_um=exit_w * 1e6,
         exit_depth_um=exit_d * 1e6,
         lambda_visc=(config.fluids.mu_continuous / config.fluids.mu_dispersed

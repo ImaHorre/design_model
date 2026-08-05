@@ -52,6 +52,7 @@ SCORING_KEYS: frozenset[str] = frozenset({
     "uniformity_pct",
     "operating_Po_mbar",
     "regime_Ca",
+    "v_vs_demonstrated",
     "hub_budget_pct",
     "build",
     "validity",
@@ -105,6 +106,41 @@ SE_CEILING_CA = 0.03
 #: Consequence for scoring: a Ca *below* the SE ceiling but *above* this is not
 #: "calibrated", it is unmeasured. metric_confidence() grades it accordingly.
 CA_MEASURED_MAX = 0.0017
+
+
+#: **The highest per-DFU exit velocity Peak has ever run and got monodisperse
+#: droplets out of** [m/s].  This is the anchor the studio compares designs
+#: against, and it is the only regime number in this file that does not depend on
+#: a constant nobody has measured.
+#:
+#: Measured (not modelled) from the V5-8-1 Po sweep
+#: (`experimental_workspaces/comp_oil_viscosity/`, 2026-08-05): per-DFU flow from
+#: droplet volume over measured cycle time — the cycle-average — through the
+#: 30 x 10 µm exit, at Po = 600 mbar, Qw = 5 mL/hr, n = 14 observations.
+#: Droplet size stayed flat (24.8-25.8 µm, CV ~3%) across the entire sweep, so
+#: the device was still in step-emulsification here: this is a **lower bound** on
+#: where the regime ends, not the edge of it.
+#:
+#: **Why this and not exit Ca.**  Ca = µv/γ, and γ has never been measured for the
+#: Peak system, so every Ca verdict inherits a guess.  A *ratio* of velocities
+#: cancels γ exactly — and against the same fluid it cancels µ as well — so
+#: "this design runs each DFU 47x harder than anything we have made work" is a
+#: statement with no unmeasured constant in it at all.  The comparison is
+#: trustworthy even though the threshold is not; that asymmetry is the whole
+#: reason this constant exists.  Conor's call, 2026-08-05: compare against
+#: recorded experience rather than against a borrowed ceiling.
+#:
+#: The cycle-average is the like-for-like quantity, because the model carries one
+#: steady hydraulic Q with no cycle in it.  The Stage-1 peak at the same
+#: condition is 0.155 mm/s — 25% higher — which is the same
+#: meniscus-vs-conservation spread reported in that workspace, not an
+#: inconsistency.
+V_EXIT_DEMONSTRATED_MAX = 1.247e-4      # m/s  = 0.1247 mm/s
+
+#: Multiples of the above beyond which a design is not "a bit past experience"
+#: but somewhere nobody has been.  Deliberately coarse — this is an orientation
+#: scale, not a threshold, and it never turns a row red (see scoring.py).
+V_EXIT_BEYOND_EXPERIENCE = 10.0
 
 
 #: Fraction of the die a family can actually route in, after IO ports, feed
@@ -161,6 +197,40 @@ def active_fraction_note(
     return "; ".join(parts) if parts else None
 
 
+def exit_velocity(
+    q_per_dfu: float, exit_width_m: float, exit_depth_m: float,
+) -> float | None:
+    """
+    Mean dispersed-phase velocity through one DFU exit [m/s]: ``v = q / (w·h)``.
+
+    **The γ-free regime number.**  Exit Ca is this velocity divided by the
+    capillary velocity γ/µ, and γ has never been measured here — so ``v`` is the
+    quantity that survives the ignorance, and it is also exactly what a
+    blow-out observation measures.  Reported in its own right, compared against
+    :data:`V_EXIT_DEMONSTRATED_MAX`, and used to build ``regime_Ca``.
+    """
+    if q_per_dfu <= 0 or exit_width_m <= 0 or exit_depth_m <= 0:
+        return None
+    return q_per_dfu / (exit_width_m * exit_depth_m)
+
+
+def exit_velocity_ratio(v_exit: float | None) -> float | None:
+    """
+    How much harder this design drives each DFU than anything Peak has run.
+
+    ``v_exit / V_EXIT_DEMONSTRATED_MAX``.  1.0 is the fastest condition of the
+    V5-8-1 sweep, which produced flat droplet size throughout.
+
+    **No unmeasured constant enters this number.**  Against the same fluid it is
+    a pure velocity ratio: γ cancels, µ cancels, and no literature threshold is
+    consulted.  It does not claim that 47x fails — it says nobody has been past
+    1x, which is a different and more honest thing to tell a designer.
+    """
+    if v_exit is None or v_exit <= 0 or V_EXIT_DEMONSTRATED_MAX <= 0:
+        return None
+    return v_exit / V_EXIT_DEMONSTRATED_MAX
+
+
 def exit_capillary_number(
     mu_dispersed: float,
     q_per_dfu: float,
@@ -181,9 +251,9 @@ def exit_capillary_number(
     degenerate exit).  A missing Ca scores grey; a zero Ca scores green, which
     would be a lie about a device nobody has evaluated.
     """
-    if gamma <= 0 or exit_width_m <= 0 or exit_depth_m <= 0 or q_per_dfu <= 0:
+    v_exit = exit_velocity(q_per_dfu, exit_width_m, exit_depth_m)
+    if v_exit is None or gamma <= 0:
         return None
-    v_exit = q_per_dfu / (exit_width_m * exit_depth_m)
     return mu_dispersed * v_exit / gamma
 
 
@@ -226,6 +296,13 @@ class CommonMetrics:
     #: (needs a Po scan — see serpentine.production_threshold_mbar)
     Po_min_production_mbar: float | None = None
     regime_Ca: float | None = None          # exit capillary number (diagnostic)
+    #: mean dispersed-phase velocity through the exit [m/s] — the γ-free regime
+    #: number, and what a blow-out experiment measures directly
+    v_exit_mps: float | None = None
+    #: that velocity as a multiple of the fastest DFU Peak has demonstrably run
+    #: (:data:`V_EXIT_DEMONSTRATED_MAX`).  1.0 = the edge of recorded experience;
+    #: 47 = a regime nobody has visited.  No unmeasured constant enters it.
+    v_vs_demonstrated: float | None = None
     hub_budget_pct: float | None = None     # radial: hub ΔP as % of supply (lower=better; N-A elsewhere)
     area_used_cm2: float | None = None      # occupied chip area [cm²]
 

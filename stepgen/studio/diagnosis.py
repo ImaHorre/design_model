@@ -279,7 +279,14 @@ def knobs_for_gate(gate: str) -> list[Knob]:
 #: than no verdict. What it does is name the distinction so the decision is the
 #: user's: a row red only on Ca is a **build-and-see candidate**, and a row red
 #: because it does not fit the die is not.
-EVIDENCE_THIN_GATES: frozenset[str] = frozenset({"regime_Ca"})
+#: Gates that flag what we do not know rather than what we know is wrong.
+#:
+#: ``regime_Ca`` rests on a γ nobody has measured; ``v_vs_demonstrated`` rests on
+#: nothing but measured Peak data, but "past anything we have run" is still an
+#: unknown rather than a failure.  Since 2026-08-05 neither can turn a row red
+#: (``scoring.CAPPED_AT_ORANGE``), so the shortlist below is built from non-green
+#: rather than from red.
+EVIDENCE_THIN_GATES: frozenset[str] = frozenset({"regime_Ca", "v_vs_demonstrated"})
 
 
 # ---------------------------------------------------------------------------
@@ -438,13 +445,24 @@ def theory_limited_rows(rows: Sequence[ScoredRow]) -> list[int]:
     measured or can compute exactly — geometry, fabrication limits, hydraulics —
     and fail only where the model is guessing. They are the honest shortlist for
     an experiment: building one is how the gate stops being a guess.
+
+    **Reads non-green, not red** (2026-08-05).  It used to require the row be RED
+    on ``regime_Ca`` alone, which worked only because Ca could veto.  Now that Ca
+    and ``v_vs_demonstrated`` are capped at orange, such a row is orange overall —
+    so the same designs would have silently vanished from the shortlist at the
+    exact moment they stopped being failed.
+
+    ``validity`` is excluded from the test, as it always was: it caps at orange
+    for every deep exit (droplet fit, λ, aspect ratio), so counting it would swamp
+    the list with the caveat rather than the finding.
     """
     out: list[int] = []
     for i, row in enumerate(rows):
-        if row.overall != RED or row.metrics.error:
+        if row.overall == GREEN or row.metrics.error:
             continue
-        reds = set(row_failures(row, RED))
-        if reds and reds <= EVIDENCE_THIN_GATES:
+        bad = (set(row_failures(row, RED)) | set(row_failures(row, ORANGE))
+               ) - {"validity"}
+        if bad and bad <= EVIDENCE_THIN_GATES:
             out.append(i)
     return out
 
@@ -826,11 +844,17 @@ def diagnose(
             continue
         if rb.robustly_red:
             robust.append(i)
-        else:
+        elif rb.gamma_to_clear_red is not None:
             # order by how little γ it takes to clear: a design that needs only
             # 6 mN/m is a far better bet than one needing 19, and the second is
             # barely distinguishable from robustly red
-            dependent.append((rb.gamma_to_clear_red or 0.0, i))
+            dependent.append((rb.gamma_to_clear_red, i))
+        # else: never red at ANY γ in the band — Ca is not what put this row on
+        # the shortlist, so it belongs in neither Ca bucket.  Since Ca stopped
+        # being able to fail a row, `theory_limited` also catches rows flagged
+        # only for being beyond demonstrated velocity; sorting those in with a
+        # `gamma_to_clear_red` of None used to make the shortlist ordering
+        # meaningless (and threw on the comparison).
     dependent.sort()
     dependent_idx = [i for _, i in dependent]
 

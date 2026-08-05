@@ -508,21 +508,42 @@ def test_a_row_red_only_on_Ca_is_a_build_and_see_candidate():
     assert theory_limited_rows(rows) == [0]
 
 
-def test_the_gate_is_not_softened_only_named():
+def test_ca_warns_but_cannot_fail_a_row():
     """
-    The verdict must stay red. An unmeasured risk quietly downgraded to green
-    would be worse than no verdict at all — the point is to name the distinction
-    so the call is the user's, not to make it for them.
+    REVERSED 2026-08-05, on Conor's call. This test previously asserted the
+    opposite — "the verdict must stay red" — with the reasoning that an
+    unmeasured risk quietly downgraded to green would be worse than no verdict
+    at all.
+
+    That reasoning is respected, not overturned: the row still **cannot read
+    green**. What changed is that it can no longer read *red* either. Ca = µv/γ
+    and γ has never been measured for the Peak system, so a red on Ca asserts a
+    failure we have no standing to assert — and the practical effect was that one
+    guessed constant vetoed designs before anything measured got a say.
+
+    Orange is the honest category for "we do not know", and it is the same
+    treatment `validity` has always had for the same reason.
     """
     row = _ca_row(regime_Ca=0.20)
-    assert row.overall == "red"
-    assert row.cells["regime_Ca"].category == "red"
+    assert row.overall == "orange"
+    assert row.cells["regime_Ca"].category == "orange"
+    assert row.overall != "green", "an unmeasured risk must never read green"
     assert theory_limited_rows([row]) == [0]
+    # the magnitude has to survive the demotion, or "orange" hides how far out
+    # a hopeless design is
+    assert "0.2" in " ".join(row.chips)
 
 
-def test_only_regime_Ca_counts_as_evidence_thin():
-    """Widening this set is a claim about evidence — it should be deliberate."""
-    assert EVIDENCE_THIN_GATES == frozenset({"regime_Ca"})
+def test_evidence_thin_gates_are_the_two_that_cannot_fail_a_row():
+    """
+    Widening this set is a claim about evidence — it should be deliberate.
+
+    `v_vs_demonstrated` joined it in 2026-08. It is not evidence-*thin* in the
+    way Ca is (it rests on measured Peak data and no unmeasured constant), but it
+    reports the same kind of thing: beyond what anyone has run is an unknown, not
+    a failure. Both are capped at orange, so the shortlist reads non-green.
+    """
+    assert EVIDENCE_THIN_GATES == frozenset({"regime_Ca", "v_vs_demonstrated"})
 
 
 def test_ca_confidence_tracks_the_measured_envelope_not_the_se_ceiling():
@@ -645,10 +666,13 @@ def test_diagnosis_splits_the_shortlist_by_gamma_robustness():
 
     assert diag.gamma_ref == pytest.approx(0.005)
     assert diag.robustly_red_ca and diag.gamma_dependent_ca
-    # the split partitions the theory-limited set
-    assert (len(diag.robustly_red_ca) + len(diag.gamma_dependent_ca)
-            == len(diag.theory_limited))
+    # The two Ca buckets are disjoint subsets of the theory-limited set. They no
+    # longer EXHAUST it: since Ca stopped being able to fail a row (2026-08),
+    # `theory_limited` also catches designs flagged only for running faster than
+    # anything Peak has demonstrated, and Ca is not what put those there.
     assert set(diag.robustly_red_ca).isdisjoint(diag.gamma_dependent_ca)
+    both = set(diag.robustly_red_ca) | set(diag.gamma_dependent_ca)
+    assert both <= set(diag.theory_limited)
     assert "build-and-see shortlist" in diag.headline()
 
 
@@ -686,10 +710,17 @@ def test_the_deep_dfu_intent_is_blocked_by_physics_not_by_a_cap():
     study, scored = _run(INTENT_RAW)
     diag = diagnose(study, scored, price="never")
 
-    assert diag.binding.key == "regime_Ca"
-    assert diag.binding_is_physics
-    assert not knobs_for_gate("regime_Ca")
-    assert "No process constraint relaxes" in diag.headline()
+    # REWRITTEN 2026-08-05. This used to assert `binding.key == "regime_Ca"`,
+    # which only worked because Ca could veto a row. It cannot any more, so the
+    # binding RED gate is now whatever actually fails on measured grounds
+    # (flatness, here). The regime story did not disappear — it moved to the
+    # build-and-see shortlist, which is where a "we cannot settle this" verdict
+    # belongs.
+    assert diag.binding.key != "regime_Ca"
+    assert not knobs_for_gate("regime_Ca"), "no process change buys exit Ca"
+    # the honest answer is still reported, and still says nobody can buy it
+    assert diag.theory_limited, "the Ca-limited designs must still be surfaced"
+    assert "build-and-see" in diag.headline()
 
 
 def test_auto_pricing_stays_out_of_the_way_when_the_study_is_feasible():
@@ -762,7 +793,8 @@ def test_chapter_renders_the_intent_and_diagnosis_panels(tmp_path):
 
     sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
     assert sidecar["intent"]["droplet_um"] == 140.0
-    assert sidecar["diagnosis"]["binding"]["gate"] == "regime_Ca"
+    # not regime_Ca any more — Ca cannot fail a row, so it cannot be binding
+    assert sidecar["diagnosis"]["binding"]["gate"] != "regime_Ca"
 
 
 def test_a_hand_written_chapter_carries_no_intent_panel(tmp_path):

@@ -977,3 +977,91 @@ def test_chapter_json_and_payload_are_stamped():
     grouping = build_grouping(study, study.points)
     payload = chapter_payload(scored, grouping, {}, [], {}, study.scoring)
     assert payload["schemaVersion"] == SCHEMA_VERSION
+
+
+# ── velocity vs demonstrated experience (2026-08-05) ─────────────────────────
+
+def test_v_exit_and_ratio_are_computed_from_the_solved_flow():
+    from stepgen.config import load_config
+    from stepgen.families.base import V_EXIT_DEMONSTRATED_MAX
+
+    cfg = load_config(V5_30)
+    cm = solve_config(cfg, Po_mbar=600.0, Qw_mlhr=5.0, label="v5_30")
+    jc = cfg.geometry.junction
+    q = cm.raw["Q_per_rung_avg"]
+
+    assert cm.v_exit_mps == pytest.approx(q / (jc.exit_width * jc.exit_depth))
+    assert cm.v_vs_demonstrated == pytest.approx(
+        cm.v_exit_mps / V_EXIT_DEMONSTRATED_MAX)
+
+
+def test_the_anchor_is_the_condition_it_was_measured_at():
+    """
+    V5-30 at 600 mbar / Qw 5 is the condition V_EXIT_DEMONSTRATED_MAX came from,
+    so the model must land near 1x there. It sits slightly above because the
+    anchor is the cycle-average (conservation) estimate while the model's Q sits
+    between the two experimental estimates -- see comp_oil_viscosity.
+    """
+    from stepgen.config import load_config
+
+    cm = solve_config(load_config(V5_30), Po_mbar=600.0, Qw_mlhr=5.0, label="x")
+    assert 1.0 <= cm.v_vs_demonstrated <= 1.3
+
+
+def test_the_ratio_carries_no_unmeasured_constant():
+    """
+    gamma cancels exactly: the ratio is identical whatever interfacial tension
+    the study assumes, which is the whole reason it exists.
+    """
+    import dataclasses
+
+    from stepgen.config import load_config
+
+    cfg = load_config(V5_30)
+    a = solve_config(cfg, Po_mbar=400.0, Qw_mlhr=5.0, label="a")
+    hi = dataclasses.replace(cfg, fluids=dataclasses.replace(cfg.fluids, gamma=0.020))
+    b = solve_config(hi, Po_mbar=400.0, Qw_mlhr=5.0, label="b")
+    assert a.v_vs_demonstrated == pytest.approx(b.v_vs_demonstrated)
+
+
+def test_ca_and_velocity_can_never_turn_a_row_red():
+    """
+    Both are capped at orange. Ca because gamma is unmeasured; velocity because
+    "nobody has been past 1x" is a statement about our experience, not physics.
+    """
+    from stepgen.studio.scoring import CAPPED_AT_ORANGE
+
+    assert CAPPED_AT_ORANGE == frozenset({"regime_Ca", "v_vs_demonstrated"})
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, operating_Po_mbar=50,
+             regime_Ca=5.0, v_vs_demonstrated=300.0,
+             fits_square=True, manufacturable=True)
+    sr = score_metrics(cm, {**_SCORING, "v_vs_demonstrated": {"green": 1, "orange": 10}},
+                       _APPLICABLE | {"v_vs_demonstrated"})
+    assert sr.overall == "orange"
+    assert sr.cells["regime_Ca"].category == "orange"
+    assert sr.cells["v_vs_demonstrated"].category == "orange"
+
+
+def test_a_hopeless_design_still_says_how_hopeless():
+    """Capping the colour must not hide the magnitude."""
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, operating_Po_mbar=50,
+             regime_Ca=0.5, v_vs_demonstrated=308.0,
+             fits_square=True, manufacturable=True)
+    sr = score_metrics(cm, {**_SCORING, "v_vs_demonstrated": {"green": 1, "orange": 10}},
+                       _APPLICABLE | {"v_vs_demonstrated"})
+    text = " ".join(sr.chips)
+    assert "308" in text
+    assert "nobody has been past 1x" in text
+
+
+def test_the_velocity_ratio_is_scored_without_the_study_asking():
+    """
+    Its bounds are facts about what Peak has run, not a modelling choice, so a
+    study should not have to opt in to being told it is 47x outside experience.
+    """
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, v_vs_demonstrated=47.0,
+             fits_square=True, manufacturable=True)
+    sr = score_metrics(cm, {"throughput_mlhr": {"green": 5, "orange": 1,
+                                                "higher_better": True}},
+                       {"throughput_mlhr", "v_vs_demonstrated"})
+    assert sr.cells["v_vs_demonstrated"].category == "orange"

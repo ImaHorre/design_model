@@ -47,6 +47,7 @@ PLOT_METRICS: list[tuple[str, str, str, bool]] = [
     ("throughput_mlhr", "Throughput", "f1", False),
     ("uniformity_pct", "ΔP flatness (%)", "f1", False),
     ("regime_Ca", "Exit Ca", "ca", True),
+    ("v_vs_demonstrated", "x vs demonstrated", "f1", True),
     ("operating_Po_mbar", "Drive pressure (mbar)", "int", False),
     ("N_dfu", "N DFU", "int", False),
     ("frequency_hz", "Frequency (Hz)", "freq", False),
@@ -61,7 +62,8 @@ PLOT_METRICS: list[tuple[str, str, str, bool]] = [
 #: Metrics offered as numeric limits in the filter bar — the "show me only
 #: flatness under 25%" control.  Kept short on purpose: a filter bar with twelve
 #: range boxes is not a filter bar.
-LIMIT_METRICS = ["uniformity_pct", "regime_Ca", "throughput_mlhr", "operating_Po_mbar"]
+LIMIT_METRICS = ["uniformity_pct", "v_vs_demonstrated", "regime_Ca",
+                 "throughput_mlhr", "operating_Po_mbar"]
 
 #: Preset views, chosen because each answers a question the study exists to ask.
 #: A preset whose axis is not present in this study is dropped rather than shown

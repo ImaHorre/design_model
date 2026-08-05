@@ -69,7 +69,41 @@ _METRIC_FIELDS: dict[str, tuple[str, str, str]] = {
     "uniformity_pct":    ("uniformity_pct",    "ΔP flatness", "%"),
     "operating_Po_mbar": ("operating_Po_mbar", "Drive pressure", "mbar"),
     "regime_Ca":         ("regime_Ca",         "Exit Ca", ""),
+    "v_vs_demonstrated": ("v_vs_demonstrated", "vs demonstrated", "x"),
     "hub_budget_pct":    ("hub_budget_pct",    "Hub ΔP budget", "%"),
+}
+
+
+#: Gates that may warn but must **never fail a row**, because the threshold they
+#: compare against is not something we have measured (2026-08-05).
+#:
+#: ``regime_Ca`` is the case that motivated this.  Ca = µv/γ, and γ has never been
+#: measured for the Peak system — the configs in this repo variously assume 5, 15
+#: and 0 mN/m.  The ceiling it is compared against is borrowed from literature at
+#: a different geometry and a viscosity ratio ~65x away from ours.  Failing a
+#: design on that is asserting a verdict we have no standing to assert.
+#:
+#: This is the same treatment ``validity`` already gets, for the same stated
+#: reason: *an unvalidated prediction is not a failed one, but it must not be
+#: allowed to read green.*  Ca still warns, still sorts, still filters, and the
+#: chip still says how far out the design is — it simply cannot veto.
+#:
+#: What replaces the veto is ``v_vs_demonstrated``: exit velocity as a multiple of
+#: the fastest DFU Peak has actually run (``families.base``).  γ cancels out of a
+#: ratio exactly, so that number carries no unmeasured constant — but it is also
+#: capped here, because "nobody has been past 1x" is a statement about our
+#: experience, not about the physics.
+CAPPED_AT_ORANGE: frozenset[str] = frozenset({"regime_Ca", "v_vs_demonstrated"})
+
+
+#: Specs applied when a study does not state one.  Only ``v_vs_demonstrated``
+#: qualifies, and deliberately so: its bounds are not a modelling choice a study
+#: should have to make, they are **facts about what Peak has run**.  1x is the
+#: fastest DFU in the V5-8-1 sweep; 10x is the point past which "a bit beyond
+#: experience" stops being a fair description.  A study may override them, but it
+#: should not have to opt in to being told it is 47x outside anything ever built.
+DEFAULT_METRIC_SPECS: dict[str, dict[str, Any]] = {
+    "v_vs_demonstrated": {"green": 1.0, "orange": 10.0},
 }
 
 
@@ -312,7 +346,7 @@ def score_metrics(
 
     # ── per-metric threshold scoring ────────────────────────────────────────
     for key, (attr, label, unit) in _METRIC_FIELDS.items():
-        spec = scoring.get(key)
+        spec = scoring.get(key) or DEFAULT_METRIC_SPECS.get(key)
         value = _num(getattr(cm, attr, None))
         tier = confidence.get(key, VALIDATED)
         if spec is None or key not in applicable or value is None:
@@ -322,7 +356,19 @@ def score_metrics(
             continue
         cat = _score_threshold(value, spec)
         reason = ""
-        if cat != GREEN:
+        if cat == RED and key in CAPPED_AT_ORANGE:
+            # The threshold is not ours to enforce — warn with the magnitude, and
+            # let the gates resting on measured things decide the verdict.
+            cat = ORANGE
+            if key == "v_vs_demonstrated":
+                reason = (f"{value:.3g}x the fastest DFU we have run "
+                          f"(nobody has been past 1x — not a failure, an unknown)")
+            else:
+                reason = (f"{label} {value:.3g}{unit} is past the ceiling "
+                          f"({spec['orange']}{unit}), which rests on a γ nobody has "
+                          f"measured — reported, never failed")
+            chips.append("⚠ " + reason)
+        elif cat != GREEN:
             higher = spec.get("higher_better", False)
             bound = spec["orange"] if cat == RED else spec["green"]
             arrow = "≥" if higher else "≤"

@@ -50,7 +50,7 @@ from typing import Any
 
 from stepgen.families.base import (
     RADIAL_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
-    exit_capillary_number, register_family,
+    exit_capillary_number, exit_velocity, exit_velocity_ratio, register_family,
 )
 from stepgen.families.intent import (
     Constraints,
@@ -117,7 +117,7 @@ class RadialFamily(Family):
         # Uniformity is automatic (grey / N-A). Radial-specific gates are the exit
         # Ca regime and the hub pressure budget.
         return {"throughput_mlhr", "operating_Po_mbar", "regime_Ca",
-                "hub_budget_pct", "build", "validity"}
+                "v_vs_demonstrated", "hub_budget_pct", "build", "validity"}
 
     # -- intent ------------------------------------------------------------
     def grid_from_intent(
@@ -333,6 +333,7 @@ def solve_radial(
     throughput_mlhr = q_total * _M3S_TO_MLHR
 
     # ── exit capillary number (uses the ACTUAL channel drop + L_eff) ────────
+    v_exit = exit_velocity(q_per_dfu, c.exit_width_m, h)
     regime_Ca = exit_capillary_number(mu, q_per_dfu, c.exit_width_m, h, gamma)
 
     # ── droplet size / frequency (same power-law as serpentine; regime-blind) ─
@@ -382,6 +383,8 @@ def solve_radial(
         uniformity_pct=None,          # automatic flatness -> N-A (grey)
         operating_Po_mbar=Po_mbar,
         regime_Ca=regime_Ca,
+        v_exit_mps=v_exit,
+        v_vs_demonstrated=exit_velocity_ratio(v_exit),
         exit_width_um=c.exit_width_m * 1e6,
         exit_depth_um=h * 1e6,
         lambda_visc=(c.mu_water / c.mu_oil) if c.mu_oil else None,

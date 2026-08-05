@@ -70,7 +70,7 @@ from stepgen.studio.scoring import ScoredRow, score_result
 #: parent, per the guard in the plan. An ABSENT field means version 1 — pre-Wave-2
 #: chapters cannot be retro-stamped, and treating "missing" as "current" is
 #: exactly the silent pooling this exists to prevent.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _CAT_COLOR = {"green": "#1a7f37", "orange": "#bf8700", "red": "#cf222e", "grey": "#8b949e"}
 _CONF_LABEL = {
@@ -104,6 +104,11 @@ _COLUMNS: list[tuple[str, str, str]] = [
     ("t_stage1_s", "t Stage-1 (s)", "g3"),
     ("t_cycle_s", "t cycle (s)", "g3"),
     ("regime_Ca", "Exit Ca", "ca"),
+    # The gamma-free regime number and, next to it, the only comparison in the
+    # table with no unmeasured constant in it: how much harder this design
+    # drives a DFU than the fastest one Peak has actually run.
+    ("v_exit_mps", "v exit (mm/s)", "vexit"),
+    ("v_vs_demonstrated", "vs demonstrated", "ratio"),
     ("hub_budget_pct", "Hub ΔP (%)", "f1"),
     ("area_used_cm2", "Area (cm²)", "f1"),
     # Fold geometry: reported, never gated (decision 9 / W2-5). The bend radius
@@ -153,6 +158,14 @@ def fmt_metric(value: Any, spec: str = "g3") -> str:
         return f"{f:,.0f}" if abs(f) >= 100 else f"{f:,.1f}"
     if spec == "ca":
         return f"{f:.4f}" if abs(f) < 1 else f"{f:,.2f}"
+    if spec == "vexit":                     # m/s in, mm/s shown
+        return f"{f * 1e3:,.3f}"
+    if spec == "ratio":
+        # "0.30x" reads as inside experience, "308x" as a different world. Both
+        # need to be legible at a glance, so the precision follows the magnitude.
+        if abs(f) < 10:
+            return f"{f:,.2f}x"
+        return f"{f:,.0f}x"
     if spec == "pct0":
         return f"{f * 100:.0f}%"
     return f"{f:.3g}"
@@ -1702,6 +1715,8 @@ def _chapter_json(
                     "uniformity_pct": sr.metrics.uniformity_pct,
                     "operating_Po_mbar": sr.metrics.operating_Po_mbar,
                     "regime_Ca": sr.metrics.regime_Ca,
+                    "v_exit_mps": sr.metrics.v_exit_mps,
+                    "v_vs_demonstrated": sr.metrics.v_vs_demonstrated,
                     "hub_budget_pct": sr.metrics.hub_budget_pct,
                     "area_used_cm2": sr.metrics.area_used_cm2,
                     "fits_square": sr.metrics.fits_square,
