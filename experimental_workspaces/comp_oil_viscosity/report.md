@@ -90,7 +90,7 @@ counterfactual ("if the oil comes back near 60 cP, the residual is geometric and
 *that* is the finding") resolves one step further: it is not geometric either. It
 is the Stage-2 growth model and the water-side loading.
 
-## The noise floor
+## The noise floor — and the strongest thing that can be said for the model
 
 The sweep measures per-DFU flow two independent ways:
 
@@ -101,12 +101,38 @@ meniscus      Q = L_menpoint · w · h / t_S1   (measured meniscus sweep)
 
 They disagree with **each other** by **16–26%** (median 23%) across all ten
 conditions. No fit against this data means anything below ~15%, and the plan's
-±8% target is inside the measurement's own contradiction. Chasing it is how a
-fudge factor gets justified.
+±8% target is inside the measurement's own contradiction.
 
-Note the disagreement is roughly flat across conditions, so it does **not**
-generate the Qw trend above — the trend is real, not an artefact of which Q you
-believe.
+**That disagreement is not noise — it is the physics of the cycle.** Meniscus-sweep
+Q measures flow *during Stage 1*; conservation Q measures the *cycle average*.
+They differ because flow is not constant through the cycle, and the conservation
+estimate is the lower of the two at every single condition, by construction. The
+model carries one Q, so the correct place for it to sit is **between them**.
+
+At **Qw = 5 mL/hr — the condition `configs/v5_30.yaml` declares — it does, at every
+pressure**:
+
+| Po (mbar) | Q conservation | Q meniscus | **Q model** | vs cons. | vs men. |
+|---|---|---|---|---|---|
+| 200 | 1.024e-14 | 1.184e-14 | **1.126e-14** | +9.9% | −5.0% |
+| 300 | 1.702e-14 | 2.013e-14 | **1.917e-14** | +12.6% | −4.7% |
+| 400 | 2.314e-14 | 2.896e-14 | **2.709e-14** | +17.1% | −6.5% |
+| 600 | 3.742e-14 | 4.663e-14 | **4.292e-14** | +14.7% | −8.0% |
+
+4 of 4 inside the band. This is as validated as this dataset can make anything: the
+model's flow is not distinguishable from the measurement, because the measurement
+does not agree with itself to that precision.
+
+It steps outside the band at Qw = 10 and 20 (6 of 6), which is the same Qw
+under-response reported above — though at 300–600 mbar it clears the meniscus
+estimate by only 2–4%. The two conditions genuinely far out are Qw = 10 at
+200 mbar (+27% on meniscus) and Qw = 20 at 300 mbar (+59%): **low pressure and high
+water flow**, where the water side loads the ladder hardest and the model responds
+least.
+
+Note the Q-measure disagreement is roughly flat across conditions, so it does
+**not** generate the Qw trend above — the trend is real, not an artefact of which Q
+you believe.
 
 ## What was changed in the model
 

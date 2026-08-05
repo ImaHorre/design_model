@@ -70,7 +70,21 @@ Complete. The second branch is what happened.
    Qw 5→10 at 200 mbar; model loses 5.5%). At 600 mbar the measurement is also
    resolution-limited — Stage 2+3 is 6 frames at 50 fps.
 6. **Noise floor ~15%**: the sweep's two independent measures of Q (conservation
-   vs meniscus sweep) disagree with each other by 16–26%.
+   vs meniscus sweep) disagree with each other by 16–26%. That gap is not noise —
+   meniscus Q is flow *during Stage 1*, conservation Q is the *cycle average*, and
+   flow is not constant through the cycle.
+7. **At Qw = 5 the model's flow is inside that band at every pressure** (4 of 4;
+   +10 to +17% on conservation, −5 to −8% on meniscus). The model carries one Q,
+   and between the two estimates is exactly where it should sit. It steps outside
+   only at higher Qw, worst at low Po — Qw = 10 @ 200 mbar and Qw = 20 @ 300 mbar.
+
+**Conor's call, 2026-08-05**: this is close enough. Stage 1 is the rate-limiting
+step and it is the stage the resistance and viscosity govern; Stage 2+3 modelled as
+a continuation of the same flow is not expected to match, because the growth phase
+is mechanistically something else. Accepted as-is — no further fitting.
+*One correction to the reasoning, recorded because it points the next investigation:
+measured Stage 2+3 is LONGER than `V_drop/Q`, so growth is slower than
+flow-continuation predicts, not faster. Whatever the mechanism is, it adds time.*
 
 ## Consistency checks
 
