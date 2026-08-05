@@ -228,6 +228,23 @@ class CommonMetrics:
     regime_Ca: float | None = None          # exit capillary number (diagnostic)
     hub_budget_pct: float | None = None     # radial: hub ΔP as % of supply (lower=better; N-A elsewhere)
     area_used_cm2: float | None = None      # occupied chip area [cm²]
+
+    # ── fold geometry: REPORTED, never gated (decision 9 / W2-5) ────────────
+    #: Centreline radius of the 180° fold [µm].  **Determined, not chosen**: a
+    #: turn between two lanes at a given pitch has a centreline radius of half
+    #: that pitch, and cannot have any other.  ``footprint.turn_radius`` is a
+    #: drawing hint, not a driver — W1-1 removed it from the stack-up after the
+    #: GDS showed the inter-lane gap is the 1.0 mm wall, which ``2 × 500 µm``
+    #: had been reproducing by coincidence.
+    bend_radius_um: float | None = None
+    #: Wall thickness at the tightest point of the turn [µm] — the inner fold
+    #: passes the outer channel of the adjacent lane here, so this, not the
+    #: straight-section wall, is where a fold stack actually collides.
+    #: **No threshold**: there is no real fab minimum to gate against yet
+    #: (decision 9). When one exists it becomes a `build` sub-gate, and until
+    #: then a number on the row beats a constant nobody has measured.
+    wall_at_turn_um: float | None = None
+
     fits_square: bool | None = None         # fits the die/wafer square?
     manufacturable: bool | None = None      # within fab caps (depth/width/wall)?
     no_crossing: bool | None = None         # continuous never crosses dispersed?

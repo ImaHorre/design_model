@@ -902,7 +902,25 @@ grows only vertically and `ff = 1.0` **is** "fill the die".
 - **A design that does not fit the die, or that crosses phases, emits a chip even when the
   study omits `required`.**
 
-### W2-5 — bend radius + wall-at-turn as reported metrics *(was A3)*
+### W2-5 — bend radius + wall-at-turn as reported metrics ✅ `<this commit>` *(was A3)*
+
+**What implementation found:**
+
+1. **On the real V5-30 the fold radius is 3,500 µm and `turn_radius` says 500 µm** —
+   7× out. The row now carries a note saying so. This is W1-1's coincidence seen
+   from the other end: `2 × 500 µm` reproduced the measured 1.0 mm wall exactly,
+   which is what made the old stack-up look right for the wrong reason.
+2. **`wall_at_turn` shows the turn is not where a fold stack collides.** Folds
+   alternate ends, so successive folds at one end connect lanes (1,2), (3,4), …
+   — centres `2p` apart, closest approach `p − Mcw` = **6,000 µm** on V5-30,
+   against a straight-section wall of 1,000 µm. The straight section is six times
+   tighter. Worth having precisely because it says "stop worrying about this".
+3. **Scope held deliberately**: the routing *inside* a lane pair, where the two
+   mains flanking the DFU array each turn at their own radius, is not modelled.
+   That is the deferred full layout rebuild (fold as a real channel with its own
+   ΔP), and approximating it here would have been a guess dressed as a metric.
+4. Guarded by a test that moves `turn_radius` 60× and asserts the fold radius does
+   not budge — the same shape of test W1-1 used, for the same reason.
 
 `CommonMetrics` fields, no threshold. Note the tangle W1-1 partly resolves: for a real 180°
 fold the centreline radius is ≈ half the lane pitch, so turn radius is *determined by*

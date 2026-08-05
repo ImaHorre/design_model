@@ -80,6 +80,12 @@ _COLUMNS: list[tuple[str, str, str]] = [
     ("regime_Ca", "Exit Ca", "ca"),
     ("hub_budget_pct", "Hub ΔP (%)", "f1"),
     ("area_used_cm2", "Area (cm²)", "f1"),
+    # Fold geometry: reported, never gated (decision 9 / W2-5). The bend radius
+    # is DETERMINED by the lane pitch, so it is a readout of the stack-up rather
+    # than a free input, and there is no fab minimum to gate the turn wall
+    # against yet.
+    ("bend_radius_um", "Fold radius (µm)", "f1"),
+    ("wall_at_turn_um", "Wall at turn (µm)", "f1"),
 ]
 
 _FMT_BY_KEY = {key: spec for key, _, spec in _COLUMNS}
@@ -1674,6 +1680,9 @@ def _chapter_json(
                     "exit_depth_um": sr.metrics.exit_depth_um,
                     "lambda_visc": sr.metrics.lambda_visc,
                     "gamma_Nm": sr.metrics.gamma_Nm,
+                    # fold geometry — reported, never gated (W2-5)
+                    "bend_radius_um": sr.metrics.bend_radius_um,
+                    "wall_at_turn_um": sr.metrics.wall_at_turn_um,
                 },
             }
             for i, sr in enumerate(scored)

@@ -851,6 +851,17 @@ def solve_config(
         if t_cycle > 0 and math.isfinite(t_stage1):
             stage1_fraction = t_stage1 / t_cycle
 
+    # ── fold geometry, reported not gated (W2-5, decision 9) ────────────────
+    bend_radius_um, wall_at_turn_um = _fold_geometry(config)
+    if bend_radius_um is not None:
+        drawn = config.footprint.turn_radius * 1e6
+        if drawn > 0 and abs(drawn - bend_radius_um) / bend_radius_um > 0.1:
+            notes.append(
+                f"fold radius is {bend_radius_um:.0f} µm (half the {2*bend_radius_um:.0f} µm "
+                f"lane pitch), not the {drawn:.0f} µm in footprint.turn_radius — a 180° "
+                f"turn between two lanes cannot have any other centreline radius"
+            )
+
     return CommonMetrics(
         family="serpentine",
         label=label,
@@ -864,6 +875,8 @@ def solve_config(
         Qw_mlhr=Qw_mlhr,
         emulsion_pct=(100.0 * throughput / (throughput + Qw_mlhr)
                       if throughput is not None and (throughput + Qw_mlhr) > 0 else None),
+        bend_radius_um=bend_radius_um,
+        wall_at_turn_um=wall_at_turn_um,
         dP_rung_mbar=dP_rung_mbar,
         t_stage1_s=t_stage1,
         t_cycle_s=t_cycle,
@@ -886,6 +899,45 @@ def solve_config(
         notes=notes,
         raw=row,
     )
+
+
+def _fold_geometry(config) -> tuple[float | None, float | None]:
+    """
+    ``(bend_radius_um, wall_at_turn_um)`` for the serpentine fold — **reported,
+    never gated** (decision 9, W2-5).
+
+    **The bend radius is determined, not chosen.**  A 180° turn between two lanes
+    at pitch ``p`` has a centreline radius of ``p/2``; it is not free to be
+    anything else, and the drawing has been honest about that since W1-1.
+    ``footprint.turn_radius`` is a drawing hint that used to masquerade as a
+    driver: it defaulted to 500 µm and ``2 × 500 µm`` reproduced the measured
+    1.0 mm inter-lane wall by **coincidence**, which is what made the old
+    stack-up look right for the wrong reason.  A row whose two disagree says so.
+
+    **Wall at the turn** is the clearance between successive folds at the same
+    end of the stack.  Folds alternate ends, so at one end they connect lanes
+    (1,2), (3,4), … — centres ``2p`` apart, each arc reaching ``p/2 + Mcw/2``, so
+    the closest approach is ``p − Mcw``.
+
+    What this deliberately does not model: the routing *inside* a lane pair,
+    where the two mains flanking the DFU array must each turn at their own
+    radius.  That is the deferred full layout rebuild — the fold as a real
+    channel with its own pressure drop — not something to approximate here.
+    Note what the number already shows: with ``mcl`` (millimetres) dwarfing
+    ``Mcw`` (one), ``p − Mcw`` is far larger than the straight-section wall, so
+    **the turn is not where a fold stack collides — the straight section is.**
+    """
+    from stepgen.design.layout import lane_stackup
+
+    geom, fp = config.geometry, config.footprint
+    _, lane_pitch = lane_stackup(
+        main_width_m=geom.main.Mcw,
+        dfu_array_m=geom.rung.mcl,
+        wall_width_m=fp.wall_width,
+    )
+    if lane_pitch <= 0:
+        return None, None
+    return (lane_pitch / 2.0) * 1e6, max(lane_pitch - geom.main.Mcw, 0.0) * 1e6
 
 
 # ---------------------------------------------------------------------------

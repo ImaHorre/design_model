@@ -893,3 +893,51 @@ def test_diagnosis_names_a_reported_breach_instead_of_burying_it():
     assert diag.reported_not_gated == {"manufacturable": 3}
     assert "reported, not gated" in diag.headline().lower()
     assert "within fab caps" in diag.headline()
+
+
+# ── W2-5: fold geometry, reported not gated ──────────────────────────────────
+
+def test_bend_radius_is_half_the_lane_pitch():
+    """
+    A 180 degree turn between two lanes at pitch p has a centreline radius of
+    p/2 and cannot have any other. On the real V5-30 the measured pitch is
+    7.00 mm (reference_devices/README.md), so the fold radius is 3500 um.
+    """
+    from stepgen.config import load_config
+
+    cm = solve_config(load_config(V5_30), Po_mbar=200.0, Qw_mlhr=5.0, label="v5_30")
+    assert cm.bend_radius_um == pytest.approx(3500.0, rel=1e-9)
+    assert cm.wall_at_turn_um == pytest.approx(6000.0, rel=1e-9)
+
+
+def test_fold_radius_note_fires_when_turn_radius_disagrees():
+    """v5_30.yaml carries turn_radius 500 um; the real fold is 7x that."""
+    from stepgen.config import load_config
+
+    cm = solve_config(load_config(V5_30), Po_mbar=200.0, Qw_mlhr=5.0, label="v5_30")
+    assert any("fold radius" in n for n in cm.notes)
+
+
+def test_fold_geometry_is_reported_never_gated():
+    """No threshold, no gate: a bad fold cannot turn a row red (decision 9)."""
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, operating_Po_mbar=50,
+             regime_Ca=0.005, fits_square=True, manufacturable=True,
+             bend_radius_um=1.0, wall_at_turn_um=0.0)
+    sr = score_metrics(cm, _SCORING, _APPLICABLE)
+    assert sr.overall == "green"
+    assert "bend_radius_um" not in sr.cells
+    assert "wall_at_turn_um" not in sr.cells
+
+
+def test_bend_radius_tracks_the_stackup_not_turn_radius():
+    """Move turn_radius 60x: the fold radius must not budge (W1-1's lesson)."""
+    import dataclasses
+
+    from stepgen.config import load_config
+
+    cfg = load_config(V5_30)
+    wide = dataclasses.replace(
+        cfg, footprint=dataclasses.replace(cfg.footprint, turn_radius=30e-3))
+    a = solve_config(cfg, Po_mbar=200.0, Qw_mlhr=5.0, label="a")
+    b = solve_config(wide, Po_mbar=200.0, Qw_mlhr=5.0, label="b")
+    assert a.bend_radius_um == pytest.approx(b.bend_radius_um)
