@@ -811,7 +811,30 @@ Assume the count is wrong until grepped.
      W2-1 they disagree with the library, and that is the correct state for a record of
      what was run.
 
-### W2-3 — N from packing *(was A2)*
+### W2-3 — N from packing ✅ `<this commit>` *(was A2)*
+
+**What implementation found:**
+
+1. **The capacity arithmetic had to be extracted first, or this item would have
+   created W2-2's bug class while closing it.** `packing_capacity()` computed
+   `lanes_max` / `per_lane` inline from a *compiled* config, and `fill_fraction`
+   needs the same numbers *before* a DFU count exists. Writing it a second time was
+   the obvious move and the wrong one. It is now
+   `design/layout.py::dfu_capacity`, which both the input and the readout call.
+2. **Capacity does not depend on N at all** — lane pitch comes from main width,
+   DFU array and wall; lane length is the routable extent. That is what makes
+   `fill_fraction` possible as an input, and it is worth stating because it is not
+   obvious from `compute_layout`, which takes N as its first move.
+3. **The footprint block had to move above the DFU-count block** in
+   `serpentine.compile`, since capacity needs the die. No behaviour change; it is
+   the same construction, earlier.
+4. **`fits_square` is true by construction at `ff = 1.0`, and there is now a test
+   that says so** — `test_fill_fraction_one_fits_by_construction`. It is an
+   invariant assertion, exactly as this item predicted: if it ever fails,
+   `dfu_capacity` and `compute_layout` have drifted apart, which is precisely what
+   making them one function prevents.
+5. Measured: a 100 mm die at 200×1000 µm main, 4 mm rung, 120 µm pitch holds
+   **5,950 DFUs**; `ff = 1.0` consumes 96.6 cm² of the 100 cm² die.
 
 `packing_capacity()` becomes an input, not just a readout. Extends `fdc8ec9`'s
 raise-don't-guess rule to three sources:

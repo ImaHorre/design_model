@@ -700,3 +700,95 @@ def test_manifold_impossible_geometry_fails_once_at_compile():
     tiny = {**base, "rung": {**base["rung"], "upstream_width_um": 1.0}}
     with _pytest.raises(ValueError, match="min_wall_um"):
         fam.compile(tiny, **kw)
+
+
+# ── W2-3: N from packing (rung.fill_fraction) ────────────────────────────────
+
+_FF_BASE = {
+    "main": {"depth_um": 200, "width_um": 1000},
+    "rung": {"length_mm": 4, "upstream_width_um": 15},
+    "junction": {"exit_width_um": 60, "exit_depth_um": 20, "pitch_um": 120},
+}
+_FF_FOOT = {"square_side_mm": 100.0}
+_FF_KW = dict(fluids=_FLUIDS, footprint=_FF_FOOT, manufacturing=_MFG, operating=_OP)
+
+
+def _ff_eval(**rung):
+    params = {**_FF_BASE, "rung": {**_FF_BASE["rung"], **rung}}
+    return get_family("serpentine").evaluate(params, label="ff", **_FF_KW)
+
+
+def test_fill_fraction_scales_N_linearly():
+    full = _ff_eval(fill_fraction=1.0)
+    half = _ff_eval(fill_fraction=0.5)
+    assert full.error is None and half.error is None
+    assert full.N_dfu > 0
+    assert half.N_dfu == pytest.approx(full.N_dfu / 2, rel=0.01)
+
+
+def test_fill_fraction_one_fits_by_construction():
+    """
+    ff = 1.0 inverts exactly what the fits-square check applies, so a full-die
+    design must fit. If this ever fails, dfu_capacity and compute_layout have
+    drifted apart -- which is the whole reason they are one function.
+    """
+    cm = _ff_eval(fill_fraction=1.0)
+    assert cm.fits_square is True
+
+
+def test_fill_fraction_matches_the_packing_readout():
+    """The input and the readout are the same number, not two estimates."""
+    fam = get_family("serpentine")
+    params = {**_FF_BASE, "rung": {**_FF_BASE["rung"], "fill_fraction": 1.0}}
+    compiled = fam.compile(params, fluids=_FLUIDS, footprint=_FF_FOOT,
+                           manufacturing=_MFG)
+    cap = fam.packing_capacity(compiled)
+    assert cap is not None
+    assert cap.n_current == cap.n_max
+
+
+def test_only_one_dfu_count_source_allowed():
+    fam = get_family("serpentine")
+    kw = dict(fluids=_FLUIDS, footprint=_FF_FOOT, manufacturing=_MFG)
+
+    with pytest.raises(ValueError, match="exactly one"):
+        fam.compile({**_FF_BASE, "rung": {**_FF_BASE["rung"], "fill_fraction": 1.0,
+                                          "N": 500}}, **kw)
+    # the message must name the N each source implies, not just refuse
+    try:
+        fam.compile({**_FF_BASE, "rung": {**_FF_BASE["rung"], "fill_fraction": 1.0,
+                                          "N": 500}}, **kw)
+    except ValueError as exc:
+        assert "rung.N=500 implies N=500" in str(exc)
+        assert "rung.fill_fraction=1.0 implies N=" in str(exc)
+
+
+def test_fill_fraction_out_of_range_raises():
+    fam = get_family("serpentine")
+    kw = dict(fluids=_FLUIDS, footprint=_FF_FOOT, manufacturing=_MFG)
+    for bad in (1.5, 0.0, -0.2):
+        with pytest.raises(ValueError, match=r"must be in \(0, 1\]"):
+            fam.compile({**_FF_BASE,
+                         "rung": {**_FF_BASE["rung"], "fill_fraction": bad}}, **kw)
+
+
+def test_fill_fraction_failure_is_reported_not_swallowed():
+    """`evaluate` turns a compile error into a row with `.error` set, not a crash."""
+    cm = _ff_eval(fill_fraction=1.5)
+    assert cm.error is not None
+    assert "fill_fraction" in cm.error
+
+
+def test_fill_fraction_reaches_the_label():
+    from stepgen.studio.study import build_points
+
+    raw = {
+        "family": "serpentine",
+        "operating": {"Po_mbar": 500, "Qw_mlhr": 5},
+        "serpentine": {**_FF_BASE,
+                       "rung": {**_FF_BASE["rung"], "fill_fraction": [1.0, 0.75]}},
+    }
+    labels = [p.label for p in build_points(raw)]
+    assert any("Ff1" in lab for lab in labels)
+    assert any("Ff0.75" in lab for lab in labels)
+    assert len(set(labels)) == 2      # must not collide

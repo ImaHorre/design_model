@@ -76,9 +76,18 @@ _main: &main
 _rung: &rung
   length_mm: 4            # TODO rung (DFU) length
   upstream_width_um: 40   # default only — overridden per design below
-  # N is NOT set here — it comes from main.length_mm / pitch. To pin the DFU
-  # count instead and let the main length vary, add `N: <count>` here and delete
-  # `length_mm` from main above. Setting both raises.
+  # N is NOT set here — it comes from main.length_mm / pitch. There are three
+  # ways to state the DFU count and **exactly one may be given**; the error
+  # names the N each one implies, so a conflict is never resolved silently:
+  #
+  #   rung.N: 1000            pin the count       -> main length = N × pitch
+  #   main.length_mm: 120     pin the channel     -> N = length / pitch
+  #   rung.fill_fraction: 1.0 pin the die usage   -> N = ff × what the die holds
+  #
+  # `fill_fraction` is the one to reach for when the question is "how much device
+  # fits", not "how many DFUs do I want". 1.0 means fill the routable die, and
+  # at 1.0 the design fits **by construction** — it inverts the same capacity
+  # arithmetic the fits-square check applies (W2-3).
 
 # ── THE EXIT DESIGNS — junction and upstream width vary per design ───────────
 # Rung depth == exit depth (single etch), so the rung cross-section is

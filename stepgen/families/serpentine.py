@@ -187,23 +187,81 @@ class SerpentineFamily(Family):
         upstream_w = float(_leaf(params, "rung", "upstream_width_um", default=15.0)) * 1e-6
         constriction = float(_leaf(params, "rung", "constriction_ratio", default=1.0))
 
-        # ── DFU count: give N, or give the main length and let N follow ──────
-        # N and the routed main length are the same fact stated two ways, tied
-        # by the pitch.  Design work knows one or the other depending on where
-        # it started — a DFU-count target, or a channel that has to fit a run of
-        # given length — so accept either and derive the other.  Giving both is
-        # an error rather than a silent precedence rule, because when they
-        # disagree there is no way to know which the user meant.
+        # ── footprint from the square-die target ────────────────────────────
+        # Built BEFORE the DFU count, because `rung.fill_fraction` asks the die
+        # how many DFUs it holds (W2-3) and cannot do that without it.
+        side_mm = float(footprint.get("square_side_mm", 63.5))
+        area_cm2 = (side_mm * 0.1) ** 2   # mm -> cm, squared
+        fp = FootprintConfig(
+            footprint_area_cm2=area_cm2,
+            footprint_aspect_ratio=1.0,   # a square die
+            # 1.0 mm measured on both built serpentines — a design rule, and the
+            # thing that actually sets the lane pitch (reference_devices/README.md).
+            wall_width=float(footprint.get("wall_width_um", 1000.0)) * 1e-6,
+            # 51% measured on TWO independent built serpentines, V5-30
+            # (69.0 × 74.0 mm) and V5-10 (68.6 × 74.0 mm), both on a 100 mm die.
+            # The rest is the 65.8 × 8 mm IO strip and 13–15 mm of margin.
+            active_area_fraction=float(
+                footprint.get("active_area_fraction", SERPENTINE_ACTIVE_FRACTION)),
+            turn_radius=float(footprint.get("turn_radius_um", 500.0)) * 1e-6,
+            reserve_border=float(footprint.get("reserve_border_mm", 2.0)) * 1e-3,
+        )
+
+        # ── DFU count: three ways to say the same thing, exactly one allowed ──
+        #
+        #   rung.N              -> Mcl = N × pitch
+        #   main.length_mm      -> N   = L / pitch
+        #   rung.fill_fraction  -> N   = ff × packing_capacity(die, lane geometry)
+        #
+        # All three are the same fact through the pitch and the die.  Design work
+        # knows one of them depending on where it started — a DFU-count target, a
+        # channel that has to fit a given run, or "fill the die" — so accept any
+        # and derive the rest.  Giving more than one is an error rather than a
+        # silent precedence rule, because when they disagree there is no way to
+        # know which the user meant; the message names the N each one implies.
+        from stepgen.design.layout import dfu_capacity
+
         N_in = _leaf(params, "rung", "N")
         L_in = _leaf(params, "main", "length_mm")
-        if N_in is not None and L_in is not None:
+        ff_in = _leaf(params, "rung", "fill_fraction")
+
+        given = [k for k, v in (("rung.N", N_in), ("main.length_mm", L_in),
+                                ("rung.fill_fraction", ff_in)) if v is not None]
+        if len(given) > 1:
+            implied = []
+            if N_in is not None:
+                implied.append(f"rung.N={N_in} implies N={int(N_in)}")
+            if L_in is not None:
+                implied.append(
+                    f"main.length_mm={L_in} implies N={int(float(L_in) * 1e-3 // pitch)}")
+            if ff_in is not None:
+                implied.append(
+                    f"rung.fill_fraction={ff_in} implies N="
+                    f"{int(float(ff_in) * dfu_capacity(fp, main_width_m=Mcw, dfu_array_m=rung_len, pitch_m=pitch)[0])}")
             raise ValueError(
-                "specify either rung.N or main.length_mm, not both — they are the "
-                f"same quantity through the pitch (N = length / pitch). Got N={N_in}, "
-                f"length_mm={L_in}, pitch={pitch * 1e6:g} µm, which implies "
-                f"N={int(float(L_in) * 1e-3 // pitch)}."
+                f"specify exactly one of rung.N, main.length_mm or rung.fill_fraction; "
+                f"got {', '.join(given)}. They are the same quantity through the pitch "
+                f"({pitch * 1e6:g} µm) and the die: " + "; ".join(implied) + "."
             )
-        if L_in is not None:
+
+        if ff_in is not None:
+            ff = float(ff_in)
+            if not (0.0 < ff <= 1.0):
+                raise ValueError(
+                    f"rung.fill_fraction must be in (0, 1]; got {ff}. It is the "
+                    f"fraction of the die's DFU capacity to use, so > 1 is a device "
+                    f"that does not fit and <= 0 is no device."
+                )
+            capacity = dfu_capacity(fp, main_width_m=Mcw, dfu_array_m=rung_len, pitch_m=pitch)[0]
+            N = int(ff * capacity)
+            if N < 1:
+                raise ValueError(
+                    f"rung.fill_fraction={ff:g} of a die capacity of {capacity} DFUs "
+                    f"rounds to no DFUs at all. Widen the die, shorten the rung, or "
+                    f"tighten the pitch."
+                )
+            Mcl = N * pitch
+        elif L_in is not None:
             Mcl = float(L_in) * 1e-3
             N = int(Mcl // pitch)
             if N < 1:
@@ -227,24 +285,6 @@ class SerpentineFamily(Family):
             emulsion_ratio=float(fluids.get("emulsion_ratio", 0.1)),
             gamma=float(fluids.get("gamma", 0.0)),
             phase_system=str(fluids.get("phase_system", "o/w")),
-        )
-
-        # ── footprint from the square-die target ────────────────────────────
-        side_mm = float(footprint.get("square_side_mm", 63.5))
-        area_cm2 = (side_mm * 0.1) ** 2   # mm -> cm, squared
-        fp = FootprintConfig(
-            footprint_area_cm2=area_cm2,
-            footprint_aspect_ratio=1.0,   # a square die
-            # 1.0 mm measured on both built serpentines — a design rule, and the
-            # thing that actually sets the lane pitch (reference_devices/README.md).
-            wall_width=float(footprint.get("wall_width_um", 1000.0)) * 1e-6,
-            # 51% measured on TWO independent built serpentines, V5-30
-            # (69.0 × 74.0 mm) and V5-10 (68.6 × 74.0 mm), both on a 100 mm die.
-            # The rest is the 65.8 × 8 mm IO strip and 13–15 mm of margin.
-            active_area_fraction=float(
-                footprint.get("active_area_fraction", SERPENTINE_ACTIVE_FRACTION)),
-            turn_radius=float(footprint.get("turn_radius_um", 500.0)) * 1e-6,
-            reserve_border=float(footprint.get("reserve_border_mm", 2.0)) * 1e-3,
         )
 
         mfg = ManufacturingConfig(
@@ -314,27 +354,17 @@ class SerpentineFamily(Family):
         """
         Largest DFU count this die holds at the current lane geometry.
 
-        Inverts :func:`stepgen.design.layout.compute_layout`.  That function
-        goes ``N -> Mcl -> num_lanes -> total_height -> fits?``; here we ask how
-        many lanes fit the die height, and convert back to a rung count::
-
-            n_lanes_max = floor((H_useful - pair_w) / lane_pitch) + 1
-            N_max       = n_lanes_max * floor(lane_length / pitch)
-
-        Note what this exposes: ``num_lanes`` depends on ``Mcl`` and
-        ``lane_length`` only.  ``lanes_max`` is set by the die height against the
-        **wall** — the 1.0 mm design rule measured on both built serpentines —
-        not by ``turn_radius``, which since W1-1 plays no part in the stack-up.
-        The drawing and this readout share one implementation of that arithmetic
-        (:func:`stepgen.design.layout.lane_stackup`), which is the point.
+        Delegates to :func:`stepgen.design.layout.dfu_capacity`, which is the
+        exact inverse of ``compute_layout`` and is also what ``rung.fill_fraction``
+        inverts at compile time (W2-3).  The drawing, this readout and the
+        fill-fraction input therefore cannot disagree about how many DFUs a die
+        holds — they are one function.
         """
-        from stepgen.design.layout import active_extent, compute_layout
+        from stepgen.design.layout import compute_layout, dfu_capacity
         from stepgen.viz.schematic import PackingCapacity
 
         fp, geom = compiled.footprint, compiled.geometry
         lay = compute_layout(compiled)
-
-        _, H_useful = active_extent(fp)
 
         pitch = geom.rung.pitch
         n_current = int(geom.Nmc_override or 0) or int(round(geom.main.Mcl / pitch))
@@ -342,10 +372,8 @@ class SerpentineFamily(Family):
         if lay.lane_pitch <= 0 or pitch <= 0 or lay.lane_length <= 0:
             return None
 
-        lanes_max = int(math.floor((H_useful - lay.lane_pair_width) / lay.lane_pitch)) + 1
-        lanes_max = max(lanes_max, 0)
-        per_lane = int(math.floor(lay.lane_length / pitch))
-        n_max = max(lanes_max * per_lane, 0)
+        n_max, lanes_max, per_lane = dfu_capacity(
+            fp, main_width_m=geom.main.Mcw, dfu_array_m=geom.rung.mcl, pitch_m=pitch)
 
         if lanes_max <= 0:
             limited_by = "die height — a single lane pair does not fit"

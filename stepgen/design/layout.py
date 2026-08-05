@@ -121,6 +121,44 @@ def lane_stackup(
     return lane_pair_width, lane_pair_width + wall_width_m
 
 
+def dfu_capacity(
+    fp,
+    *,
+    main_width_m: float,
+    dfu_array_m: float,
+    pitch_m: float,
+) -> tuple[int, int, int]:
+    """
+    How many DFUs this die actually holds: ``(n_max, lanes_max, per_lane)``.
+
+    **The one implementation**, and the exact inverse of :func:`compute_layout`.
+    That function goes ``N -> Mcl -> num_lanes -> total_height -> fits?``; this
+    asks how many lanes fit the die height and converts back to a rung count::
+
+        lanes_max = floor((H_useful - lane_pair_width) / lane_pitch) + 1
+        per_lane  = floor(L_useful / pitch)          (lane_length == L_useful)
+        n_max     = lanes_max × per_lane
+
+    **Note what it does not depend on: N.**  Lane pitch is set by the main width,
+    the DFU array and the wall; lane length is the routable extent. So capacity
+    can be asked *before* a DFU count exists, which is what lets ``fill_fraction``
+    work as an input rather than only as a readout (W2-3).
+
+    ``lanes_max`` is set by the die height against the **wall** — the 1.0 mm
+    design rule measured on both built serpentines — not by ``turn_radius``,
+    which since W1-1 plays no part in the stack-up.
+    """
+    L_useful, H_useful = active_extent(fp)
+    lane_pair_width, lane_pitch = lane_stackup(
+        main_width_m=main_width_m, dfu_array_m=dfu_array_m, wall_width_m=fp.wall_width,
+    )
+    if lane_pitch <= 0 or pitch_m <= 0 or L_useful <= 0:
+        return 0, 0, 0
+    lanes_max = max(int(math.floor((H_useful - lane_pair_width) / lane_pitch)) + 1, 0)
+    per_lane = max(int(math.floor(L_useful / pitch_m)), 0)
+    return lanes_max * per_lane, lanes_max, per_lane
+
+
 @dataclass(frozen=True)
 class LayoutResult:
     """
