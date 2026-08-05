@@ -119,6 +119,48 @@ def _leaf(block: dict, *path, default=None):
     return node
 
 
+#: Below this a "channel" is a rounding error, not a feature.  Independent of the
+#: fab's `min_wall_um`, which is a manufacturing limit a study may legitimately
+#: relax; this is the point where the geometry stops being a geometry.
+_ABSURD_DIMENSION_M = 1e-9
+
+
+def _validate_geometry(manufacturing: dict[str, Any], dims: dict[str, float]) -> None:
+    """
+    Fail once at compile, naming the config field, for geometry that cannot be
+    built at all.
+
+    W2-1a.  The predicate this *used* to be going to check was ``upstream_width >
+    exit_depth`` — the `h < w` rule ``_R_rect`` enforced.  W2-1 deleted that rule
+    (the real V5-30 DFU is deeper than it is wide), so codifying it here would
+    have hardened a constraint the physics had just removed, and rejected
+    geometry the model can now solve fine.
+
+    What is left is genuinely impossible, not merely awkward:
+
+    * a non-positive or absurd dimension — no channel at all;
+    * a dimension below the fab's own ``min_wall_um`` — unbuildable by the
+      process the study declared.
+
+    Fab caps that a design may legitimately *exceed* (max main depth/width) stay
+    where they are: they are scored as the ``build`` gate, per decision 10, not
+    raised here.  A compile-time raise removes the row from the table entirely,
+    and a row you cannot see is a row you cannot reason about.
+    """
+    min_feature = float(manufacturing.get("min_wall_um", 0.5)) * 1e-6
+    for field, value in dims.items():
+        if not (value > _ABSURD_DIMENSION_M):
+            raise ValueError(
+                f"manifold geometry: {field} must be positive, got {value*1e6:.4g} µm"
+            )
+        if value < min_feature:
+            raise ValueError(
+                f"manifold geometry: {field} = {value*1e6:.4g} µm is below the "
+                f"declared fab minimum (manufacturing.min_wall_um = "
+                f"{min_feature*1e6:.4g} µm)"
+            )
+
+
 def _R_rect(L: float, w: float, h: float, mu: float) -> float:
     """
     Rectangular-channel resistance — a thin alias for the one implementation.
@@ -300,6 +342,21 @@ class ManifoldFamily(Family):
 
         rung_len = float(_leaf(params, "rung", "length_mm", default=2.0)) * 1e-3
         upstream_w = float(_leaf(params, "rung", "upstream_width_um", default=30.0)) * 1e-6
+
+        _validate_geometry(
+            manufacturing,
+            {
+                "junction.pitch_um": pitch,
+                "junction.exit_width_um": exit_w,
+                "junction.exit_depth_um": exit_d,
+                "arms.width_um": arm_w,
+                "arms.depth_um": arm_d,
+                "main.depth_um": main_d,
+                "main.width_um": main_w,
+                "rung.length_mm": rung_len,
+                "rung.upstream_width_um": upstream_w,
+            },
+        )
 
         # ── continuous-phase collection + separating wall (packing geometry) ──
         cp_base = float(_leaf(params, "cont_phase", "width_um", default=200.0)) * 1e-6

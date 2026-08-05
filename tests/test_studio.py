@@ -649,3 +649,54 @@ def test_all_families_study_runs():
             assert m.uniformity_pct is not None   # graded on flatness
             assert m.no_crossing is not None      # carries the gate
             assert m.hub_budget_pct is None       # radial-only, grey here
+
+
+# ── W2-1a: what remains impossible after W2-1 removed the aspect rule ────────
+
+def test_manifold_deep_narrow_dfu_compiles_and_solves():
+    """
+    The predicate W2-1a was originally going to enforce -- upstream_width >
+    exit_depth -- is exactly the geometry of the real V5-30 DFU (8 µm wide x
+    10 µm deep). W2-1 deleted the rule; this pins that it stays deleted.
+    """
+    from stepgen.families.manifold import ManifoldFamily
+
+    params = {
+        "arms": {"count": 8, "width_um": 200.0, "depth_um": 100.0},
+        "rungs_per_arm": 20,
+        "main": {"depth_um": 200.0, "width_um": 1000.0},
+        "rung": {"length_mm": 2.0, "upstream_width_um": 15.0},   # 15 < 20 depth
+        "junction": {"exit_width_um": 60.0, "exit_depth_um": 20.0, "pitch_um": 120.0},
+    }
+    cm = ManifoldFamily().evaluate(
+        params, fluids={"mu_dispersed": 0.06, "gamma": 0.005},
+        footprint={"square_side_mm": 100.0}, manufacturing={"min_wall_um": 5.0},
+        operating={"Po_mbar": 500.0}, label="deep")
+    assert cm.error is None
+    assert cm.throughput_mlhr and cm.throughput_mlhr > 0
+
+
+def test_manifold_impossible_geometry_fails_once_at_compile():
+    """Non-positive and sub-fab dimensions raise, naming the config field."""
+    import pytest as _pytest
+
+    from stepgen.families.manifold import ManifoldFamily
+
+    base = {
+        "arms": {"count": 8, "width_um": 200.0, "depth_um": 100.0},
+        "rungs_per_arm": 20,
+        "main": {"depth_um": 200.0, "width_um": 1000.0},
+        "rung": {"length_mm": 2.0, "upstream_width_um": 15.0},
+        "junction": {"exit_width_um": 60.0, "exit_depth_um": 20.0, "pitch_um": 120.0},
+    }
+    fam = ManifoldFamily()
+    kw = dict(fluids={"mu_dispersed": 0.06}, footprint={"square_side_mm": 100.0},
+              manufacturing={"min_wall_um": 5.0})
+
+    bad = {**base, "junction": {**base["junction"], "exit_depth_um": 0.0}}
+    with _pytest.raises(ValueError, match="junction.exit_depth_um"):
+        fam.compile(bad, **kw)
+
+    tiny = {**base, "rung": {**base["rung"], "upstream_width_um": 1.0}}
+    with _pytest.raises(ValueError, match="min_wall_um"):
+        fam.compile(tiny, **kw)

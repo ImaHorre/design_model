@@ -736,7 +736,23 @@ move on every serpentine row, and **frequency goes 25–46% high until the visco
 Land W2-1 and the µ change together, or the model spends the interval visibly wrong with an
 obvious fudge available.
 
-### W2-1a — manifold aspect validation *(was B2 — moved out of Batch 1)*
+### W2-1a — manifold aspect validation ✅ `<this commit>` *(was B2 — moved out of Batch 1)*
+
+**What implementation found**: the verify step below **already passed before any code
+was written** — W2-1's deletion of the `h < w` guard is what unblocked it, exactly as
+this item predicted. `study_dp15_1000mbar_60x20.yaml` now solves **1368/1368, 0 errors**,
+216 of them manifold. So W2-1a's real content was only the second half: decide what is
+still worth failing on.
+
+`_validate_geometry` checks two things and deliberately no more:
+
+* non-positive / absurd dimensions — no channel at all;
+* anything below the study's own declared `manufacturing.min_wall_um`.
+
+Fab *caps* a design may legitimately exceed (max main depth/width) stay in the `build`
+gate per decision 10 and are **not** raised here. A compile-time raise deletes the row
+from the table, and a row you cannot see is a row you cannot reason about — which is the
+same argument decision 10 makes about vetoes, applied one layer earlier.
 
 **Why it moved.** B2 proposed validating at `ManifoldFamily.compile()` (after `upstream_w`
 is read, `manifold.py:290`) that `upstream_width_um > exit_depth_um`, so a bad config fails
