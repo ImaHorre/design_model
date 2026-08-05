@@ -792,3 +792,104 @@ def test_fill_fraction_reaches_the_label():
     assert any("Ff1" in lab for lab in labels)
     assert any("Ff0.75" in lab for lab in labels)
     assert len(set(labels)) == 2      # must not collide
+
+
+# ── W2-4: provenance to scoring (decision 10) ────────────────────────────────
+
+_W24_SCORING = {
+    "throughput_mlhr": {"green": 5, "orange": 1, "higher_better": True},
+    "uniformity_pct": {"green": 20, "orange": 100},
+    # note: no `build:` block at all -- this is what study_template.yaml does,
+    # and it is the case that used to score a phase-crossing design green in
+    # total silence.
+}
+_W24_APPLICABLE = {"throughput_mlhr", "uniformity_pct", "build"}
+
+
+def _w24(pinned, **gates):
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, **gates)
+    return score_metrics(cm, _W24_SCORING, _W24_APPLICABLE, pinned=pinned)
+
+
+def test_pinned_geometry_breaching_every_fab_cap_is_not_red():
+    """
+    A hand-written study is the user's own numbers. Decision 10: report them,
+    do not fail the row -- the physics gates still decide the verdict.
+    """
+    sr = _w24(True, fits_square=False, manufacturable=False, no_crossing=False)
+    assert sr.overall != "red"
+    assert sr.cells["build"].category == "green"
+
+
+def test_every_demoted_gate_emits_a_chip():
+    """
+    The regression this item exists to fix: only `manufacturable` used to say
+    anything when demoted, so a design that does not fit the die or crosses
+    phases passed with NO chip at all.
+    """
+    sr = _w24(True, fits_square=False, manufacturable=False, no_crossing=False)
+    text = " ".join(sr.chips)
+    for phrase in ("fits die square", "within fab caps", "no phase crossing"):
+        assert phrase in text, f"demoted gate {phrase!r} vanished silently"
+    assert set(sr.cells["build"].reported) == {
+        "fits_square", "manufacturable", "no_crossing"}
+
+
+def test_required_forces_gating_even_when_pinned():
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, manufacturable=False)
+    spec = {**_W24_SCORING, "build": {"manufacturable": "required"}}
+    sr = score_metrics(cm, spec, _W24_APPLICABLE, pinned=True)
+    assert sr.overall == "red"
+    assert sr.cells["build"].detail == ["manufacturable"]
+
+
+def test_generated_geometry_is_gated_without_asking():
+    """
+    The other half of decision 10: a value the TOOL chose that breaches a
+    constraint is the gate doing its job.
+    """
+    sr = _w24(False, fits_square=False)
+    assert sr.overall == "red"
+    assert sr.cells["build"].detail == ["fits_square"]
+    assert sr.cells["build"].reported == []
+
+
+def test_off_silences_a_gate_entirely():
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, no_crossing=False)
+    spec = {**_W24_SCORING, "build": {"no_crossing": "off"}}
+    sr = score_metrics(cm, spec, _W24_APPLICABLE, pinned=False)
+    assert sr.overall != "red"
+    assert not any("phase crossing" in c for c in sr.chips)
+
+
+def test_hand_written_study_is_pinned_intent_study_is_not():
+    from stepgen.studio.scoring import geometry_is_pinned
+
+    class _Plan:
+        generated = ["serpentine"]
+        user_supplied = ["manifold"]
+
+    class _Study:
+        from_intent = True
+        intent_plan = _Plan()
+
+    assert geometry_is_pinned(None, "serpentine") is True        # no study at all
+    assert geometry_is_pinned(_Study(), "serpentine") is False   # tool chose it
+    assert geometry_is_pinned(_Study(), "manifold") is True      # user chose it
+
+
+def test_diagnosis_names_a_reported_breach_instead_of_burying_it():
+    """
+    "Relax the depth cap: nothing changes" is true and useless if the reader is
+    never told their pinned depth is over the cap.
+    """
+    from stepgen.studio.diagnosis import diagnose
+    from stepgen.studio.study import Study
+
+    rows = [_w24(True, manufacturable=False) for _ in range(3)]
+    study = Study(title="t", goal="", families=["serpentine"], scoring=_W24_SCORING,
+                  references=[], points=[])
+    diag = diagnose(study, rows, price="never")
+    assert diag.reported_not_gated == {"manufacturable": 3}
+    assert "reported, not gated" in diag.headline().lower()
+    assert "within fab caps" in diag.headline()

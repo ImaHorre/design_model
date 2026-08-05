@@ -855,7 +855,32 @@ there, and to a *report* under decision 10 when N is pinned. It is never a live 
 Also answers open question 3: `lane_length = L_useful` always (`layout.py:129`), so area
 grows only vertically and `ff = 1.0` **is** "fill the die".
 
-### W2-4 — carry provenance to scoring *(decision 10, generalised)*
+### W2-4 — carry provenance to scoring ✅ `<this commit>` *(decision 10, generalised)*
+
+**What implementation found:**
+
+1. **`Study.intent_plan` was the right handle and it already carried what was
+   needed** — `generated` / `user_supplied` block names. `geometry_is_pinned(study,
+   family)` is nine lines. No per-leaf provenance was necessary, because all three
+   build sub-gates are functions of the *family geometry block*, so the answer is
+   per family, not per field.
+2. **The default direction matters and is deliberate**: when provenance is
+   unavailable, assume **pinned**. Guessing "generated" would let the tool veto a
+   number the user typed — the exact failure decision 10 exists to prevent.
+   Guessing "pinned" costs a chip instead of a red.
+3. **Nothing in `_METRIC_FIELDS` is a geometric *input*.** Throughput, flatness
+   and Ca are solved outcomes; drive pressure is an operating axis. So "threshold
+   gates scoring a geometric quantity" turned out to be the empty set, and the
+   `build` composite is the whole of this item's surface.
+4. **A third state was needed: `off`.** With gating now provenance-driven rather
+   than opt-in, a study that genuinely wants a gate silenced had no way to say so
+   — `required` was the only word the schema knew. `build: { no_crossing: off }`
+   silences it, and unlike a demotion it emits no chip, because that is the point.
+5. **It is inert on every checked-in study.** `study_dp15` (hand-written): 1176
+   red of 1368, before and after. `study_intent_deep_dfu` (generated): 187 red of
+   216, identical scored both ways. No build sub-gate fails anywhere in the
+   current configs — which is *why* the silent-`no_crossing` hole was never
+   observed. The mechanism was live; nothing had tripped it yet.
 
 1. Thread pinned-ness to `score_row` — either `Study.intent_plan` or a `pinned: set[str]`
    on the row. Decision 11 makes this nearly free: set entry → pinned, axis → generated. A

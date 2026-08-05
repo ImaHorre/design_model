@@ -602,6 +602,13 @@ class Diagnosis:
     #: the γ band used, in N/m, for the report
     gamma_range: tuple[float, float] = DEFAULT_GAMMA_RANGE_NM
     gamma_ref: float = 0.0
+    #: build sub-gates that FAILED on rows but were demoted to a report because
+    #: the user pinned the geometry (decision 10 / W2-4): ``gate -> row count``.
+    #: These are deliberately not `failures` — they coloured nothing and no
+    #: relaxation should be priced against them — but they must still be said out
+    #: loud, or "relax the depth cap: nothing changes" is the only thing the
+    #: reader hears about a design that is 200 µm over it.
+    reported_not_gated: dict[str, int] = field(default_factory=dict)
 
     @property
     def infeasible(self) -> bool:
@@ -664,6 +671,25 @@ class Diagnosis:
                     "they are build-and-see candidates, not failures.")
         return out
 
+    def _reported_sentence(self) -> str:
+        """
+        Name the breaches the user's own choices caused (decision 10 / W2-4).
+
+        These are not constraints to relax — a relaxation cannot buy back a cap
+        the user chose to breach — but they must be said. Without this the reader
+        is told "relaxing the depth cap changes nothing", which is true and
+        useless, and is never told that their pinned depth is over the cap.
+        """
+        if not self.reported_not_gated:
+            return ""
+        said = ", ".join(
+            f"{gate_label('build:' + k)} on {n} design{'s' if n != 1 else ''}"
+            for k, n in sorted(self.reported_not_gated.items(),
+                               key=lambda kv: (-kv[1], kv[0]))
+        )
+        return (f"Reported, not gated — you set this geometry, so it did not fail "
+                f"the row: {said}. Add `build: {{ <gate>: required }}` to gate it.")
+
     def headline(self) -> str:
         """The answer to 'why can't I have what I asked for?'"""
         if self.n_rows == 0:
@@ -674,6 +700,11 @@ class Diagnosis:
                      f"this is a ranking problem, not a feasibility one."]
             if self.theory_limited:
                 parts.append(self._theory_limited_sentence())
+            # Green rows need this MORE than red ones do, not less: a design that
+            # scored green while breaching a cap the user pinned is the exact
+            # case where silence reads as approval.
+            if (sentence := self._reported_sentence()):
+                parts.append(sentence)
             return " ".join(parts)
 
         parts = ["Every design scored red." if self.infeasible
@@ -688,6 +719,9 @@ class Diagnosis:
         # question the model cannot settle.
         if self.theory_limited:
             parts.append(self._theory_limited_sentence())
+
+        if (sentence := self._reported_sentence()):
+            parts.append(sentence)
 
         if self.binding_is_physics:
             parts.append(
@@ -722,6 +756,9 @@ class Diagnosis:
                 for i in self.robustly_red_ca if i in self.theory_limited
             ],
             "ca_red_only_at_some_gamma": self.gamma_dependent_labels,
+            # decision 10: gates that FAILED but were the user's own choice, so
+            # they were reported rather than allowed to colour the row
+            "reported_not_gated": dict(self.reported_not_gated),
             "headline": self.headline(),
             "binding": (None if self.binding is None else {
                 "gate": self.binding.key,
@@ -797,9 +834,19 @@ def diagnose(
     dependent.sort()
     dependent_idx = [i for _, i in dependent]
 
+    # Build sub-gates that failed but were demoted to a report because the user
+    # pinned the geometry (decision 10 / W2-4). Counted, never priced: a
+    # relaxation cannot buy back a constraint the user chose to breach.
+    reported: dict[str, int] = {}
+    for row in scored:
+        cell = row.cells.get("build")
+        for gate in (getattr(cell, "reported", None) or ()):
+            reported[gate] = reported.get(gate, 0) + 1
+
     diag = Diagnosis(
         n_rows=len(scored), n_green=n_green, n_orange=n_orange, n_red=n_red,
         failures=failures,
+        reported_not_gated=reported,
         theory_limited=theory_limited,
         theory_limited_labels=[scored[i].metrics.label for i in theory_limited],
         robustly_red_ca=robust,
