@@ -24,6 +24,7 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Wave 1** | ✅ **complete.** W1-4 `77ac36a` · W1-1 `d347643` · W1-2 `747a3ce` · W1-3 `9556202` · W1-6 `fd99045` · W1-5 `6ad1f33` |
 | **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
 | **C (server)** | **unblocked** — W2-8 passed. Not started |
+| **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
 | **D (explorer)** | D1 ✅, D4 ✅, D2 partly, all in the chapter (`912c74c`, `6db6405`). D5 unblocked |
 | **E** | not started |
 
@@ -1138,7 +1139,38 @@ remains:
 - **D4.** ✅ *Landed* — click-to-pin, a Pinned-runs table carrying every design and
   condition axis with verdict and reason, "pinned only" on the plot, and "mark best" over
   the *visible* rows (`6db6405`). Phase 3 schematic in the detail panel still to wire.
-- **D5.** **The Ca gate as a live control.** `ca_gated_summary(frame, ca_max, gamma_ref)`
+- **D5.** ⚠️ **RE-SPECIFIED 2026-08-05 — read this before executing the text below.**
+
+  Conor's call: **judge a design by how far it is from experiments we have already
+  run, not by a threshold resting on a γ nobody has measured.** Landed in
+  `7bf5044`. Consequences for this item:
+
+  1. **`regime_Ca` can no longer fail a row** — it and `v_vs_demonstrated` are
+     capped at orange (`scoring.CAPPED_AT_ORANGE`). So "the Ca gate as a live
+     control" is gating something that no longer gates. That framing is dead.
+  2. **What replaces it**: `v_vs_demonstrated` — exit velocity as a multiple of
+     `V_EXIT_DEMONSTRATED_MAX = 0.1247 mm/s`, the fastest DFU Peak has run with
+     monodisperse output. **γ cancels exactly in a ratio**, and against the same
+     fluid so does µ, so this number carries no unmeasured constant at all.
+  3. **The valuable half of D5 survives intact and should still be built**:
+     `ca_gated_summary()` already re-solves nothing and already reports
+     `Po_gated_mbar` / `throughput_gated` / `Po_next_failed` per design. Re-point
+     it from `Ca ≤ ca_max` to `v_vs_demonstrated ≤ k` (default k = 1, "stay inside
+     what we have run"). The ranking inversion that justified D5 is a *velocity*
+     effect and survives the change unaltered.
+  4. **`passes_at_gamma_lo` becomes unnecessary** in the gated summary — there is
+     no γ in the predicate any more. Keep γ-robustness where it is, as an
+     analysis of what the *literature* threshold would say; it is no longer load-
+     bearing for a verdict.
+
+  Also settled while re-specifying, and worth not re-deriving: **Peak sits
+  2,500–27,000,000× below the inertial (Weber) branch** of
+  `@montessori2020-step-emulsification`, so the jetting/We half of that literature
+  does not apply to these devices at all. Only the viscous branch is in play.
+
+  *Original text follows, superseded on the ceiling-control framing only:*
+
+  **The Ca gate as a live control.** `ca_gated_summary(frame, ca_max, gamma_ref)`
   re-solves nothing — `regime_Ca` is solved and γ enters as an exact 1/γ. Returns per
   design: `Po_gated_mbar`, `throughput_gated`, `Po_next_failed` (**the gap is unsimulated
   headroom, not absent headroom**), and `passes_at_gamma_lo`.
