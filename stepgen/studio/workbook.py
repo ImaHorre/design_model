@@ -44,7 +44,12 @@ from stepgen.studio.ranking import (
     Decision, ValueAxis, axis_value, decide, decide_subset,
 )
 from stepgen.studio.run import StudyResult, resolved_constants
-from stepgen.studio.scoring import BUILD_GATES, ScoredRow, score_result
+from stepgen.studio.scoring import (
+    BUILD_GATES,
+    ScoredRow,
+    margin_category,
+    score_result,
+)
 
 #: Chapter schema version — bumped when a change makes chapters **incomparable**,
 #: not merely different.
@@ -761,8 +766,13 @@ def _margin_cell(sr: ScoredRow) -> str:
     cell = sr.cells.get(weak)
     tier = cell.confidence if cell else "validated"
     label, colour, tip = _CONF_LABEL.get(tier, _CONF_LABEL["validated"])
-    # marginal = under a fifth of the green->red span left
-    style = ' style="color:#cf222e;font-weight:600"' if m < 0.2 else ""
+    # One definition of "marginal", shared with ui.category_frame (D7). This cell
+    # used to red below 0.2 and say nothing above it while the Streamlit app
+    # banded at 0.2 AND 0.5 — the same number, two colours, depending which tool
+    # you opened. The orange band is new here; the rule is not.
+    cat = margin_category(m)
+    style = (f' style="color:{_CAT_COLOR[cat]};font-weight:600"'
+             if cat in ("red", "orange") else "")
     return (f'<td data-v="{m}"{style} title="raw margin {raw*100:.0f}%, '
             f'discounted to {m*100:.0f}% because {html.escape(weak)} is '
             f'{html.escape(label)} ({html.escape(tip)})">'

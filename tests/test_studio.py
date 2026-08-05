@@ -1129,6 +1129,94 @@ def test_production_threshold_is_absent_unless_asked():
     assert all(cm.Po_min_production_mbar is None for cm in result.metrics)
 
 
+# ── D7: one evaluation, however many surfaces read it ────────────────────────
+
+def test_margin_bands_have_one_definition():
+    from stepgen.studio.scoring import (
+        MARGIN_COMFORTABLE, MARGIN_MARGINAL, margin_category,
+    )
+
+    assert margin_category(None) == "grey"
+    assert margin_category(MARGIN_MARGINAL - 1e-9) == "red"
+    assert margin_category(MARGIN_MARGINAL) == "orange"
+    assert margin_category(MARGIN_COMFORTABLE - 1e-9) == "orange"
+    assert margin_category(MARGIN_COMFORTABLE) == "green"
+
+
+def test_the_chapter_and_the_app_colour_the_same_margin_the_same():
+    """
+    They did not. `workbook._margin_cell` reddened below 0.2 and said nothing
+    above it; `ui.category_frame` banded at 0.2 AND 0.5. The same study read in
+    the two tools gave the same number two different colours -- which is the
+    whole of what D7 is about, found by grepping for it.
+    """
+    import pandas as pd
+
+    from stepgen.studio.scoring import margin_category
+    from stepgen.studio.ui import category_frame
+    from stepgen.studio.workbook import _CAT_COLOR, _margin_cell
+
+    rows = [
+        _w24(True, fits_square=True, manufacturable=True, no_crossing=True)
+        for _ in range(3)
+    ]
+    # force three different discounted margins by hand -- what matters is that
+    # both surfaces read the SAME rule, not what the solve happens to produce
+    for sr, m in zip(rows, (0.05, 0.35, 0.9)):
+        for cell in sr.graded_cells:
+            cell.margin = m
+            cell.confidence = "validated"
+
+    df = pd.DataFrame({"Verdict": [r.overall for r in rows],
+                       "Margin %": [r.min_margin_discounted for r in rows]})
+    cats = category_frame(rows, df)
+
+    for i, sr in enumerate(rows):
+        want = margin_category(sr.min_margin_discounted)
+        assert cats.at[i, "Margin %"] == want
+        html_cell = _margin_cell(sr)
+        if want == "green":
+            assert "color:#" not in html_cell.split("title=")[0]
+        else:
+            assert _CAT_COLOR[want] in html_cell
+
+
+def test_no_surface_re_derives_a_verdict_from_a_threshold():
+    """
+    D7's invariant across all THREE surfaces, not just the JS.
+
+    `ui.py` filters on `df["Verdict"]`, which is `ScoredRow.overall`; the chapter
+    JS filters on `row.verdict`, the same field. Neither compares a value to a
+    bound. The rule this pins is the one that makes that checkable:
+
+        a module may READ a study's scoring block -- to print a bound, to draw a
+        band, to sweep a verdict across gamma -- but it may not APPLY one. Any
+        module that reaches into the block must delegate the comparison to
+        scoring.py.
+
+    That is why `diagnosis.ca_gamma_robustness` is fine: it reads the regime_Ca
+    spec and then calls `scoring._score_threshold` rather than writing `>`.
+    """
+    import re
+    from pathlib import Path
+
+    studio = Path(__file__).resolve().parent.parent / "stepgen" / "studio"
+    reads_spec = re.compile(r"\bscoring\s*(?:\[|\.get\()")
+    delegates = re.compile(r"_score_threshold|margin_category")
+
+    for path in sorted(studio.glob("*.py")):
+        if path.name in {"scoring.py", "__init__.py"}:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not reads_spec.search(text):
+            continue
+        # workbook reads the spec only to display bounds (the gate table, the
+        # plot bands); everything else that touches it must delegate.
+        assert path.name == "workbook.py" or delegates.search(text), (
+            f"{path.name} reads the scoring block without delegating the "
+            f"comparison to scoring.py -- that is a second scorer")
+
+
 # ── W2-5: fold geometry, reported not gated ──────────────────────────────────
 
 def test_bend_radius_is_half_the_lane_pitch():

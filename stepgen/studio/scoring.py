@@ -210,6 +210,31 @@ class ScoredRow:
                       if c.category != GREY and c.confidence == "extrapolation")
 
 
+#: Bands on the **discounted margin** — how much of the green→red span a row has
+#: left on its weakest applicable metric, after discounting for how far the model
+#: is trusted for that number.  Under a fifth left is marginal, not safe; under a
+#: half is worth a second look.
+#:
+#: **One definition (D7).**  This rule was written twice and the two copies had
+#: already disagreed: ``workbook._margin_cell`` reddened below 0.2 and said
+#: nothing above it, while ``ui.category_frame`` banded at 0.2 *and* 0.5 — so the
+#: same study read in the chapter and in the Streamlit app coloured the same
+#: number differently.  A colour is a verdict; two surfaces must not reach two.
+MARGIN_MARGINAL = 0.2
+MARGIN_COMFORTABLE = 0.5
+
+
+def margin_category(discounted: float | None) -> str:
+    """Traffic-light category for a discounted margin (:data:`MARGIN_MARGINAL`)."""
+    if discounted is None:
+        return GREY
+    if discounted < MARGIN_MARGINAL:
+        return RED
+    if discounted < MARGIN_COMFORTABLE:
+        return ORANGE
+    return GREEN
+
+
 def _num(value: Any) -> float | None:
     if value is None:
         return None

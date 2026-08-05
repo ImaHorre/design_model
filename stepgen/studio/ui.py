@@ -43,7 +43,7 @@ import pandas as pd
 
 from stepgen.families import list_families
 from stepgen.studio.run import StudyResult, resolved_constants, run_study
-from stepgen.studio.scoring import ScoredRow, score_result
+from stepgen.studio.scoring import ScoredRow, margin_category, score_result
 from stepgen.studio.study import Study, load_study_text
 from stepgen.studio.workbook import (
     _CAT_COLOR,
@@ -148,11 +148,12 @@ def category_frame(scored: list[ScoredRow], df: pd.DataFrame) -> pd.DataFrame:
             cell = sr.cells.get(key)
             if cell is not None:
                 cats.at[i, header] = cell.category
-        # a margin under a fifth of the green->red span is marginal, not safe
+        # a margin under a fifth of the green->red span is marginal, not safe.
+        # The rule lives in scoring.margin_category — one definition, so this app
+        # and the HTML chapter cannot colour the same number differently (D7).
         disc = sr.min_margin_discounted
         if disc is not None:
-            cats.at[i, "Margin %"] = ("red" if disc < 0.2
-                                      else "orange" if disc < 0.5 else "green")
+            cats.at[i, "Margin %"] = margin_category(disc)
     return cats
 
 

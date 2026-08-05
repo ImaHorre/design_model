@@ -25,13 +25,13 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
 | **C (server)** | **unblocked** — W2-8 passed. Not started |
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
-| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `c20df77`, D2 ✅ `6e34dc8`, D6 ✅ `<this commit>`, all in the chapter (`912c74c`, `6db6405`) |
+| **D (explorer)** | D1 ✅, D4 ✅, D5 ✅ `c20df77`, D2 ✅ `6e34dc8`, D6 ✅ `7f346f4`, D7 ✅ `<this commit>` |
 | **E** | not started |
 
-**Start here**: **D7**, then D3. D5, D2 and D6 are done. C (the server) is also
-unblocked but is a separate front.
+**Start here**: **D3** — the last of section D. C (the server) is also unblocked but is
+a separate front.
 
-**Baseline is now `pytest -q` → 622 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
+**Baseline is now `pytest -q` → 625 passed, 3 failed, 5 skipped** (from 605 at `bf8afd4`).
 The 3 are still the `test_cli` ones and are still two different things — see W2-8.
 
 **Baseline is now `pytest -q` → 599 passed, 3 failed, 5 skipped.** The 3 are still
@@ -1321,11 +1321,35 @@ remains:
      200→800 mbar) and that drift is physics the model does not have, which is exactly
      why it is a diagnostic of the model and never a guard on a design. The caveat now
      prints where the number actually appears, in `compare_designs.py`.
-- **D7.** Gate and filter evaluation in **one shared module**. Reworded: this is no longer
-  prevention, it is consolidation. Three surfaces exist — `ui.py`, the chapter JS,
-  `studio-serve`. The JS holds the line today by filtering on Python's `verdict` rather
-  than re-deriving it; **that invariant is the thing to protect.** Write it down as a
-  comment at the top of `interactive.py` and as a test: no threshold comparison in JS.
+- **D7.** ✅ `<this commit>` *(the JS half landed with D2 — `6e34dc8`)*
+
+  **What implementation found:**
+
+  1. **There is one real duplication and it had already gone wrong.** The rule for
+     colouring the discounted margin was written twice **and the two copies
+     disagreed**: `workbook._margin_cell` reddened below 0.2 and said nothing above it,
+     while `ui.category_frame` banded at 0.2 *and* 0.5. **The same study, the same
+     number, two different colours depending on which tool you opened it in.** Now one
+     definition — `scoring.margin_category` / `MARGIN_MARGINAL` / `MARGIN_COMFORTABLE`.
+     The chapter gains the orange band as a result; that is an intentional appearance
+     change and the price of the two surfaces agreeing.
+  2. **The filter surfaces were already clean.** `ui.py` filters on `df["Verdict"]`,
+     which *is* `ScoredRow.overall`; the chapter JS filters on `row.verdict`. Neither
+     compares a value against a bound. The consolidation D7 was written to do turned out
+     to be one function, not a module — and the thing worth building was the guard.
+  3. **The invariant is now stated as a rule with a carve-out that survives contact.**
+     A module may **read** a scoring block — to print a bound in the gate table, to draw
+     a plot band, to sweep a verdict across γ — but may not **apply** one; anything
+     reaching into the block must delegate the comparison to `scoring.py`. That
+     distinction was forced by `diagnosis.ca_gamma_robustness`, which reads the
+     `regime_Ca` spec and then calls `scoring._score_threshold` rather than writing `>`.
+     A blunter "nothing may read the scoring block" test would have flagged the one
+     module doing it correctly.
+  4. Three tests: the bands, the two surfaces agreeing on the same rows, and the
+     read-vs-apply rule across every `stepgen/studio/*.py`.
+  5. **`studio-serve` does not exist yet**, so the "three surfaces" are two. When C
+     lands it inherits the rule and the test covers it automatically — the test walks
+     the directory rather than naming files.
 
 ---
 
