@@ -90,16 +90,18 @@ import numpy as np
 
 from stepgen.families.base import (
     MANIFOLD_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
-    register_family,
+    exit_capillary_number, register_family,
 )
 from stepgen.families.intent import (
     Constraints,
     Intent,
     dfu_count_ladder,
+    droplet_for_junction,
     plan_junction,
     rungs_for_ca_ceiling,
     rungs_for_throughput,
 )
+from stepgen.models.droplets import droplet_volume
 from stepgen.models.nodal_network import NodalNetwork
 
 _M3S_TO_MLHR = 1e6 * 3600.0
@@ -540,17 +542,13 @@ def solve_manifold(
     throughput_mlhr = q_total * _M3S_TO_MLHR
 
     # ── droplet size / frequency (same regime-blind power-law as other families) ─
-    from stepgen.config import DropletModelConfig
-    dm = DropletModelConfig()
-    D_m = dm.k * (c.exit_width_m ** dm.a) * (c.exit_depth_m ** dm.b)
-    v_drop = (math.pi / 6.0) * D_m ** 3
+    D_m = droplet_for_junction(c.exit_width_m, c.exit_depth_m) * 1e-6
+    v_drop = droplet_volume(D_m)
     freq = q_mean / v_drop if v_drop > 0 else 0.0
 
     # ── exit capillary number (diagnostic) ──────────────────────────────────
-    regime_Ca: float | None = None
-    if c.gamma > 0 and c.exit_width_m > 0 and c.exit_depth_m > 0 and q_mean > 0:
-        v_exit = q_mean / (c.exit_width_m * c.exit_depth_m)
-        regime_Ca = c.mu_oil * v_exit / c.gamma
+    regime_Ca = exit_capillary_number(
+        c.mu_oil, q_mean, c.exit_width_m, c.exit_depth_m, c.gamma)
 
     # ── packing / footprint (realistic arm-to-arm pitch) ────────────────────
     # DFUs protrude from BOTH faces, so the n rungs split n/2 per side and the

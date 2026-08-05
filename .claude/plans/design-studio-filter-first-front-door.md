@@ -683,12 +683,48 @@ predicate changes: validate what actually remains impossible (non-positive dimen
 **Verify.** `configs/study_dp15_1000mbar_60x20.yaml` (`upstream_width_um: 15`,
 `exit_depth_um: 20`) **solves** after W2-1 rather than raising 108 times.
 
-### W2-2 — audit for other duplicated formulas
+### W2-2 — audit for other duplicated formulas ✅ `<pending>`
 
 Grep the remaining physical formulas (area, fits, capacity, droplet size) for second
 copies before building on them. The rung-resistance audit found **four** copies where the
 last vintage of this plan said two; the lane-pitch audit found **three** where it said two.
 Assume the count is wrong until grepped.
+
+**Done. What the grep found:**
+
+| Formula | Live copies | Verdict |
+|---|---|---|
+| rectangular-duct resistance | **4** | the plan's count is right — for the first time. W2-1 |
+| exit capillary number `µ(q/wh)/γ` | **3**, one per family | ✅ consolidated → `base.exit_capillary_number` |
+| droplet power law `k·w^a·h^b` | **4** | ✅ radial/manifold now call `intent.droplet_for_junction` |
+| droplet volume `(π/6)D³` | **4** | ✅ all now call `droplets.droplet_volume` |
+| lane stack-up / active extent / area | 1 each | **Wave 1 held** — all four sites still delegate |
+
+1. **The rung-resistance count is finally exact**: `models/resistance.py`,
+   `stage_wise_v3/stage1_physics.py`, `families/radial.py` (`_corr` + the formula body
+   inline at `radial.py:325`), `families/manifold.py::_R_rect`. No fifth. The one thing
+   the inventory table understates is that `radial` splits the formula across two places —
+   the shape factor in `_corr`, the `12µL/wh³` body at the call site — so a grep for
+   `_corr` alone finds a function that looks harmless.
+2. **`regime_Ca` was written three times.** Identical arithmetic, but this is the gate the
+   whole studio scores against and the one A4a just attached per-row γ provenance to.
+   Consolidated, with the guard: it returns `None`, never `0.0`, when Ca is undefined — a
+   missing Ca scores grey, a zero Ca scores **green**, which would be a clean bill of
+   health for a device nobody evaluated.
+3. **Three things found and deliberately not fixed** (recorded so they are not re-found):
+   - `design/design_search.py:300` sets `D_pred_um = exit_depth_um`, commented "rough
+     proxy". That is not a copy of the power law, it is a **different droplet-size model**
+     living in the search path. Whether the search should use the real one is a design
+     question, not a de-duplication.
+   - `radial` and `manifold` construct `DropletModelConfig()` with its defaults, so **a
+     study cannot change `k`/`a`/`b` for those two families** — serpentine reads the
+     config's. Consolidating made this visible; fixing it is a separate change.
+   - Outside `stepgen/`: `designs/radial/radial_hydraulics.py` carries six more copies of
+     the `1−0.63h/w` form and `experimental_workspaces/comp_manifold_parametrization/`
+     one. Neither is imported by the library. Workspace analysis scripts are **frozen
+     records** under `CLAUDE.md`'s provenance rules and must not be retro-edited; after
+     W2-1 they disagree with the library, and that is the correct state for a record of
+     what was run.
 
 ### W2-3 — N from packing *(was A2)*
 

@@ -50,15 +50,17 @@ from typing import Any
 
 from stepgen.families.base import (
     RADIAL_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
-    register_family,
+    exit_capillary_number, register_family,
 )
 from stepgen.families.intent import (
     Constraints,
     Intent,
+    droplet_for_junction,
     ladder,
     plan_junction,
     rungs_for_ca_ceiling,
 )
+from stepgen.models.droplets import droplet_volume
 
 # throughput unit factor: m³/s -> mL/hr  (1 m³ = 1e6 mL, 1 hr = 3600 s)
 _M3S_TO_MLHR = 1e6 * 3600.0
@@ -342,16 +344,11 @@ def solve_radial(
     throughput_mlhr = q_total * _M3S_TO_MLHR
 
     # ── exit capillary number (uses the ACTUAL channel drop + L_eff) ────────
-    regime_Ca: float | None = None
-    if gamma > 0 and c.exit_width_m > 0 and h > 0 and q_per_dfu > 0:
-        v_exit = q_per_dfu / (c.exit_width_m * h)
-        regime_Ca = mu * v_exit / gamma
+    regime_Ca = exit_capillary_number(mu, q_per_dfu, c.exit_width_m, h, gamma)
 
     # ── droplet size / frequency (same power-law as serpentine; regime-blind) ─
-    from stepgen.config import DropletModelConfig
-    dm = DropletModelConfig()
-    D_m = dm.k * (c.exit_width_m ** dm.a) * (h ** dm.b)
-    v_drop = (math.pi / 6.0) * D_m ** 3
+    D_m = droplet_for_junction(c.exit_width_m, h) * 1e-6
+    v_drop = droplet_volume(D_m)
     freq = q_per_dfu / v_drop if v_drop > 0 else 0.0
 
     # ── layout + fabrication gates ──────────────────────────────────────────

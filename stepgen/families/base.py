@@ -161,6 +161,32 @@ def active_fraction_note(
     return "; ".join(parts) if parts else None
 
 
+def exit_capillary_number(
+    mu_dispersed: float,
+    q_per_dfu: float,
+    exit_width_m: float,
+    exit_depth_m: float,
+    gamma: float,
+) -> float | None:
+    """
+    Exit capillary number for one DFU: ``Ca = µ·(q / w·h) / γ``.
+
+    **The single implementation.**  Every family wrote this out itself until
+    W2-2; three identical copies of the load-bearing gate is three chances to
+    drift.  ``regime_Ca`` is what the studio scores against, and A4a made the γ
+    behind it per-row provenance, so the formula and the guard belong in one
+    place.
+
+    Returns ``None`` — not zero — when the number is undefined (γ = 0, no flow,
+    degenerate exit).  A missing Ca scores grey; a zero Ca scores green, which
+    would be a lie about a device nobody has evaluated.
+    """
+    if gamma <= 0 or exit_width_m <= 0 or exit_depth_m <= 0 or q_per_dfu <= 0:
+        return None
+    v_exit = q_per_dfu / (exit_width_m * exit_depth_m)
+    return mu_dispersed * v_exit / gamma
+
+
 @dataclass
 class CommonMetrics:
     """

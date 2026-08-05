@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 from stepgen.families.base import (
     SERPENTINE_ACTIVE_FRACTION, CommonMetrics, Family, active_fraction_note,
-    register_family,
+    exit_capillary_number, register_family,
 )
 from stepgen.families.intent import (
     Constraints,
@@ -767,11 +767,9 @@ def solve_config(
     gamma = config.fluids.gamma
 
     # ── exit capillary number (diagnostic; the size model is regime-blind) ──
-    regime_Ca: float | None = None
     q_per_rung = row.get("Q_per_rung_avg", 0.0) or 0.0
-    if gamma > 0 and exit_w > 0 and exit_d > 0 and q_per_rung > 0:
-        v_exit = q_per_rung / (exit_w * exit_d)
-        regime_Ca = config.fluids.mu_dispersed * v_exit / gamma
+    regime_Ca = exit_capillary_number(
+        config.fluids.mu_dispersed, q_per_rung, exit_w, exit_d, gamma)
 
     notes: list[str] = []
     area_caveat = active_fraction_note(
@@ -813,14 +811,14 @@ def solve_config(
         from stepgen.models.stage_wise_v3 import StageWiseV3Config
         from stepgen.models.stage_wise_v3.stage1_physics import solve_stage1_physics
 
-        from stepgen.models.droplets import refill_volume
+        from stepgen.models.droplets import droplet_volume, refill_volume
 
         v3_cfg = getattr(config, "stage_wise_v3", None) or StageWiseV3Config()
         t_stage1 = solve_stage1_physics(dP_rung_Pa, q_rung, config, v3_cfg).t_displacement
         # Per-cycle volume must match the one behind `frequency_hz`
         # (droplets.droplet_frequency = Q / (V_drop + V_refill)) or t_cycle and
         # 1/frequency_hz would silently disagree whenever a config enables refill.
-        V_cycle = math.pi / 6.0 * float(row["D_pred"]) ** 3 + refill_volume(config)
+        V_cycle = droplet_volume(float(row["D_pred"])) + refill_volume(config)
         t_cycle = V_cycle / q_rung
         if t_cycle > 0 and math.isfinite(t_stage1):
             stage1_fraction = t_stage1 / t_cycle
