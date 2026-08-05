@@ -227,6 +227,61 @@ What this establishes:
    **still live in every checked-in study config** (`square_side_mm: 100.0` with
    `reserve_border_mm: 2.0`). See W1-6.
 
+### What the ×0.68 costs — and the one constant that pays for it
+
+Measured 2026-08-05 against `experimental_workspaces/po_sweep/data/stage_timings.csv`
+(V5-8-1, Qw = 5 mL/hr, corrected timings).
+
+**The model matches experiment today only because two errors cancel.** With `C_visc = 1.0`
+— its default, and no config overrides it — the current model predicts frequency to
+−2.3 / +5.9 / −9.3 / −9.3 / +5.1% at 200/300/400/600/800 mbar. That agreement is built on a
+rung resistance 1.53× too high. Fix the resistance alone and frequency goes **+25 to +46%
+wrong**, at which point `C_visc ≈ 0.7` is sitting there ready to hide it.
+
+**Do not let it.** A global scalar that restores agreement would encode the fab and fluid
+state of one device, at one condition, into every design the studio ever scores.
+
+What the discrepancy actually is: with geometry as drawn and the resistance solved exactly,
+the model over-predicts Q by a factor that is **constant, not pressure-dependent**:
+
+```
+Po (mbar)     200    300    400    600    800
+Q_model/Q_meas 1.39   1.50   1.29   1.29   1.49      scatter, no trend
+implied µ       83     90     77     77     90  cP
+```
+
+A constant multiplier on `ΔP/R` at fixed geometry **is a viscosity**. So there is no
+missing physics — no capillary back-pressure term, no droplet-growth model, no
+pressure-dependent correction. There is one number, and it is a material property.
+
+Best fit, geometry as drawn, resistance exact, **zero correction terms**:
+
+```
+µ = 83 cP   (config assumes 60; po_sweep/BRIEF.md cites a ~50-60 cP literature range)
+
+ Po    f meas   f model    err
+ 200     0.95      0.94   -0.2%
+ 300     1.60      1.74   +8.3%
+ 400     2.71      2.52   -7.3%
+ 600     3.82      3.54   -7.3%
+ 800     4.92      5.29   +7.5%
+```
+
+**±8% across a 4× pressure range, errors alternating in sign** — no systematic drift left.
+
+Two things to hold onto:
+
+1. **83 cP is a fit, not a measurement.** It is the right *kind* of constant — physical,
+   portable, testable, and it correctly enters the main channels and scales with
+   temperature and with a change of oil — but until the oil is on a viscometer it carries
+   whatever else is unaccounted for. Conor's read (2026-08-05): partly colder oil (83 cP is
+   ~17–18 °C for sunflower), partly a slight geometric difference from the drawing, and
+   **not worth chasing further** — `R ∝ 1/h³`, so 8.0 → 7.2 µm alone would also do it.
+2. **The data cannot support better than ~15% anyway.** The sweep gives two independent
+   measures of Q — meniscus sweep (`L_menpoint·w·h / t_S1`) and conservation
+   (`V_drop / t_cycle`) — and they disagree with **each other** by 13–26%. ±8% is at the
+   noise floor. Stop there.
+
 ### The real DFU profile
 
 ```
@@ -239,7 +294,13 @@ V5-10   2525 um @  7 um wide  (90%)
 `constriction_ratio: 0.9` encodes that 90%, but `resistance.rung_resistance` uses it to
 *shorten the channel* rather than model two widths in series.
 
-### The rung-resistance disagreement — four implementations, three rejection rules
+### The rung-resistance disagreement — measured against the exact solution
+
+> **Rewritten 2026-08-05.** The previous vintage of this section compared the two live
+> implementations *to each other* and concluded the fix was ×0.68. Both were then compared
+> to the **exact** rectangular-duct solution (Fourier series), which changes the verdict:
+> neither implementation is right, they are wrong in opposite directions, and the ×0.68 is
+> incomplete. See W2-1.
 
 Two functions, same config, same instant, on V5-30:
 
@@ -248,17 +309,42 @@ stage1_physics.compute_rung_resistance   2.697e18 Pa.s/m3
 resistance.rung_resistance               1.525e18 Pa.s/m3    +76.9% apart
 ```
 
-Decomposed against the real profile:
+Both against the exact solution, for the single narrow section (8 x 10 µm, 4 mm, µ = 60 cP):
 
 ```
-today (unordered dims, L x 0.9)          1.525e18
-ordered dimensions, single section       1.021e18   0.67x
-PIECEWISE over the real profile          1.036e18   0.68x
-   3610 um @  8 um wide -> 98.8% of total
-    410 um @ 30 um wide ->  1.2%
+EXACT (Fourier series)                        1.092e18   1.000x
+1-0.63, ORDERED   (h=8, w=10)                 1.134e18   1.039x
+1-0.63, UNORDERED (resistance.py as written)  1.694e18   1.552x
+Shah & London AS CODED in stage1_physics      2.697e18   2.470x
+Shah & London USED CORRECTLY                  1.092e18   1.000x
 ```
 
-**Today over-states the real rung by 1.47×.** Almost all of it is dimension ordering.
+**Shah & London is the better formula and the code misapplies it.** `fRe = 96(1 − 1.3553α
++ …)` is a friction factor normalised on *hydraulic diameter*, so the resistance is
+`R = fRe·µL / (2·A·D_h²)`. `stage1_physics` instead drops `f(α)` into the parallel-plate
+form `R = f·µL/(w·h³)`, where the coefficient should be `12/(1−0.63α)`. Two different
+normalisations. Check it at α → 0: as coded gives `96µL/(wh³)`, eight times the correct
+`12µL/(wh³)`. At α = 0.8 the polynomial has decayed to 57.5, so the error lands at 2.47×.
+
+Used correctly it reproduces the series to **four significant figures** — exactness in a
+closed form. That is what W2-1 should adopt; the previous instruction to drop it in favour
+of `1 − 0.63·h/w` was wrong and is withdrawn.
+
+The unordered form fails for a different reason. V5-30's DFU is **deeper than it is wide**,
+so `depth/width = 1.25` and the correction factor is `1 − 0.63×1.25 = 0.2125`; the formula
+divides by that. It is not imprecise, it is outside its domain — 79% of the way to the
+singularity at 1.587 where the code raises. Hence 55% high rather than 4%.
+
+Piecewise over the real profile, exact:
+
+```
+3610 um @  8 x 10 um   9.854e17    98.8% of total
+ 410 um @ 30 x 10 um   1.246e16     1.2%
+TOTAL                  9.978e17    0.654x the live network value
+```
+
+**The network path over-states the real rung by 1.53×** — and it is the network path that
+sets Q, so it is the one the po_sweep validation rests on. See "What the ×0.68 costs".
 
 The full inventory — **four** sites, not three, and they disagree on three separate axes
 (shape factor, dimension ordering, length):
@@ -532,15 +618,32 @@ border", and there is no border any more.
 Everything here shifts results. Ends with a schema bump so pre- and post-wave-2 chapters
 cannot be silently pooled.
 
-### W2-1 — one rung-resistance implementation *(was B3 + A5)*
+### W2-1 — one rung-resistance implementation *(was B3 + A5; rewritten 2026-08-05)*
 
-One rectangular-duct function, **dimensions ordered** (`h = min`, `w = max`), applied
-**piecewise** over the real two-width DFU profile. Shah & London dropped in favour of the
-single `1 − 0.63·h/w` term — record in a comment *why*, so nobody re-adds it: consistency
-between call sites is worth more than the few percent of accuracy.
+> **This item changed shape.** The previous vintage said "Shah & London dropped in favour
+> of the single `1 − 0.63·h/w` term … consistency is worth more than the few percent of
+> accuracy", and put the impact at ×0.68. Measured against the exact solution, that was
+> wrong on both counts: Shah & London used *correctly* is exact, the accuracy gap is not a
+> few percent, and ×0.68 is only part of the move. **W2-1 must not land without W2-8's
+> viscosity item** — alone it breaks the model's only experimental validation.
+
+One rectangular-duct function:
+
+```
+R = Shah & London, normalised as the polynomial is DEFINED:
+        R = fRe(α)·µL / (2·A·D_h²)        fRe(α) = 96(1 − 1.3553α + …)
+    dimensions ORDERED   h = min, w = max, so α ≤ 1 by construction
+    applied PIECEWISE    over the real two-width DFU profile
+```
+
+Record in a comment *why* this normalisation and not `f(α)·µL/(w·h³)`: they differ by 2.47×
+on V5-30 and by 8× as α → 0, and the wrong one is what shipped. Verify on adoption that the
+function reproduces the Fourier series to 4 significant figures — that check is cheap and it
+is the only thing standing between this and a third wrong normalisation.
 
 All four sites delegate to it: `stage1_physics.compute_rung_resistance`,
-`resistance.rung_resistance`, `manifold._R_rect`, `radial._corr`. Precedent: Phase 1 did
+`resistance.rung_resistance`, `manifold._R_rect`, `radial._corr`. **Grep first — Wave 1
+found a fourth copy of a formula documented as having three.** Precedent: Phase 1 did
 exactly this for the Pareto rule (`viz/plots.py::_pareto_front` → `ranking.pareto_mask`).
 
 The piecewise machinery already exists — `resistance_piecewise` (`resistance.py:58`) +
@@ -552,7 +655,11 @@ Also in scope, because they are the same edit:
   so `manifold._R_rect`'s `h < w` guard, `radial._ASPECT_LIMIT` and
   `hydraulic_resistance_rectangular`'s `denom <= 0` raise all become dead.
 
-**Impact**: rung resistance ×0.68 on V5-30; throughput and ΔP move on every serpentine row.
+**Impact**: the network rung resistance falls to **0.654×** on V5-30 (not 0.68 — that
+figure came from comparing the two wrong implementations to each other). Throughput and ΔP
+move on every serpentine row, and **frequency goes 25–46% high until the viscosity lands.**
+Land W2-1 and the µ change together, or the model spends the interval visibly wrong with an
+obvious fudge available.
 
 ### W2-1a — manifold aspect validation *(was B2 — moved out of Batch 1)*
 
@@ -645,13 +752,33 @@ block and the same warning wherever it is repeated. Grep for `1.587` and `h/w`.
 
 Wave 2 is not done until:
 
-- [ ] `pytest -q` → 531 passed, same 5 known failures
+- [ ] `pytest -q` → **560 passed, 3 failed** (the `test_cli` png ones), 5 skipped. *The
+      "531 passed, same 5 known failures" this line used to read is stale — Wave 1 added
+      tests and removed two failures. The two `test_design_search` failures are gone for a
+      reason and must not come back.*
 - [ ] Re-run against `experimental_workspaces/po_sweep/data/stage_timings.csv`, reporting
       new Stage-1 and cycle-time agreement at 200–800 mbar
-- [ ] **`C_visc` refit in its own workspace.** It was fitted 2026-03-20 against timings
-      later corrected ×0.5 (fps 25→50, `po_sweep/BRIEF.md`) and never revisited;
-      `stage1_physics.py` was last touched 2026-05-18. W2-1 stacks a second shift on top.
-      Refit as a study, not as a constant nudged inside a UI build.
+- [ ] **Set the oil viscosity, and DELETE `C_visc`** — in its own workspace, per the
+      data-provenance protocol in `CLAUDE.md`. **This replaces the "refit `C_visc`" item
+      that used to sit here, which was the wrong instruction.**
+
+      `C_visc` is already 1.0 and does nothing: the 2026-03 fit returned 0.96 ± 0.06, and
+      no config overrides the default. The 2× that the fps 25→50 correction implied was
+      absorbed on 2026-08-03 by a **mechanism** change — the reset length went from
+      `exit_width` (30 µm) to `sqrt(w·h)` (17.3 µm), justified against the measured
+      `L_menpoint`. Nothing is left for a refit to do.
+
+      What W2-1 opens up instead is a single physical constant. With the resistance exact
+      and geometry as drawn, µ = **83 cP** predicts frequency to ±8% over 200–800 mbar with
+      no correction term anywhere (see "What the ×0.68 costs"). Measure the sunflower oil at
+      test temperature and use the measurement; if it comes back at 60 cP then the residual
+      is geometric and *that* is the finding.
+
+      **The rule this item exists to enforce**: a constant that restores agreement by
+      multiplying `ΔP/R` at fixed geometry *is a viscosity*, and must be recorded as one.
+      Do not reintroduce `C_visc` under any name. A fitted global scalar encodes the fab and
+      fluid state of one device at one condition into every design the studio scores —
+      exactly the failure Conor ruled against on 2026-08-05.
 
 ---
 
