@@ -67,14 +67,21 @@ class StageWiseV3Config:
     # Model selection
     enabled: bool = True
 
-    # Stage 1 calibration — viscosity correction multiplier
-    # t_stage1 = stage1_viscosity_correction × V_reset × R_rung / DP_rung
-    # Default 1.0. Calibrated against V5_30_3_3 data (2026-03-20):
-    #   fitted C_visc = 0.96 +/- 0.06 at Po=200-500 mbar, mu_oil=60 mPa.s.
-    #   Default 1.0 is correct for bulk Poiseuille with known oil viscosity.
-    #   Re-calibrate if device geometry or mu_oil changes significantly.
-    #   See: data/analysis/cvisc_calibration_results.md
-    stage1_viscosity_correction: float = 1.0
+    # DELETED 2026-08-05 (W2-1/W2-8): `stage1_viscosity_correction` (C_visc).
+    #
+    # It was a global multiplier on V_reset·R_rung/DP_rung, i.e. on ΔP/R at fixed
+    # geometry — which *is* a viscosity, and must be recorded as one.  Conor ruled
+    # against refitting it: a fitted global scalar encodes the fab and fluid state
+    # of one device at one condition into every design the studio ever scores.
+    #
+    # It is not being replaced by anything.  With the rung resistance exact (W2-1)
+    # and the oil viscosity measured, Stage 1 and cycle time agree with the V5-8-1
+    # Po sweep with **no correction term anywhere** — see
+    # experimental_workspaces/comp_oil_viscosity/report.md.
+    #
+    # DO NOT REINTRODUCE IT UNDER ANOTHER NAME.  If the model disagrees with an
+    # experiment, the honest moves are: measure the oil, measure the geometry, or
+    # record the residual as a finding.
 
     # Stage 1 reset length: L_r = stage1_reset_length_factor × base, where the base
     # is chosen by stage1_reset_length_mode:

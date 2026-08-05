@@ -103,6 +103,7 @@ from stepgen.families.intent import (
 )
 from stepgen.models.droplets import droplet_volume
 from stepgen.models.nodal_network import NodalNetwork
+from stepgen.models.resistance import hydraulic_resistance_rectangular
 
 _M3S_TO_MLHR = 1e6 * 3600.0
 _MBAR_TO_PA = 100.0
@@ -119,14 +120,15 @@ def _leaf(block: dict, *path, default=None):
 
 
 def _R_rect(L: float, w: float, h: float, mu: float) -> float:
-    """Rectangular-channel resistance (matches stepgen.models.resistance)."""
-    if not (0 < h < w):
-        raise ValueError(
-            f"rectangular resistance needs 0 < depth < width; got w={w*1e6:.1f}µm, "
-            f"h={h*1e6:.1f}µm — widen the channel or reduce its depth."
-        )
-    corr = 1.0 - 0.63 * (h / w)
-    return 12.0 * mu * L / (w * h ** 3 * corr)
+    """
+    Rectangular-channel resistance — a thin alias for the one implementation.
+
+    DEPARTURE FROM PREVIOUS BEHAVIOUR (W2-1): this used to reject ``h >= w``
+    outright, which made the real V5-30 DFU (8 µm wide × 10 µm deep) unmodellable
+    by this family.  The shared function orders the dimensions instead, so there
+    is nothing left to reject.
+    """
+    return hydraulic_resistance_rectangular(mu, L, w, h)
 
 
 @dataclass

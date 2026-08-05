@@ -516,9 +516,20 @@ def _parse_stage_wise_v3(d: dict[str, Any]) -> Optional["StageWiseV3Config"]:
             "ca_neck_critical": 0.3,
         }
 
+    # `stage1_viscosity_correction` (C_visc) was deleted in W2-1.  A config that
+    # still sets it is asking for a fitted global scalar on ΔP/R, which is the one
+    # thing Conor ruled out on 2026-08-05 — fail loudly rather than ignore it, or
+    # the config would silently mean something different from what it says.
+    if "stage1_viscosity_correction" in d:
+        raise ValueError(
+            "stage1_viscosity_correction (C_visc) was removed in W2-1 and must not "
+            "be reintroduced. A global multiplier on ΔP/R at fixed geometry IS a "
+            "viscosity: set fluids.mu_dispersed to the measured value instead. See "
+            "experimental_workspaces/comp_oil_viscosity/report.md."
+        )
+
     return StageWiseV3Config(
         enabled=bool(d.get("enabled", True)),
-        stage1_viscosity_correction=float(d.get("stage1_viscosity_correction", 1.0)),
         stage1_reset_length_mode=str(d.get("stage1_reset_length_mode", "geometric")),
         stage1_reset_length_factor=float(d.get("stage1_reset_length_factor", 1.0)),
         enable_stage1_capillary_correction=bool(d.get("enable_stage1_capillary_correction", False)),

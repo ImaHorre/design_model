@@ -281,10 +281,17 @@ _RAD_FLUIDS = {"mu_dispersed": 0.06, "gamma": 0.005}
 
 
 def _uncorrected_q_ulhr(w_um, R_mm=63.5, pitch_um=60.0, h_um=10.0, mu=0.06, dP_mbar=200.0):
-    """Design-notes §2 closed form with L = R (no L_eff, no hub) — the anchor."""
+    """
+    Design-notes §2 closed form with L = R (no L_eff, no hub) — the anchor.
+
+    Uses the library's rectangular-duct resistance rather than restating it, per
+    W2-2: a test that carries its own copy of the formula stops testing the model
+    the moment the model changes, which is exactly what happened here.
+    """
+    from stepgen.models.resistance import hydraulic_resistance_rectangular
+
     w, R, pitch, h = w_um * 1e-6, R_mm * 1e-3, pitch_um * 1e-6, h_um * 1e-6
-    corr = 1.0 - 0.63 * (h / w)
-    r_dfu = 12.0 * mu * R / (w * h ** 3 * corr)
+    r_dfu = hydraulic_resistance_rectangular(mu, R, w, h)
     n = int(2.0 * math.pi * R / pitch)
     q = n * (dP_mbar * 100.0) / r_dfu
     return q * 1e9 * 3600.0
@@ -298,9 +305,15 @@ def test_radial_registered_and_contract():
 
 
 def test_radial_s2_anchor_uncorrected_matches_notes():
-    # design_notes §2: w=8 µm -> 17.8 µL/hr; w=30 µm -> 248 µL/hr (L = R form)
-    assert _uncorrected_q_ulhr(8) == pytest.approx(17.8, abs=0.3)
+    # design_notes §2 (L = R form): w=30 µm -> 248 µL/hr, unchanged by W2-1.
     assert _uncorrected_q_ulhr(30) == pytest.approx(248, abs=3)
+    # w=8 µm was 17.8 µL/hr in the notes and is 27.6 after W2-1. The notes used
+    # the retired `1 - 0.63·h/w` factor, and 8 µm wide x 10 µm deep is precisely
+    # the case it cannot represent: h/w = 1.25 puts it 79% of the way to the
+    # singularity at 1.587, so it over-stated the resistance by 55%. The exact
+    # duct solution is what the +55% is measured against — see
+    # tests/test_resistance.py::TestExactSolution.
+    assert _uncorrected_q_ulhr(8) == pytest.approx(27.6, abs=0.3)
 
 
 def test_radial_leff_factor_matches_formula():
@@ -342,7 +355,11 @@ def test_radial_hub_budget_grows_with_width():
         return cm.hub_budget_pct
     p10, p20, p30 = hub_pct(10), hub_pct(20), hub_pct(30)
     assert p10 < p20 < p30
-    assert p10 < 20            # narrow channel: modest hub budget
+    # Bounds widened from `< 20` after W2-1: at w = 10 µm, h = 10 µm the exact
+    # duct resistance is lower than the retired correction gave, so the channels
+    # draw more and the hub takes a larger share (20.6%, was just under 20).
+    # The ordering above is the physics; these are guard rails.
+    assert p10 < 25            # narrow channel: modest hub budget
     assert p30 > 50            # wide channel: hub eats most of the supply
 
 

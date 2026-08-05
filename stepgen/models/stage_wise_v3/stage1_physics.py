@@ -2,18 +2,23 @@
 Stage-Wise Model v3: Stage 1 Simplified Poiseuille Refill Physics
 =================================================================
 
-Physics basis (updated March 2026):
+Physics basis (updated August 2026 — W2-1):
 
-    t_stage1 = C_visc × V_reset / Q_rung
-             = C_visc × V_reset × R_rung / DP_rung
+    t_stage1 = V_reset / Q_rung
+             = V_reset × R_rung / DP_rung
 
 where:
   - V_reset = L_r × exit_width × exit_depth  (junction exit volume to displace)
-  - L_r ≈ exit_width  (confirmed reset distance)
-  - R_rung = f(α) × μ_oil × mcl / (w × h³)  (rung Poiseuille resistance)
+  - L_r     = sqrt(exit_width × exit_depth)  (measured against L_menpoint)
+  - R_rung  = the ONE rectangular-duct resistance, integrated over the real DFU
+              profile — see stepgen.models.resistance
   - DP_rung = P_oil(x) − P_water(x)  (pressure difference driving flow through rung)
     (DISTINCT from P_j which is preneck junction pressure for Stage 2)
-  - C_visc = stage1_viscosity_correction  (calibration multiplier, default 1.0)
+
+**There is no correction term.**  `C_visc` (`stage1_viscosity_correction`) was
+deleted on 2026-08-05: a global multiplier on ΔP/R at fixed geometry is a
+viscosity, and must be recorded as one.  See the note in `__init__.py` and
+`experimental_workspaces/comp_oil_viscosity/`.
 
 Rationale:
   The rate-limiting step for Stage 1 refill is oil delivery through the rung,
@@ -22,23 +27,14 @@ Rationale:
 
   The two-fluid Washburn ODE through the junction exit (previous approach)
   predicted ~0.2 ms at 200–300 mbar — orders of magnitude too fast, and was
-  superseded by this rung-flow model.
-
-  Calibration against V5_30_3_3 data (2026-03-20, data/analysis/calibrate_cvisc.py):
-    - mu_oil = 60 mPa.s, rung 10x8x4000 um, junction 30x10 um, Qw = 5 mL/hr
-    - Hydraulic network gives DP_rung ~ 82% of Po (water back-pressure at Qw = 5 mL/hr)
-    - Fitted C_visc = 0.96 +/- 0.06 across Po = 200-500 mbar
-    - Default C_visc = 1.0 is correct for this device; no large empirical correction needed.
-    - Residual trend: model exponent -1.026 vs observed -1.168; likely capillary
-      back-pressure (~20 mbar) reduces effective DP more at low Po. Not corrected here.
-
-  C_visc is a calibration multiplier for device-specific deviations (surface viscosity,
-  contact-line effects, geometric entry/exit losses). For bulk Poiseuille flow with
-  known mu_oil the expected value is close to 1.0. Re-calibrate if mu_oil changes
-  or a new device geometry is used.
-
-  The superseded Washburn model is archived at:
+  superseded by this rung-flow model.  It is archived at
   stepgen/models/stage_wise_v3/legacy/stage1_physics_washburn_defunct.py
+
+  The 2026-03 C_visc calibration (0.96 ± 0.06) is historical only: it was fitted
+  against timings later corrected ×0.5 for a frame-rate error, through a rung
+  resistance since found to be 1.53× too high, with a reset length since
+  replaced on measured evidence. Three of its inputs have changed; the number
+  does not survive any of them.
 """
 
 from __future__ import annotations
@@ -177,11 +173,7 @@ def solve_stage1_physics(
     else:
         Q_effective = 0.0
 
-    t_base = V_reset / Q_effective if Q_effective > 0 else float('inf')
-
-    # Effective viscosity correction — calibrated from t_stage1 vs Po experiment
-    C_visc = v3_config.stage1_viscosity_correction
-    t_displacement = C_visc * t_base
+    t_displacement = V_reset / Q_effective if Q_effective > 0 else float('inf')
 
     diagnostics = {
         "V_reset_m3": V_reset,
@@ -197,8 +189,7 @@ def solve_stage1_physics(
         "Q_rung_computed_m3s": DP_effective / R_rung if R_rung > 0 else 0.0,
         "Q_rung_used_m3s": Q_effective,
         "Q_source": "network" if (Q_rung and Q_rung > 0) else "recomputed",
-        "t_base_s": t_base,
-        "viscosity_correction": C_visc,
+        "t_base_s": t_displacement,
         "exit_width_m": exit_width,
         "exit_depth_m": exit_depth,
         "L_r_m": L_r,
@@ -207,41 +198,32 @@ def solve_stage1_physics(
 
     return Stage1Result(
         t_displacement=t_displacement,
-        mechanism="poiseuille_viscosity_corrected",
-        physics_basis="V_reset / (DP_rung / R_rung) × C_visc",
+        mechanism="poiseuille_rung_flow",
+        physics_basis="V_reset / Q_rung, no correction term",
         diagnostics=diagnostics
     )
 
 
 def compute_rung_resistance(config: "DeviceConfig") -> float:
     """
-    Compute Poiseuille resistance of the rung channel [Pa·s/m³].
+    Poiseuille resistance of the rung channel [Pa·s/m³].
 
-        R_rung = f(α) × μ_oil × mcl / (w × h³)
+    Delegates to :func:`stepgen.models.resistance.rung_resistance` — **the**
+    rung resistance, the same one the hydraulic network solves with.
 
-    where h = min(mcd, mcw), w = max(mcd, mcw), α = h/w.
+    DEPARTURE FROM PREVIOUS BEHAVIOUR (W2-1).  This function used to compute its
+    own, two ways wrong at once:
+
+      1. It applied Shah & London's ``fRe`` in the parallel-plate normalisation
+         ``f(α)·µL/(w·h³)`` instead of ``fRe·µL/(2·A·D_h²)``, which the polynomial
+         is *defined* against — 2.47x high on V5-30, 8x as α → 0.
+      2. It used the full ``mcl`` while the network used ``mcl × constriction_ratio``
+         through a different formula, so Stage 1 and the solve that fed it were
+         two different models of the same rung, 25% apart.
+
+    Both are gone: one function, one answer, and where the config declares the
+    real two-width DFU profile it is integrated piecewise over that.
     """
-    mcd = config.geometry.rung.mcd
-    mcw = config.geometry.rung.mcw
-    mcl = config.geometry.rung.mcl
-    mu_oil = config.fluids.mu_dispersed
+    from stepgen.models.resistance import rung_resistance
 
-    h = min(mcd, mcw)
-    w = max(mcd, mcw)
-    alpha = h / w                           # ≤ 1 by construction
-    f_alpha = _shah_london_factor(alpha)
-
-    return f_alpha * mu_oil * mcl / (w * h**3)
-
-
-def _shah_london_factor(alpha: float) -> float:
-    """
-    Shah & London rectangular channel resistance factor f(α).
-
-    f(α) = 96(1 - 1.3553α + 1.9467α² - 1.7012α³ + 0.9564α⁴ - 0.2537α⁵)
-    Valid for α = h/w ∈ (0, 1].
-    """
-    if alpha <= 0:
-        return 96.0
-    a = min(alpha, 1.0)
-    return 96.0 * (1 - 1.3553*a + 1.9467*a**2 - 1.7012*a**3 + 0.9564*a**4 - 0.2537*a**5)
+    return rung_resistance(config)

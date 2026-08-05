@@ -61,11 +61,11 @@ from stepgen.families.intent import (
     rungs_for_ca_ceiling,
 )
 from stepgen.models.droplets import droplet_volume
+from stepgen.models.resistance import hydraulic_resistance_rectangular
 
 # throughput unit factor: m³/s -> mL/hr  (1 m³ = 1e6 mL, 1 hr = 3600 s)
 _M3S_TO_MLHR = 1e6 * 3600.0
 _MBAR_TO_PA = 100.0
-_ASPECT_LIMIT = 1.0 / 0.63   # h/w must stay below this for the correction term
 
 
 def _leaf(block: dict, *path, default=None):
@@ -75,17 +75,6 @@ def _leaf(block: dict, *path, default=None):
             return default
         node = node[key]
     return node
-
-
-def _corr(h: float, w: float) -> float:
-    """Rectangular-channel shape correction ``1 − 0.63·h/w`` (see resistance model)."""
-    ratio = h / w
-    if ratio >= _ASPECT_LIMIT:
-        raise ValueError(
-            f"exit_depth/upstream_width = {ratio:.3f} exceeds the correction limit "
-            f"({_ASPECT_LIMIT:.3f}); widen the upstream channel."
-        )
-    return 1.0 - 0.63 * ratio
 
 
 @dataclass
@@ -308,8 +297,6 @@ def solve_radial(
     mu = c.mu_oil
     gamma = c.gamma
 
-    corr = _corr(h, w)
-
     # ── §11.1/§11.2 hub radius + effective channel length ───────────────────
     # Channels can only carry walls beyond r_hub; below it the hub is a forced
     # open plenum. If the channel + minimum wall already exceed the pitch, the
@@ -324,7 +311,9 @@ def solve_radial(
     n_dfu = int(2.0 * math.pi * R / pitch)
 
     # ── channel conductance (parallel array) ───────────────────────────────
-    r_dfu = 12.0 * mu * L_eff / (w * h ** 3 * corr)   # Pa·s/m³ per channel
+    # One rectangular-duct resistance for the whole codebase (W2-1): ordered
+    # dimensions, so a deep-and-narrow channel is modelled, not rejected.
+    r_dfu = hydraulic_resistance_rectangular(mu, L_eff, w, h)   # Pa·s/m³ per channel
     C_total = n_dfu / r_dfu                            # m³/s per Pa (whole array)
 
     # ── §11.3 series hub resistance (Hele–Shaw radial spreading) ────────────

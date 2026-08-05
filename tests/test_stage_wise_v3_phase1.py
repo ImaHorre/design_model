@@ -47,7 +47,12 @@ class TestStageWiseV3Phase1:
             config = StageWiseV3Config()
 
             # Check Stage 1 physics controls
-            assert hasattr(config, 'stage1_viscosity_correction'), "Missing stage1_viscosity_correction"
+            # C_visc was DELETED in W2-1 and must not come back: a global
+            # multiplier on dP/R at fixed geometry is a viscosity, and Conor
+            # ruled 2026-08-05 that it be recorded as one.
+            assert not hasattr(config, 'stage1_viscosity_correction'), (
+                "stage1_viscosity_correction (C_visc) was deleted in W2-1 and "
+                "must not be reintroduced under any name")
             assert hasattr(config, 'stage1_reset_length_factor'), "Missing stage1_reset_length_factor"
             assert hasattr(config, 'enable_stage1_capillary_correction'), "Missing enable_stage1_capillary_correction"
             assert hasattr(config, 'enable_outer_phase_necking'), "Missing outer_phase_necking switch"
@@ -63,7 +68,6 @@ class TestStageWiseV3Phase1:
             assert 0 < config.theta_effective < 90, "theta_effective outside reasonable bounds"
             assert 0 < config.R_critical_ratio < 2, "R_critical_ratio outside reasonable bounds"
             assert 0 < config.stage1_reset_length_factor <= 2.0, "reset_length_factor outside reasonable bounds"
-            assert config.stage1_viscosity_correction > 0, "viscosity_correction must be positive"
 
         except ImportError as e:
             pytest.skip(f"v3 configuration not fully implemented yet: {e}")
@@ -359,6 +363,35 @@ class TestStageWiseV3Phase1:
 
         except ImportError as e:
             pytest.skip(f"Full v3 solver not ready for integration test: {e}")
+
+
+class TestCViscStaysDeleted:
+    """
+    C_visc was a global multiplier on ΔP/R at fixed geometry — which is a
+    viscosity, and Conor ruled 2026-08-05 that it be recorded as one rather than
+    fitted. These tests exist so it cannot drift back in quietly.
+    """
+
+    def test_config_setting_it_raises_rather_than_being_ignored(self):
+        from stepgen.config import _parse_stage_wise_v3
+
+        with pytest.raises(ValueError, match="stage1_viscosity_correction"):
+            _parse_stage_wise_v3({"stage1_viscosity_correction": 0.7})
+
+    def test_stage1_time_is_volume_over_flow_with_no_scalar(self):
+        """t_S1 = V_reset / Q exactly — nothing multiplies it."""
+        import math
+
+        from stepgen.config import load_config
+        from stepgen.models.stage_wise_v3 import StageWiseV3Config
+        from stepgen.models.stage_wise_v3.stage1_physics import solve_stage1_physics
+
+        cfg = load_config("configs/v5_30.yaml")
+        q = 1.1e-14
+        res = solve_stage1_physics(1.6e4, q, cfg, StageWiseV3Config())
+        jc = cfg.geometry.junction
+        V_reset = math.sqrt(jc.exit_width * jc.exit_depth) * jc.exit_width * jc.exit_depth
+        assert res.t_displacement == pytest.approx(V_reset / q, rel=1e-12)
 
 
 if __name__ == "__main__":

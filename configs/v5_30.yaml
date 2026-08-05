@@ -50,16 +50,26 @@ geometry:
     Mcl: 693e-3       # 693 mm routed length → Nmc = 11,549 (see note above)
 
   rung:
-    # The DFU is two widths in series (measured: 3610 µm @ 8 µm + 410 µm @ 30 µm,
-    # 10 µm deep throughout).  This model carries ONE width; mcw is the narrow
-    # section, which is 98.8% of the resistance, and constriction_ratio 0.9 is
-    # its 90% share of the length.  Note 8 µm wide × 10 µm deep — depth exceeds
-    # width on the real device.
+    # The DFU is two widths in series — measured from the GDS, see
+    # reference_devices/README.md.  As of W2-1 the model integrates that profile
+    # piecewise instead of approximating it with one width and a length scale.
+    # Note 8 µm wide × 10 µm DEEP: depth exceeds width on the real device, which
+    # is why the resistance model orders its dimensions rather than rejecting.
     mcd: 10e-6        # 10 µm depth (= exit depth, single etch)
     mcw: 8e-6         # 8 µm width  (narrow section)
-    mcl: 4000.0e-6    # 4.0 mm rung length (measured total 4020 µm)
+    # mcl stays at the measured 4.0 mm DFU-array gap because it is what the
+    # LAYOUT reads (lane_pitch = 2×main + mcl + wall = 7.00 mm, asserted against
+    # the GDS in tests/test_reference_devices.py).  The hydraulic length is the
+    # profile's 4020 µm, which is the same channel measured end to end.
+    mcl: 4000.0e-6    # 4.0 mm DFU array gap (measured)
     pitch: 60e-6      # 60 µm DFU pitch (measured)
+    # Retained for callers that read it; the profile below is what the
+    # resistance actually integrates, so this no longer scales any length.
     constriction_ratio: 0.9
+    microchannel_profile:
+      sections:
+        - {length: 3610.0e-6, width:  8.0e-6, depth: 10.0e-6}   # 98.8% of R
+        - {length:  410.0e-6, width: 30.0e-6, depth: 10.0e-6}   #  1.2% of R
 
   junction:
     # Sets D_pred via D = k * exit_width^a * exit_depth^b
