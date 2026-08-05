@@ -22,7 +22,7 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 |---|---|
 | **Batch 1** | ✅ **complete.** B0 `e53ddc6` · B1 `e21798e` · A4a+A4b `39e7342` · plan `5674636` |
 | **Wave 1** | ✅ **complete.** W1-4 `77ac36a` · W1-1 `d347643` · W1-2 `747a3ce` · W1-3 `9556202` · W1-6 `fd99045` · W1-5 `6ad1f33` |
-| **Wave 2** | **not started — this is the next work.** The risk item: it changes what every number means |
+| **Wave 2** | **in progress.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · remaining: W2-1a, W2-7, W2-3, W2-4, W2-5, W2-6, W2-8 |
 | **C (server)** | not started, and must not start until W2-8 passes |
 | **D (explorer)** | D1 ✅, D4 ✅, D2 partly, all in the chapter (`912c74c`, `6db6405`). D5 unblocked |
 | **E** | not started |
@@ -30,11 +30,19 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 **Start here**: Wave 2, in the order **W2-2 → W2-1 (+ the viscosity, together) → W2-1a →
 W2-7 → W2-3 → W2-4 → W2-5 → W2-6 → W2-8**. Do not start C until W2-8 passes.
 
-**Read "What the ×0.68 costs" in Measured evidence before touching W2-1.** The headline:
-the model matches experiment today because two errors cancel, W2-1 removes only one of
-them, and `C_visc ≈ 0.7` is sitting there ready to hide the difference. **Conor ruled
-2026-08-05 that it must not be used.** The replacement is a measured oil viscosity, which
-predicts frequency to ±8% over 200–800 mbar with no correction term anywhere.
+**Read "What the ×0.68 costs" in Measured evidence before touching W2-1** — and read
+the correction stapled to it. The headline still holds: the model matched experiment
+because two errors cancelled, W2-1 removes one, and `C_visc ≈ 0.7` was sitting there
+ready to hide the difference. **Conor ruled 2026-08-05 that it must not be used, and it
+is now deleted** (`71be939`).
+
+**The replacement is NOT the 83 cP this plan proposed.** That figure was fitted at one
+water flow rate. Checked against the other two in the same dataset it becomes 69 / 81 /
+96 cP at Qw = 5 / 10 / 20 — a "viscosity" that tracks the water flow, i.e. `C_visc`
+wearing a physical name. **µ was left at 60 cP, unfitted**, and the residual is located
+instead: Stage 1 agrees to −14.5%→+0.9% with no correction term, and what is left lives
+in Stage 2+3 and grows with Qw. See W2-8 and
+`experimental_workspaces/comp_oil_viscosity/report.md`.
 
 **Three things Batch 1 and Wave 1 learned that generalise:**
 
@@ -234,6 +242,24 @@ What this establishes:
    `reserve_border_mm: 2.0`). See W1-6.
 
 ### What the ×0.68 costs — and the one constant that pays for it
+
+> **CORRECTED 2026-08-05, after W2-1 landed.** The diagnosis in this section is right:
+> two errors cancelled, and removing one leaves a constant multiplier on `ΔP/R` that is
+> dimensionally a viscosity. **The prescription is wrong.** The 83 cP below was fitted at
+> a single water flow rate; the same procedure at Qw = 5 and Qw = 20 gives 69 and 96 cP,
+> so no single µ exists and the residual is not a material property at all. It is the
+> model's ~3× under-response to Qw, which lives in Stage 2+3, not Stage 1.
+>
+> Two more errors in the numbers below, found while reproducing them:
+> - **The frequency table cannot be Qw = 5.** The 2% SDS data at Qw = 5 gives 1.22 /
+>   2.13 / 2.94 / 4.17 Hz at 200/300/400/600 and **has no 800 mbar point**. The table's
+>   200–800 mbar span is only reachable at Qw = 10 *and* by including the 2.5% NaCas
+>   run — a different continuous phase.
+> - **`Q_model/Q_meas` is therefore a mixed-condition ratio**, which is why it looked
+>   like scatter with no trend. Split by Qw it has a clear trend.
+>
+> Kept in full because the reasoning — "a constant multiplier on `ΔP/R` at fixed geometry
+> *is* a viscosity" — is correct and is what made the disproof possible. See W2-8.
 
 Measured 2026-08-05 against `experimental_workspaces/po_sweep/data/stage_timings.csv`
 (V5-8-1, Qw = 5 mL/hr, corrected timings).
@@ -624,7 +650,50 @@ border", and there is no border any more.
 Everything here shifts results. Ends with a schema bump so pre- and post-wave-2 chapters
 cannot be silently pooled.
 
-### W2-1 — one rung-resistance implementation *(was B3 + A5; rewritten 2026-08-05)*
+### W2-1 — one rung-resistance implementation ✅ `71be939` + `2d51aa6`
+
+> **Landed 2026-08-05, with the viscosity work as one step.** The resistance
+> change is exactly as specified below. **The viscosity half did not go as
+> planned, and the plan was wrong about the conclusion, not the method** — see
+> "What implementation found" at the end of this item and the rewritten W2-8.
+
+**What was found that the plan did not:**
+
+1. **The site count was right for once.** Four, exactly as listed. The one thing
+   the table understates: `radial` splits its copy between `_corr` (the shape
+   factor) and the formula body inline at the call site, so grepping `_corr`
+   finds something that looks harmless.
+2. **The verification paid for itself immediately.** The adopted function
+   reproduces the Fourier series to **≤0.06% across α ∈ [0.01, 1.0]**, and the
+   check is now `tests/test_resistance.py::TestExactSolution` — including a test
+   that pins the *wrong* normalisation at 2.47× so nobody restores it.
+3. **`compute_rung_resistance` had a second bug the plan did not name.** Beyond
+   the normalisation, it used the full `mcl` while the network used
+   `mcl × constriction_ratio` through a different formula — so Stage 1 and the
+   solve feeding it were two models of the same rung, 25% apart. It now delegates
+   to `resistance.rung_resistance`, so there is one answer.
+4. **`mcl` had to stay at 4.0 mm.** The measured DFU is 4020 µm end to end, but
+   `mcl` is what *layout* reads (`lane_pitch = 2×main + mcl + wall = 7.00 mm`,
+   asserted against the GDS in W1-3). Moving it to 4020 µm would have broken a
+   Wave 1 acceptance test to fix a hydraulic length the profile now carries
+   anyway. Config says why, so nobody "corrects" it.
+5. **Impact measured**: R_rung 1.53e18 → **9.981e17** Pa·s/m³ = **0.652×**, against
+   the plan's predicted 0.654×. Frequency at 200 mbar / Qw 5 moved 0.967 →
+   1.372 Hz.
+6. **Five tests encoded the retired formula**, in two files, one of them a studio
+   test carrying its own copy of `1−0.63h/w` as an "anchor" — W2-2's bug class,
+   inside a test. All now call the library function or the exact series.
+
+**What implementation found about the viscosity — the plan's 83 cP does not
+survive.** Fitting µ independently at each water flow rate gives **69 / 81 / 96 cP
+at Qw = 5 / 10 / 20**. Each fit is individually good (<15%); pooled it degrades to
+39%. A viscosity that climbs 39% as the water flow quadruples is not a viscosity,
+and 83 cP is simply the Qw = 10 slice of that surface — `C_visc` under a physical
+name. **µ was left at 60 cP, unfitted.** Full argument and provenance in
+`experimental_workspaces/comp_oil_viscosity/report.md`; consequences for the exit
+criteria are in the rewritten W2-8.
+
+### The item as specified *(kept for the record)* *(was B3 + A5; rewritten 2026-08-05)*
 
 > **This item changed shape.** The previous vintage said "Shah & London dropped in favour
 > of the single `1 − 0.63·h/w` term … consistency is worth more than the few percent of
@@ -794,15 +863,71 @@ block and the same warning wherever it is repeated. Grep for `1.587` and `h/w`.
 
 Wave 2 is not done until:
 
-- [ ] `pytest -q` → **560 passed, 3 failed** (the `test_cli` png ones), 5 skipped. *The
-      "531 passed, same 5 known failures" this line used to read is stale — Wave 1 added
+- [ ] `pytest -q` → at least **560 passed, 3 failed** (the `test_cli` png ones), 5 skipped.
+      *The "531 passed, same 5 known failures" this line used to read is stale — Wave 1 added
       tests and removed two failures. The two `test_design_search` failures are gone for a
-      reason and must not come back.*
-- [ ] Re-run against `experimental_workspaces/po_sweep/data/stage_timings.csv`, reporting
-      new Stage-1 and cycle-time agreement at 200–800 mbar
-- [ ] **Set the oil viscosity, and DELETE `C_visc`** — in its own workspace, per the
-      data-provenance protocol in `CLAUDE.md`. **This replaces the "refit `C_visc`" item
-      that used to sit here, which was the wrong instruction.**
+      reason and must not come back.* After W2-1 the count is **577 passed, 3 failed,
+      5 skipped**.
+- [x] Re-run against `experimental_workspaces/po_sweep/data/stage_timings.csv`, reporting
+      new Stage-1 and cycle-time agreement ✅ — see the viscosity item below.
+      **Correction to this line: the sweep does not reach 800 mbar in the fluid system
+      the config describes.** At 2% SDS the SDS data stops at 600 mbar; the file's only
+      800 mbar rows are 2.5% sodium caseinate at Qw = 10 — a different continuous phase.
+      The plan's "200–800 mbar" frequency table therefore *had* to include that point.
+      **Do not restore an 800 mbar claim about this device from this dataset.**
+- [x] **DELETE `C_visc`** ✅ `71be939`. Gone from `StageWiseV3Config`, gone from
+      `stage1_physics`, and a config that still sets `stage1_viscosity_correction`
+      now **raises** rather than being silently ignored. Pinned by
+      `tests/test_stage_wise_v3_phase1.py::TestCViscStaysDeleted`.
+- [x] **Set the oil viscosity** ✅ `2d51aa6` — **and the answer is: do not.**
+
+      > **This is the item the wave turned on, and the plan had it half right.**
+      > The method was right (ask what µ the data implies). The conclusion was
+      > wrong, because 83 cP had only ever been checked at one Qw.
+
+      `experimental_workspaces/comp_oil_viscosity/` fits µ independently at each
+      water flow rate in the same dataset:
+
+      ```
+      Qw =  5 mL/hr  ->  69 cP   (4 pressures, worst error  9.2%)
+      Qw = 10 mL/hr  ->  81 cP   (4 pressures, worst error  9.5%)
+      Qw = 20 mL/hr  ->  96 cP   (2 pressures, worst error 13.7%)
+      pooled         ->  79 cP   (worst error 38.7%)
+      ```
+
+      Every per-Qw fit is excellent, which is exactly what condemns it: **a
+      viscosity that rises 39% as the water flow quadruples is not a viscosity.**
+      The plan's 83 cP is the Qw = 10 slice. Adopting it would have re-created
+      `C_visc` with a physical name on it — the precise failure the ruling exists
+      to prevent, arriving through the door the ruling opened.
+
+      **µ stays at 60 cP**, the literature value for sunflower oil, unfitted.
+      Nothing in the model was tuned.
+
+      **Where the residual is**, at 60 cP and Qw = 5 (the config's condition):
+
+      ```
+      Stage 1     -14.5% -> +0.9%  across 200-600 mbar, improving with pressure
+      Stage 2+3    +2.9% -> -41.5%, worsening with BOTH Po and Qw
+      ```
+
+      Stage 1 is the only stage the resistance and the viscosity control, so that
+      first line is W2-1's real result: **exact resistance, measured DFU profile,
+      measured reset length, literature viscosity, zero correction terms.** The
+      rest is the model under-responding to Qw by ~3× (the device loses 28% of
+      production from Qw 5→10 at 200 mbar; the model loses 5.5%) — which
+      `qw_sweep` found independently from the other side — plus a 50 fps
+      quantisation floor at 600 mbar.
+
+      **A geometric error would be Qw-independent.** This one is not, so the
+      plan's counterfactual ("if it comes back near 60 cP the residual is
+      geometric and THAT is the finding") resolves one step further: it is neither
+      viscosity nor geometry. It is the Stage-2 growth model and the water-side
+      loading, and that is the next physics change — not a constant.
+
+      **The oil still has to go on a viscometer.** Until it does, 60 cP is a
+      literature value carrying an unquantified error, and temperature is not even
+      recorded in the data file (±5 °C ≈ ±30% on µ).
 
       `C_visc` is already 1.0 and does nothing: the 2026-03 fit returned 0.96 ± 0.06, and
       no config overrides the default. The 2× that the fps 25→50 correction implied was

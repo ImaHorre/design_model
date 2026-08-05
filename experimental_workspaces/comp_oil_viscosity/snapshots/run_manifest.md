@@ -23,6 +23,14 @@ python experimental_workspaces/comp_oil_viscosity/analysis.py
 - `results/fit_summary.json` — the numbers quoted in `report.md`
 - `results/analysis_stdout.txt` — the full console run
 
+> **Why the `.csv` outputs are not in git.** `.gitignore` excludes `*.csv`
+> repo-wide (`# Output files`), and no CSV in this repository is tracked —
+> including the raw `po_sweep/data/stage_timings.csv`. Rather than break that
+> convention for one workspace, the two files that *are* committed
+> (`fit_summary.json`, `analysis_stdout.txt`) carry every number quoted in
+> `report.md`, and `analysis.py` regenerates the CSVs deterministically from the
+> snapshot at the commit above.
+
 ### Experimental data used
 
 | File | Device ID | Test date | Rows | Notes |
