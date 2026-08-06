@@ -1127,6 +1127,11 @@ Scope reduced by decision 12: the chapter already filters, so C is the **front d
   **This form writes the YAML shape `study_my_designs.yaml` already uses.** The engine
   exists; C2 is UI over it. Read that file before writing the form — its comments are the
   spec, including the shallow-merge trap on `<<: *rung`.
+
+  **Blocked on the reverse-flow guard** (see *Explicitly deferred* below). The swap button
+  is what makes W/O one click instead of a hand-edited YAML, and a W/O row on a long,
+  narrow main scores today with no disclosure that a third of its rungs run backwards.
+  C1 and C3 are not blocked.
 - **C3.** House sweep-level defaults as a checked-in, reviewable file — shown read-only in
   the form, with an "adjust axes" expander for full control. Carries the measured
   ms/point per family for C2's estimate.
@@ -1487,6 +1492,51 @@ clean: 636 passed, 0 failed, 5 skipped.**
   explicit port/strip model would say *why* and would scale to a different die size, where
   an area fraction will not — see W1-2's caveat.
 - **Streamlit retirement.** `ui.py` (941 lines) untouched at v1.
+- **Reverse-flow hard constraint.** *(deferred 2026-08-06, after measurement — Conor ruled
+  "move on")* **Prerequisite for C2, not for C1/C3.**
+
+  The defect is real but narrow. `configs/wo_v5_30.yaml` at Po=200 returns
+  `passes_hard_constraints=True` with `rev=0.315 off=0.327 act=0.358` (Qw=5) and
+  `rev=0.465` (Qw=20); `configs/v5_30.yaml` o/w is `rev=0.000` at Qw=5,10,20. The three
+  fractions appear nowhere under `stepgen/studio/`. `_check_hard_constraints` has exactly
+  one call site (`design/sweep.py:257`), so promoting `reverse_fraction` to a hard
+  constraint is a contained signature change. `tests/test_studio.py:1069` guards
+  `workbook._COLUMNS` against `interactive.PLOT_METRICS` and will fire — update both,
+  don't weaken it.
+
+  **Four claims in the 2026-08-05 kickoff prompt are FALSE — measured, do not re-inherit:**
+  1. *"`dP_avg` is a mean taken across a sign change."* No. `metrics.py:140` is
+     `np.mean(dP[active_mask])` — active rungs only, as are `Q_spread_pct`,
+     `dP_spread_pct`, `Q_per_rung_avg`, `f_pred_*`. The numbers are correct statistics
+     over a subpopulation; the defect is that the row presents them as device-level
+     without disclosure. It is a **labelling** hole, not corrupted arithmetic.
+  2. *"Half of every row `study_my_designs.yaml` produces is already degenerate W/O."*
+     No. All 352 expanded points measured: `reverse_fraction > 0` in **0/176 o/w and
+     0/176 w/o**. That study's main is 20–160 mm at 2000×400 µm; `wo_v5_30`'s is 693 mm
+     at 1000×200 µm. At 60 cP the study geometry needs a ~2560 mm main — 16× its longest
+     swept value — before reverse appears at all, and then only 0.035.
+  3. *"`production_threshold_mbar` can report a producing pressure for a device running
+     half backwards."* No. Its default is `active_fraction_min=1.0`, the three regime
+     masks partition the rungs, so `active == 1.0` forces `reverse == 0.0`. Both callers
+     (`serpentine.py:904`, `studio/run.py:157`) use the default. Already safe — it
+     returns `None` for a degenerate device.
+  4. *"Urgent."* Nothing on a live config produces a wrong number today.
+
+  **Threshold — still open, and it is a tolerance, not a physical line.** Conor's framing
+  (2026-08-06): experimentally *any* reverse flow is device-killing, but the model could
+  red-flag a run that worked in the lab, so a buffer is right — not zero. Candidates:
+  **0.10**, matching `operating_map.py:154 reverse_fraction_max` — already this codebase's
+  line for an acceptable operating point, and `evaluate_candidate` reaches it via
+  `_compute_robustness_fields`, so a different number lets a row pass while its own
+  robustness window says the point is out. Or **0.01**, clear of single-rung noise
+  (1/11549 = 8.7e-5) and far below the 0.31 signal. Not zero — brittle.
+
+  **Adjacent, possibly the bigger hole, and reachable from the live study:** at 60 cP w/o,
+  Po=200, `off_fraction` goes 0.000 → 0.130 → 0.576 → 0.798 as `main.length_mm` goes
+  160 → 320 → 640 → 1280. `main.length_mm` is a swept axis in `study_my_designs.yaml`.
+  A device with 58% of its DFUs dead still reports throughput and flatness over the
+  surviving 42%; `min_active_fraction` only *soft*-flags it, and only on the
+  `design_search.py:205` path — not the Studio path.
 
 ---
 
