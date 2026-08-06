@@ -1146,6 +1146,40 @@ Scope reduced by decision 12: the chapter already filters, so C is the **front d
   exists; C2 is UI over it. Read that file before writing the form — its comments are the
   spec, including the shallow-merge trap on `<<: *rung`.
 
+  **The fluid region — ruled 2026-08-06, supersedes the "fluid presets + swap A/B"
+  sketch above.** Two number fields, `µ_dispersed` and `µ_continuous`, are the *whole*
+  hydraulic control. Verified: `resistance.py:149` builds the rung from `mu_dispersed`,
+  `:170` the oil main from `mu_dispersed`, `:173` the continuous main from
+  `mu_continuous`, and nothing else in the ladder reads a fluid property.
+
+  **`phase_system` is a label with no physics behind it.** All 12 reads are display —
+  `channel_labels` (`config.py:50-59`), two CLI prints, a plot title, studio grouping.
+  Nothing branches on it in the solve. So `mu_dispersed: 0.00089, mu_continuous: 0.06,
+  phase_system: o/w` is a physically W/O device, solved correctly as W/O, and mislabelled
+  everywhere. That is not cosmetic: `study.py:161 _fluid_tag` makes it the row
+  discriminator, so a wrong label changes how rows **group**, and `decide.group_by` is
+  what separates a design from a condition. The two checked-in fluid blocks stay
+  consistent today only because they were written together by hand — independent number
+  fields remove that.
+
+  **So: a toggle that sets the label, physics from the µ values.** The o/w ↔ w/o click is
+  explicitly cosmetic — it renames, it does not swap the viscosities. Validate it against
+  the µ values and warn on mismatch rather than deriving it, since "which phase is
+  dispersed" is not recoverable from magnitudes in general (it happens to be here only
+  because one phase is always oil and one always water).
+
+  **The rest of the eventual fluid A:** γ is **not** inert — live in Ca (`base.py:257`)
+  and stage-2 — but gates nothing since the gate moved to `v_vs_demonstrated`, where it
+  cancels. Expose it as optional, carrying its unmeasured caveat. Density and contact
+  angle are genuinely absent: `rho_continuous` is not a `FluidConfig` field at all, both
+  uses are `getattr(config.fluids, 'rho_continuous', 1000.0)` so they silently always get
+  water, and both call sites are diagnostic-only paths. A form field for either would be
+  inert today.
+
+  **Note on the block:** two free viscosity fields are a slightly *wider* door than the
+  swap button was — a swap offers two vetted systems, a number field accepts 60 cP against
+  a long main and scores it silently.
+
   **Blocked on the reverse-flow guard** (see *Explicitly deferred* below). The swap button
   is what makes W/O one click instead of a hand-edited YAML, and a W/O row on a long,
   narrow main scores today with no disclosure that a third of its rungs run backwards.
