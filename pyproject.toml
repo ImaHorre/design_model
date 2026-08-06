@@ -20,6 +20,12 @@ dependencies = [
 # Interactive Design Studio (Phase 4). Kept out of the lean core — install with:
 #   pip install -e .[ui]
 ui = ["streamlit"]
+# Studio front door (`stepgen studio-serve`, plan C1) — install with:
+#   pip install -e .[serve]
+# Declared separately from [ui]: the server replaces Streamlit rather than
+# extending it, and a fresh clone that only wants the front door should not
+# pull Streamlit in.
+serve = ["fastapi", "uvicorn"]
 
 [tool.setuptools.packages.find]
 include = ["stepgen*"]

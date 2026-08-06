@@ -1105,10 +1105,28 @@ Wave 2 is not done until:
 
 Scope reduced by decision 12: the chapter already filters, so C is the **front door only**.
 
-- **C1.** `stepgen studio-serve` — FastAPI + uvicorn. **Add both to `pyproject.toml`**;
-  only `streamlit` is declared today (`pyproject.toml:22`), so a fresh clone breaks.
-  Routes: form page, `POST /run` (solve → `write_workbook()` → chapter), `POST /preview`
-  (compile only, ~1–4 ms, no solve).
+- **C1.** `stepgen studio-serve` — FastAPI + uvicorn. ✅ `<this commit>`
+
+  `stepgen/studio/server.py`. Routes as specified: `GET /` form, `POST /preview`
+  (expand only), `POST /run` (solve → score → diagnose → `write_workbook` →
+  `write_book_index`), plus `GET /book`, `GET /book/{name}`, `GET /configs`. `/run` calls
+  exactly the pipeline `_cmd_study` calls — nothing re-implemented. 12 tests in
+  `tests/test_studio_server.py`, and the app was booted under real uvicorn (TestClient
+  does not exercise it).
+
+  Packaging bug fixed: `serve = ["fastapi", "uvicorn"]` added as its own extra, not folded
+  into `[ui]` — the server replaces Streamlit rather than extending it.
+
+  **Two things worth knowing for C2:**
+  - `from __future__ import annotations` + FastAPI's `eval_str=True` means request models
+    and response classes **must be module-level**. As locals inside `create_app` every
+    route raises `NameError` at decoration time. This is why `server.py` imports fastapi
+    at module scope; `_cmd_studio_serve` checks for the extra first so a lean install
+    never reaches the ImportError.
+  - **An unknown family parses and expands cleanly.** `load_study_text` does not consult
+    the registry; the failure only surfaces per-point inside `run_study`, which records it
+    and carries on. Correct for a run, useless for a preview — so `/preview` checks
+    `list_families()` itself. C2's form should not assume validation it did not do.
 - **C2.** The form, per decision 11 — three regions:
 
   ```

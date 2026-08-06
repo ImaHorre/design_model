@@ -17,6 +17,8 @@ Commands
     stepgen study    <study.yaml>   [--book DIR] [--diagnose auto|always|never]
                                     [--production-threshold] [--extends PARENT.json]
     stepgen studio-ui [study.yaml]  [--port N]   (interactive Design Studio; needs .[ui])
+    stepgen studio-serve            [--host H] [--port N] [--book DIR] [--configs DIR]
+                                    (Studio front door; needs .[serve])
 
 Experimental Testing Commands
 -----------------------------
@@ -639,6 +641,25 @@ def _cmd_studio_ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_studio_serve(args: argparse.Namespace) -> int:
+    """Serve the Studio front door (plan C1) — form -> solve -> chapter."""
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+    except ImportError:
+        print("The Studio front door needs the optional serve extra.\n"
+              "Install it with:\n\n    pip install -e .[serve]\n")
+        return 1
+
+    from stepgen.studio.server import serve
+
+    print(f"Design Studio front door: http://{args.host}:{args.port}")
+    print(f"  book    : {args.book}")
+    print(f"  configs : {args.configs}")
+    return serve(host=args.host, port=args.port,
+                 book_dir=args.book, configs_dir=args.configs)
+
+
 def _cmd_test_experimental(args: argparse.Namespace) -> int:
     """Run comprehensive experimental testing framework."""
     from stepgen.testing.experimental_test_suite import run_experimental_testing_cli
@@ -989,6 +1010,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_ui.add_argument("--port", type=int, default=None,
                       help="Port for the Streamlit server (default: Streamlit's own).")
 
+    # ── studio-serve ──────────────────────────────────────────────────────
+    p_serve = sub.add_parser(
+        "studio-serve",
+        help="Serve the Studio front door (FastAPI; needs `pip install -e .[serve]`).",
+    )
+    p_serve.add_argument("--host", type=str, default="127.0.0.1",
+                         help="Bind address (default: 127.0.0.1, local only).")
+    p_serve.add_argument("--port", type=int, default=8000,
+                         help="Port to listen on (default: 8000).")
+    p_serve.add_argument("--book", type=str, default="book", metavar="DIR",
+                         help="Book directory chapters are written to (default: book).")
+    p_serve.add_argument("--configs", type=str, default="configs", metavar="DIR",
+                         help="Directory scanned for selectable study_*.yaml (default: configs).")
+
     # ── test-experimental ─────────────────────────────────────────────────
     p_exp = sub.add_parser(
         "test-experimental",
@@ -1091,6 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
         "compare":  _cmd_compare,
         "study":    _cmd_study,
         "studio-ui": _cmd_studio_ui,
+        "studio-serve": _cmd_studio_serve,
         "test-experimental": _cmd_test_experimental,
         "test-duty-factor": _cmd_test_duty_factor,
         "test-time-state": _cmd_test_time_state,
