@@ -40,6 +40,23 @@ if TYPE_CHECKING:
     from stepgen.config import DeviceConfig
 
 
+#: Largest ``reverse_fraction`` an operating point may carry and still count as
+#: acceptable — **one definition**, so the window criteria here and the hard
+#: constraint in :func:`stepgen.design.sweep._check_hard_constraints` cannot
+#: drift apart.  Before this was a constant, the same 0.1 lived only as a default
+#: argument below, and a row could pass hard constraints while its own robustness
+#: window (which reaches this very number through ``_compute_robustness_fields``)
+#: said the point was out.
+#:
+#: **It is a tolerance, not a physical line.**  Experimentally *any* reverse flow
+#: is device-killing — continuous phase entering the dispersed main is not
+#: something a drive pressure fixes — so the honest physical threshold is zero.
+#: The buffer exists because the model, not the device, is what is being gated:
+#: one rung flipping sign near its capillary threshold must not condemn a design
+#: that runs in the lab.  Zero would be brittle in exactly that way.
+REVERSE_FRACTION_MAX: float = 0.10
+
+
 @dataclass(frozen=True)
 class OperatingWindow:
     """
@@ -151,7 +168,7 @@ def compute_operating_map(
     Qw_grid_mlhr: np.ndarray,
     *,
     active_fraction_min: float = 0.8,
-    reverse_fraction_max: float = 0.1,
+    reverse_fraction_max: float = REVERSE_FRACTION_MAX,
     Q_spread_max_pct: float = 10.0,
     dP_spread_max_pct: float = 10.0,
     blowout_dP_Pa: float | None = None,

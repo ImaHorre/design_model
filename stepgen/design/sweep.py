@@ -26,6 +26,7 @@ from stepgen.models.metrics import compute_metrics
 
 if TYPE_CHECKING:
     from stepgen.config import DeviceConfig
+    from stepgen.models.metrics import DeviceMetrics
 
 # Minimum set of keys every candidate row must contain (PRD §4.1).
 REQUIRED_KEYS: frozenset[str] = frozenset({
@@ -37,8 +38,37 @@ REQUIRED_KEYS: frozenset[str] = frozenset({
 })
 
 
-def _check_hard_constraints(config: "DeviceConfig", fits_footprint: bool) -> list[str]:
-    """Return a list of violated hard constraint descriptions. Empty list means all pass."""
+def _check_hard_constraints(
+    config: "DeviceConfig",
+    fits_footprint: bool,
+    metrics: "DeviceMetrics | None" = None,
+) -> list[str]:
+    """
+    Return a list of violated hard constraint descriptions. Empty list means all pass.
+
+    *metrics* is optional only so a caller with no solve in hand (a geometry-only
+    screen) can still check the fabrication and footprint limits.  When it is
+    given, ``reverse_fraction`` is checked against
+    :data:`~stepgen.design.operating_map.REVERSE_FRACTION_MAX`.
+
+    **Why reverse flow is a hard constraint and not a soft flag.**  A reversed
+    rung is continuous phase flowing *into* the dispersed main.  That is not a
+    design running below its best operating point — it is the device doing the
+    opposite of its function, and no drive pressure recovers it.  It also
+    silently invalidates the row's own headline numbers: ``dP_avg``,
+    ``dP_spread_pct``, ``Q_spread_pct``, ``Q_per_rung_avg`` and ``f_pred_*`` are
+    all computed over ``active_mask`` (``models/metrics.py``), so a device with a
+    third of its rungs backwards reports flatness and frequency for the 36 % that
+    still work, presented as device-level.  Measured on ``configs/wo_v5_30.yaml``
+    at Po = 200 mbar: ``reverse_fraction`` 0.315 (Qw = 5) and 0.465 (Qw = 20),
+    and at Qw = 20 the net ``Q_oil_total`` is *negative* — the device consumes
+    oil.  Every one of those rows reported ``passes_hard_constraints=True``.
+
+    ``off_fraction`` is deliberately **not** promoted alongside it; see
+    :func:`evaluate_candidate` for that judgement.
+    """
+    from stepgen.design.operating_map import REVERSE_FRACTION_MAX
+
     mfg  = config.manufacturing
     geom = config.geometry
     failures: list[str] = []
@@ -60,6 +90,13 @@ def _check_hard_constraints(config: "DeviceConfig", fits_footprint: bool) -> lis
         )
     if not fits_footprint:
         failures.append("footprint too large for chip")
+    if metrics is not None and metrics.reverse_fraction > REVERSE_FRACTION_MAX:
+        failures.append(
+            f"reverse_fraction ({metrics.reverse_fraction*100:.1f}%) > "
+            f"max ({REVERSE_FRACTION_MAX*100:.0f}%) — continuous phase is entering "
+            f"the dispersed main; device-level metrics are computed over the "
+            f"{metrics.active_fraction*100:.1f}% of rungs still active"
+        )
     return failures
 
 
@@ -254,9 +291,37 @@ def evaluate_candidate(
         row[f.name] = getattr(layout, f.name)
 
     # ── Hard constraints ───────────────────────────────────────────────────
-    failures = _check_hard_constraints(config, layout.fits_footprint)
+    failures = _check_hard_constraints(config, layout.fits_footprint, metrics)
     row["passes_hard_constraints"]   = len(failures) == 0
     row["hard_constraint_failures"]  = "; ".join(failures)
+
+    # ── Subpopulation disclosure (never a failure) ─────────────────────────
+    # `dP_avg`, `dP_spread_pct`, `Q_spread_pct`, `Q_per_rung_avg` and `f_pred_*`
+    # are means over `active_mask` only.  That arithmetic is correct — they are
+    # honest statistics over the rungs that produce — but the row presents them
+    # as device-level, and with a third of the rungs dead the two are not the
+    # same claim.  Worse, the direction of the error flatters: the rungs that
+    # switch off first are the starved far-end ones, so killing a device's worst
+    # rungs *improves* its reported ΔP flatness.
+    #
+    # This warns rather than fails, and deliberately.  An OFF rung is one below
+    # its capillary threshold at this drive pressure — a legitimate low-Po point
+    # on a working device, not a broken design, and failing it would delete the
+    # bottom of every pressure sweep, which is the part an operating map exists
+    # to show.  The codebase already rules this way: `min_active_fraction` is a
+    # *soft* flag (`design_search.py`).  Reverse flow is categorically different
+    # and is gated above.
+    row["metrics_over_subpopulation"] = metrics.active_fraction < 1.0
+    row["subpopulation_note"] = (
+        ""
+        if metrics.active_fraction >= 1.0
+        else (
+            f"device-level metrics (ΔP spread, Q spread, frequency) are computed "
+            f"over the {metrics.active_fraction*100:.1f}% of rungs that are active; "
+            f"{metrics.off_fraction*100:.1f}% are off and "
+            f"{metrics.reverse_fraction*100:.1f}% run backwards"
+        )
+    )
 
     # ── Robustness (optional) ───────────────────────────────────────────────
     if compute_robustness:

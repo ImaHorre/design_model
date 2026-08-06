@@ -50,6 +50,15 @@ from stepgen.families.intent import (
 _M3S_TO_MLHR = 1e6 * 3600.0
 
 
+def _opt_float(v) -> float | None:
+    """``float(v)`` or ``None`` — so an absent metric stays N-A rather than 0.0.
+
+    The distinction matters for the regime fractions: 0.0 reverse means the solve
+    checked and found none, ``None`` means nobody looked.
+    """
+    return None if v is None else float(v)
+
+
 def _leaf(block: dict, *path, default=None):
     """Fetch a nested value by path, returning ``default`` if missing."""
     node: Any = block
@@ -82,8 +91,12 @@ class SerpentineFamily(Family):
     def applicable_metrics(self) -> set[str]:
         # Serpentine exposes all shared gates. regime_Ca is only meaningful when
         # an interfacial tension is given; otherwise the value is None -> grey.
+        # reverse_fraction is applicable because the ladder solve produces a
+        # signed per-rung flow; radial (closed form) and manifold (solves a
+        # network but does not classify it) leave it N-A rather than assert 0.
         return {"throughput_mlhr", "uniformity_pct", "operating_Po_mbar",
-                "regime_Ca", "v_vs_demonstrated", "build", "validity"}
+                "regime_Ca", "v_vs_demonstrated", "reverse_fraction",
+                "build", "validity"}
 
     # -- intent ------------------------------------------------------------
     def grid_from_intent(
@@ -830,6 +843,12 @@ def solve_config(
         notes.append(
             "deep exit: power-law droplet size extrapolated (~2x) — size/frequency not trusted"
         )
+    # Say what the row's own headline numbers are computed over.  `evaluate_candidate`
+    # writes this whenever active_fraction < 1; carrying it here is what makes the
+    # disclosure survive into the chapter, where the numbers are actually read.
+    sub_note = row.get("subpopulation_note") or ""
+    if sub_note:
+        notes.append(sub_note)
 
     # manufacturable = within fab caps (depth / width / min wall). Kept separate
     # from the fits-square gate (which is layout, not fabrication).
@@ -907,6 +926,9 @@ def solve_config(
         regime_Ca=regime_Ca,
         v_exit_mps=v_exit,
         v_vs_demonstrated=exit_velocity_ratio(v_exit),
+        active_fraction=_opt_float(row.get("active_fraction")),
+        reverse_fraction=_opt_float(row.get("reverse_fraction")),
+        off_fraction=_opt_float(row.get("off_fraction")),
         exit_width_um=exit_w * 1e6,
         exit_depth_um=exit_d * 1e6,
         lambda_visc=(config.fluids.mu_continuous / config.fluids.mu_dispersed

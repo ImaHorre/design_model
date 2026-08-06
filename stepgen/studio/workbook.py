@@ -113,6 +113,15 @@ _COLUMNS: list[tuple[str, str, str]] = [
     # the study asked for it: it costs ~40 network solves per design (D6), and it
     # is a property of the design at a given Qw, not of the swept pressure.
     ("Po_min_production_mbar", "Po min production (mbar)", "int"),
+    # The rung-regime split at THIS pressure — the same question
+    # `Po_min_production_mbar` answers about the whole sweep, answered about this
+    # row.  These three are what say whether the columns above describe the
+    # device or only the part of it that still works: every ΔP and frequency in
+    # this table is a mean over the ACTIVE rungs alone.  `reverse_fraction` is
+    # scored and can fail a row; the other two are reported and never gate.
+    ("active_fraction", "Active rungs", "pct1"),
+    ("reverse_fraction", "Reverse rungs", "pct1"),
+    ("off_fraction", "Off rungs", "pct1"),
     ("regime_Ca", "Exit Ca", "ca"),
     # The gamma-free regime number and, next to it, the only comparison in the
     # table with no unmeasured constant in it: how much harder this design
@@ -191,6 +200,14 @@ def fmt_metric(value: Any, spec: str = "g3") -> str:
         return f"{f:,.0f}x"
     if spec == "pct0":
         return f"{f * 100:.0f}%"
+    if spec == "pct1":
+        # A rung-regime fraction.  `pct0` would print one flipped rung out of
+        # 11,549 as "0%", which is the single thing this column exists not to do:
+        # `reverse_fraction`'s green bound is exact zero, so a value that is not
+        # zero must never render as zero.
+        if f == 0.0:
+            return "0%"
+        return f"{f * 100:,.1f}%" if abs(f) >= 5e-4 else "<0.1%"
     return f"{f:.3g}"
 
 
@@ -1877,6 +1894,15 @@ def _chapter_json(
                 # the bound", which is the column the Ca-distance view needs.
                 "margins": {k: c.margin for k, c in sr.cells.items()
                             if c.category != "grey"},
+                # NOTE (2026-08-06): this is a THIRD hand-kept list of the same
+                # quantities, after `_COLUMNS` and `interactive.PLOT_METRICS`, and
+                # it has already drifted from them — `Qw_mlhr`, `emulsion_pct`,
+                # `dP_rung_mbar`, `t_stage1_s`, `t_cycle_s` and
+                # `Po_min_production_mbar` are table columns that never reach the
+                # sidecar. That gap is pre-existing and is NOT closed here; it is
+                # written down so the next person meets it as a known hole rather
+                # than a surprise. `test_the_two_metric_lists_have_not_drifted`
+                # guards the first two lists only.
                 "metrics": {
                     "throughput_mlhr": sr.metrics.throughput_mlhr,
                     "N_dfu": sr.metrics.N_dfu,
@@ -1888,6 +1914,11 @@ def _chapter_json(
                     "v_exit_mps": sr.metrics.v_exit_mps,
                     "v_vs_demonstrated": sr.metrics.v_vs_demonstrated,
                     "hub_budget_pct": sr.metrics.hub_budget_pct,
+                    # the rung-regime split: without these the chapter cannot say
+                    # what its own ΔP and frequency numbers were averaged over
+                    "active_fraction": sr.metrics.active_fraction,
+                    "reverse_fraction": sr.metrics.reverse_fraction,
+                    "off_fraction": sr.metrics.off_fraction,
                     "area_used_cm2": sr.metrics.area_used_cm2,
                     "fits_square": sr.metrics.fits_square,
                     "manufacturable": sr.metrics.manufacturable,

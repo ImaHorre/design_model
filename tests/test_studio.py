@@ -204,6 +204,185 @@ def test_scoring_fits_square_gate_forces_red():
 
 
 # ---------------------------------------------------------------------------
+# The rung-regime split reaches the chapter (2026-08-06)
+# ---------------------------------------------------------------------------
+
+_APPLICABLE_REV = _APPLICABLE | {"reverse_fraction"}
+
+
+def test_reverse_fraction_may_veto_and_is_not_capped_at_orange():
+    """
+    Unlike `regime_Ca`, nothing unmeasured enters this number -- it is the
+    fraction of solved rung flows with the wrong sign -- so it is allowed to
+    fail a row.  `CAPPED_AT_ORANGE` exists for thresholds we have no standing
+    to enforce; this is not one.
+    """
+    from stepgen.studio.scoring import CAPPED_AT_ORANGE
+
+    assert "reverse_fraction" not in CAPPED_AT_ORANGE
+
+    cm = _cm(throughput_mlhr=10, uniformity_pct=5, operating_Po_mbar=50,
+             regime_Ca=0.005, fits_square=True, manufacturable=True,
+             reverse_fraction=0.315, active_fraction=0.358, off_fraction=0.327)
+    sr = score_metrics(cm, _SCORING, _APPLICABLE_REV)
+    assert sr.cells["reverse_fraction"].category == "red"
+    assert sr.overall == "red"
+    assert any("reverse" in c.lower() for c in sr.chips)
+
+
+def test_zero_reverse_is_green_and_a_single_flipped_rung_only_warns():
+    """
+    Green is exact zero -- experimentally any reverse flow is device-killing --
+    but the band up to REVERSE_FRACTION_MAX is a buffer against the *model*: one
+    rung flipping near its capillary threshold must not condemn a design that
+    runs in the lab.
+    """
+    kw = dict(throughput_mlhr=10, uniformity_pct=5, operating_Po_mbar=50,
+              regime_Ca=0.005, fits_square=True, manufacturable=True)
+
+    clean = score_metrics(_cm(reverse_fraction=0.0, active_fraction=1.0,
+                              off_fraction=0.0, **kw), _SCORING, _APPLICABLE_REV)
+    assert clean.cells["reverse_fraction"].category == "green"
+    assert clean.overall == "green"
+
+    one_rung = score_metrics(_cm(reverse_fraction=1 / 11549, **kw),
+                             _SCORING, _APPLICABLE_REV)
+    assert one_rung.cells["reverse_fraction"].category == "orange"
+    assert one_rung.overall == "orange"
+
+
+def test_families_without_a_rung_network_leave_it_na():
+    """
+    Radial is closed-form and manifold does not classify its solved flows, so
+    both must say N-A rather than assert zero reverse flow.
+    """
+    from stepgen.families import get_family
+
+    assert "reverse_fraction" in get_family("serpentine").applicable_metrics()
+    for name in ("radial", "manifold"):
+        assert "reverse_fraction" not in get_family(name).applicable_metrics()
+
+    sr = score_metrics(_cm(family="radial", reverse_fraction=None,
+                           throughput_mlhr=10, operating_Po_mbar=50,
+                           fits_square=True, manufacturable=True),
+                       _SCORING, _APPLICABLE)
+    assert sr.cells["reverse_fraction"].category == "grey"
+
+
+def test_solved_serpentine_row_carries_the_three_fractions():
+    """The chain evaluate_candidate row -> CommonMetrics -> to_row() -> frame."""
+    from stepgen.config import load_config
+    from stepgen.families.serpentine import solve_config
+
+    cfg = load_config(str(Path(__file__).resolve().parents[1] / "configs" / "v5_30.yaml"))
+    cm = solve_config(cfg, Po_mbar=200.0, Qw_mlhr=5.0, label="ow")
+
+    assert cm.active_fraction == 1.0
+    assert cm.reverse_fraction == 0.0
+    assert cm.off_fraction == 0.0
+    assert (cm.active_fraction + cm.reverse_fraction + cm.off_fraction
+            == pytest.approx(1.0))
+
+    row = cm.to_row()
+    for key in ("active_fraction", "reverse_fraction", "off_fraction"):
+        assert key in row
+
+
+def test_a_degenerate_row_discloses_what_its_numbers_are_over():
+    """
+    The defect this exists for is labelling, not arithmetic: `uniformity_pct` is
+    a correct mean over the ACTIVE rungs, presented as device-level.  A row whose
+    active fraction is under 1 must say so where the numbers are read.
+    """
+    from stepgen.config import load_config
+    from stepgen.families.serpentine import solve_config
+
+    cfg = load_config(str(Path(__file__).resolve().parents[1] / "configs" / "wo_v5_30.yaml"))
+    cm = solve_config(cfg, Po_mbar=200.0, Qw_mlhr=5.0, label="wo")
+
+    assert cm.active_fraction < 1.0
+    assert cm.reverse_fraction > 0.0
+    assert any("active" in n and "backwards" in n for n in cm.notes), cm.notes
+
+
+def test_a_reversing_row_reaches_the_chapter_red_with_its_numbers(tmp_path):
+    """
+    The whole chain, end to end: evaluate_candidate -> CommonMetrics -> scoring
+    -> HTML table AND JSON sidecar.
+
+    The sidecar's `metrics` dict is a THIRD hand-kept list of the same
+    quantities (after `_COLUMNS` and `PLOT_METRICS`), and it is what D3 pools --
+    a column that reaches the table but not the sidecar is invisible to every
+    downstream reader, which is exactly what happened when this was written.
+    """
+    import json
+
+    from stepgen.studio import run_study, write_workbook
+    from stepgen.studio.scoring import score_result
+    from stepgen.studio.study import load_study_text
+
+    # wo_v5_30's geometry: the one checked-in device that actually reverses.
+    study = load_study_text("""
+title: reverse-flow chain
+family: serpentine
+serpentine:
+  - main: { length_mm: 693, depth_um: 200, width_um: 1000 }
+    rung: { length_mm: 4, upstream_width_um: 8 }
+    junction: { exit_width_um: 30, exit_depth_um: 10, pitch_um: 60 }
+fluids:
+  - { mu_dispersed: 0.00089, mu_continuous: 0.050, gamma: 0.015, phase_system: w/o }
+  - { mu_dispersed: 0.050, mu_continuous: 0.00089, gamma: 0.015, phase_system: o/w }
+footprint: { square_side_mm: 100.0 }
+operating: { Po_mbar: 200, Qw_mlhr: 5.0 }
+scoring:
+  uniformity_pct: { green: 15, orange: 30 }
+  throughput_mlhr: { green: 5, orange: 1, higher_better: true }
+""")
+    result = run_study(study)
+    scored = score_result(result, study.scoring)
+    assert len(scored) == 2
+
+    by_phase = {sr.metrics.phase_system: sr for sr in scored}
+    wo, ow = by_phase["w/o"], by_phase["o/w"]
+
+    # the w/o row reverses, is red for that reason, and says so
+    assert wo.metrics.reverse_fraction > 0.1
+    assert wo.cells["reverse_fraction"].category == "red"
+    assert wo.overall == "red"
+    assert any("reverse" in c.lower() for c in wo.chips)
+
+    # the o/w row on the SAME geometry does not, and stays green on this metric
+    assert ow.metrics.reverse_fraction == 0.0
+    assert ow.cells["reverse_fraction"].category == "green"
+
+    html = write_workbook(result, tmp_path / "chapter.html")
+    text = Path(html).read_text(encoding="utf-8")
+    for header in ("Active rungs", "Reverse rungs", "Off rungs"):
+        assert header in text, f"{header} missing from the chapter table"
+
+    sidecar = json.loads(
+        Path(html).with_suffix(".json").read_text(encoding="utf-8"))
+    for row in sidecar["rows"]:
+        for key in ("active_fraction", "reverse_fraction", "off_fraction"):
+            assert row["metrics"][key] is not None, f"{key} missing from sidecar"
+        m = row["metrics"]
+        assert (m["active_fraction"] + m["reverse_fraction"] + m["off_fraction"]
+                == pytest.approx(1.0))
+
+
+def test_pct1_never_renders_a_nonzero_fraction_as_zero():
+    """
+    The scoring bound is exact zero, so a column that printed 1/11549 as "0%"
+    would contradict its own red cell.
+    """
+    from stepgen.studio.workbook import fmt_metric
+
+    assert fmt_metric(0.0, "pct1") == "0%"
+    assert fmt_metric(1 / 11549, "pct1") == "<0.1%"
+    assert fmt_metric(0.314832, "pct1") == "31.5%"
+
+
+# ---------------------------------------------------------------------------
 # End-to-end: the shipped template loads and runs
 # ---------------------------------------------------------------------------
 
@@ -1061,6 +1240,8 @@ _TABLE_ONLY = {
     "hub_budget_pct": "radial-only; the menu already drops family-specific keys",
     "bend_radius_um": "determined by the lane pitch — plotting it plots the pitch",
     "wall_at_turn_um": "reported geometry, never gated (decision 9 / W2-5)",
+    "off_fraction": "off = 1 - active - reverse; the other two are both plottable, "
+                    "so plotting the third plots a quantity already on the axes",
 }
 
 

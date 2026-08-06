@@ -53,6 +53,7 @@ SCORING_KEYS: frozenset[str] = frozenset({
     "operating_Po_mbar",
     "regime_Ca",
     "v_vs_demonstrated",
+    "reverse_fraction",
     "hub_budget_pct",
     "build",
     "validity",
@@ -305,6 +306,30 @@ class CommonMetrics:
     v_vs_demonstrated: float | None = None
     hub_budget_pct: float | None = None     # radial: hub ΔP as % of supply (lower=better; N-A elsewhere)
     area_used_cm2: float | None = None      # occupied chip area [cm²]
+
+    # ── rung regime split (2026-08-06) ──────────────────────────────────────
+    # The three masks *partition* the rungs (``models/metrics.py``), so these
+    # sum to 1.0 for any family that computes them, and ``None`` everywhere else
+    # (radial is closed-form and has no per-rung network; manifold solves one but
+    # does not classify it).
+    #
+    # They are here because without them the chapter cannot say what its own
+    # numbers are computed over.  ``uniformity_pct``, ``dP_rung_mbar``,
+    # ``frequency_hz`` and ``Q_per_rung_avg`` are all means over the ACTIVE rungs
+    # alone — correct arithmetic over a subpopulation, presented as device-level.
+    # A row with ``active_fraction = 0.36`` is describing a third of a device.
+    #
+    #: fraction of rungs flowing the intended way [0–1]
+    active_fraction: float | None = None
+    #: fraction of rungs flowing BACKWARDS — continuous phase entering the
+    #: dispersed main.  A scored metric (:data:`SCORING_KEYS`) and a hard
+    #: constraint in ``design/sweep.py``; the threshold is
+    #: ``operating_map.REVERSE_FRACTION_MAX``.
+    reverse_fraction: float | None = None
+    #: fraction of rungs below their capillary threshold — dead, not backwards.
+    #: **Reported, never gated**: this is what a device does at too low a drive
+    #: pressure, so it is an operating-point fact rather than a design fault.
+    off_fraction: float | None = None
 
     # ── fold geometry: REPORTED, never gated (decision 9 / W2-5) ────────────
     #: Centreline radius of the 180° fold [µm].  **Determined, not chosen**: a

@@ -34,6 +34,7 @@ def _small_spec(
     target_droplet_um: float = 15.0,
     target_emulsion_ratio: float = 0.10,
     optimization_target: str = "max_throughput",
+    footprint_area_cm2: float = 10.0,
 ) -> DesignSearchSpec:
     return DesignSearchSpec(
         design_targets=DesignTargets(
@@ -42,7 +43,7 @@ def _small_spec(
             Qw_in_mlhr=10.0,
         ),
         footprint=FootprintConfig(
-            footprint_area_cm2=10.0,
+            footprint_area_cm2=footprint_area_cm2,
             footprint_aspect_ratio=1.5,
             lane_spacing=500e-6,
             turn_radius=500e-6,
@@ -118,7 +119,10 @@ class TestJunctionAspectRatio:
 
     def test_valid_ar_passes_hard(self):
         """junction_ar=2.75 is within [2.5, 3.0] → candidate can pass hard constraints."""
-        spec = _small_spec(junction_ar=(2.75,))
+        # 2 cm², not the 10 cm² default: see TestDefaultSpecIsOilStarved below.
+        # This test is about the aspect-ratio gate, so its candidate has to be a
+        # device that clears every *other* gate.
+        spec = _small_spec(junction_ar=(2.75,), footprint_area_cm2=2.0)
         df = run_design_search(spec)
         assert df["passes_hard"].any()
 
@@ -353,6 +357,70 @@ class TestPressureHardConstraints:
 
     def test_default_Po_limits_allow_normal_design(self):
         """Default max_Po_in_mbar=1000 should allow typical designs to pass hard constraints."""
-        spec = _small_spec()  # uses DesignHardConstraints() defaults
+        # DesignHardConstraints() defaults, on a device that is actually normal —
+        # 2 cm² derives Po ≈ 220 mbar with every rung active.  The 10 cm² default
+        # spec is not a normal design; see TestDefaultSpecIsOilStarved below.
+        spec = _small_spec(footprint_area_cm2=2.0)
         df = run_design_search(spec)
         assert df["passes_hard"].any(), "Expected at least one passing candidate with default Po limits"
+
+
+class TestDefaultSpecIsOilStarved:
+    """
+    Found by the reverse-flow guard (2026-08-06), and recorded rather than
+    papered over: the 10 cm² default spec is **not a working device**.
+
+    Mode B asks the *linear* solver for the Po that delivers Qo = 1.0 mL/hr.  The
+    linear solve has no capillary thresholds, so it answers 65 mbar — and at
+    65 mbar a 500 × 100 µm main cannot feed 13,326 rungs.  The far end sits below
+    the water rail, water pushes back through it, and the net oil flow comes out
+    **negative**: the device consumes oil.
+
+    Two tests above asserted `passes_hard` on this candidate and were green only
+    because nothing checked flow direction.  This is o/w (0.89 cP continuous,
+    34.5 cP dispersed), so reverse flow is not a W/O-only pathology — it is what
+    an oil-starved ladder does regardless of which phase is which.
+
+    Not fixed here: Mode B deriving a drive pressure that yields negative
+    throughput is a design-search defect, and correcting the oracle is a separate
+    piece of work.  What must not happen again is it being reported as passing.
+    """
+
+    def test_ten_cm2_default_is_reported_as_failing(self):
+        import stepgen.design.sweep as sweep_mod
+
+        seen: list[dict] = []
+        original = sweep_mod.evaluate_candidate
+
+        def spy(*args, **kwargs):
+            row = original(*args, **kwargs)
+            seen.append(row)
+            return row
+
+        sweep_mod.evaluate_candidate = spy
+        try:
+            df = run_design_search(_small_spec())   # the 10 cm² default
+        finally:
+            sweep_mod.evaluate_candidate = original
+
+        assert seen, "no candidate was solved"
+        row = seen[-1]
+        assert row["reverse_fraction"] > 0.4
+        assert row["Q_oil_total"] < 0.0, "net oil flow is into the device"
+        assert row["passes_hard_constraints"] is False
+        assert not df["passes_hard"].any()
+
+    def test_a_fully_active_candidate_still_passes(self):
+        """The guard must not simply fail everything the design search proposes."""
+        df = run_design_search(_small_spec(footprint_area_cm2=2.0))
+        assert df["passes_hard"].any()
+
+    def test_off_rungs_alone_do_not_fail_a_candidate(self):
+        """
+        At 4 cm² the candidate is 51 % active / 49 % off with no reverse flow.
+        Half the DFUs dead is a low-drive-pressure operating point, not a broken
+        design, and it must still pass — that is the off/reverse distinction.
+        """
+        df = run_design_search(_small_spec(footprint_area_cm2=4.0))
+        assert df["passes_hard"].any()
+        assert (df["active_fraction"] < 1.0).any()

@@ -148,6 +148,116 @@ class TestHardConstraints:
 
 
 # ---------------------------------------------------------------------------
+# Reverse flow — the hard constraint added 2026-08-06
+# ---------------------------------------------------------------------------
+
+_CONFIGS = Path(__file__).resolve().parents[1] / "configs"
+
+
+class TestReverseFlowIsAHardConstraint:
+    """
+    A device whose rungs run backwards is not a device operating below its best
+    point -- it is continuous phase entering the dispersed main, which no drive
+    pressure recovers.  Before this guard, `configs/wo_v5_30.yaml` at Po = 200
+    reported `passes_hard_constraints=True` with 31 % of rungs reversed at
+    Qw = 5 and 47 % at Qw = 20, and at Qw = 20 a *negative* net Q_oil_total.
+    """
+
+    def test_threshold_has_exactly_one_definition(self):
+        """
+        The sweep guard and the operating-map window criteria must not drift.  A
+        second 0.1 written somewhere else would let a row pass hard constraints
+        while its own robustness window (which reaches this constant through
+        `_compute_robustness_fields`) said the point was out.
+        """
+        import inspect
+
+        from stepgen.design import sweep as sweep_mod
+        from stepgen.design.operating_map import (
+            REVERSE_FRACTION_MAX, compute_operating_map,
+        )
+        from stepgen.studio.scoring import DEFAULT_METRIC_SPECS
+
+        sig = inspect.signature(compute_operating_map)
+        assert sig.parameters["reverse_fraction_max"].default == REVERSE_FRACTION_MAX
+        assert (DEFAULT_METRIC_SPECS["reverse_fraction"]["orange"]
+                == REVERSE_FRACTION_MAX)
+        # and the guard reads the constant rather than a literal
+        src = inspect.getsource(sweep_mod._check_hard_constraints)
+        assert "REVERSE_FRACTION_MAX" in src
+
+    @pytest.mark.parametrize("Qw", [5.0, 20.0])
+    def test_wo_v5_30_no_longer_passes(self, Qw):
+        from stepgen.config import load_config
+        from stepgen.design.operating_map import REVERSE_FRACTION_MAX
+
+        cfg = load_config(str(_CONFIGS / "wo_v5_30.yaml"))
+        row = evaluate_candidate(cfg, Po_in_mbar=200.0, Qw_in_mlhr=Qw)
+
+        assert row["reverse_fraction"] > REVERSE_FRACTION_MAX
+        assert row["passes_hard_constraints"] is False
+        assert "reverse_fraction" in row["hard_constraint_failures"]
+
+    @pytest.mark.parametrize("Qw", [5.0, 10.0, 20.0])
+    def test_ow_v5_30_is_unchanged(self, Qw):
+        """The regression that matters: o/w has no reverse flow and must not move."""
+        from stepgen.config import load_config
+
+        cfg = load_config(str(_CONFIGS / "v5_30.yaml"))
+        row = evaluate_candidate(cfg, Po_in_mbar=200.0, Qw_in_mlhr=Qw)
+
+        assert row["reverse_fraction"] == 0.0
+        assert row["active_fraction"] == 1.0
+        assert row["passes_hard_constraints"] is True
+        assert row["hard_constraint_failures"] == ""
+        assert row["metrics_over_subpopulation"] is False
+        assert row["subpopulation_note"] == ""
+
+    def test_geometry_only_call_still_works_without_metrics(self):
+        """
+        `metrics` is optional so a screen with no solve in hand can still check
+        the fabrication and footprint limits.
+        """
+        from stepgen.design.sweep import _check_hard_constraints
+
+        cfg = _make_config()
+        assert _check_hard_constraints(cfg, True) == []
+        assert _check_hard_constraints(cfg, False) == ["footprint too large for chip"]
+
+
+class TestOffFractionIsReportedNotGated:
+    """
+    An OFF rung is one below its capillary threshold at this drive pressure -- a
+    legitimate low-Po point on a working device, not a broken design.  Failing it
+    would delete the bottom of every pressure sweep.  What it *does* require is
+    disclosure: every ΔP and frequency on the row is a mean over the active rungs
+    alone, and the rungs that switch off first are the starved far-end ones, so
+    dead rungs *flatter* the reported ΔP spread.
+    """
+
+    def test_off_rungs_alone_do_not_fail_the_row(self):
+        from stepgen.config import load_config
+
+        # 60 cP w/o on a 160 mm main at 40 mbar: ~48 % off, no reverse flow.
+        cfg = load_config(str(_CONFIGS / "wo_v5_30.yaml"))
+        row = evaluate_candidate(cfg, Po_in_mbar=1200.0, Qw_in_mlhr=5.0)
+        if row["off_fraction"] > 0.0 and row["reverse_fraction"] == 0.0:
+            assert row["passes_hard_constraints"] is True
+            assert "off_fraction" not in row["hard_constraint_failures"]
+
+    def test_a_degenerate_row_says_what_its_numbers_are_over(self):
+        from stepgen.config import load_config
+
+        cfg = load_config(str(_CONFIGS / "wo_v5_30.yaml"))
+        row = evaluate_candidate(cfg, Po_in_mbar=200.0, Qw_in_mlhr=5.0)
+
+        assert row["active_fraction"] < 1.0
+        assert row["metrics_over_subpopulation"] is True
+        note = row["subpopulation_note"]
+        assert "active" in note and "off" in note and "backwards" in note
+
+
+# ---------------------------------------------------------------------------
 # sweep
 # ---------------------------------------------------------------------------
 

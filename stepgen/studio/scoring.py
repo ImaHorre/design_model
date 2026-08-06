@@ -52,6 +52,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from stepgen.design.operating_map import REVERSE_FRACTION_MAX
 from stepgen.families.base import (
     CONFIDENCE_WEIGHT,
     DROPLET_FIT_DEPTH_UM,
@@ -70,6 +71,7 @@ _METRIC_FIELDS: dict[str, tuple[str, str, str]] = {
     "operating_Po_mbar": ("operating_Po_mbar", "Drive pressure", "mbar"),
     "regime_Ca":         ("regime_Ca",         "Exit Ca", ""),
     "v_vs_demonstrated": ("v_vs_demonstrated", "vs demonstrated", "x"),
+    "reverse_fraction":  ("reverse_fraction",  "Reverse flow", ""),
     "hub_budget_pct":    ("hub_budget_pct",    "Hub ΔP budget", "%"),
 }
 
@@ -102,8 +104,19 @@ CAPPED_AT_ORANGE: frozenset[str] = frozenset({"regime_Ca", "v_vs_demonstrated"})
 #: fastest DFU in the V5-8-1 sweep; 10x is the point past which "a bit beyond
 #: experience" stops being a fair description.  A study may override them, but it
 #: should not have to opt in to being told it is 47x outside anything ever built.
+#: ``reverse_fraction`` qualifies on the same grounds and is deliberately **not**
+#: in :data:`CAPPED_AT_ORANGE`.  Nothing unmeasured enters it: it is the fraction
+#: of rungs whose solved flow has the wrong sign, and the sign of a network flow
+#: is not a fitted quantity.  Green is exact zero — experimentally any reverse
+#: flow is device-killing — and the orange band up to
+#: :data:`~stepgen.design.operating_map.REVERSE_FRACTION_MAX` is a buffer against
+#: the *model*, not a claim that 9 % backwards is tolerable: one rung flipping
+#: near its capillary threshold must not condemn a design that runs in the lab.
+#: Past that it may veto, because no drive pressure recovers a device that is
+#: pulling continuous phase into the dispersed main.
 DEFAULT_METRIC_SPECS: dict[str, dict[str, Any]] = {
     "v_vs_demonstrated": {"green": 1.0, "orange": 10.0},
+    "reverse_fraction": {"green": 0.0, "orange": REVERSE_FRACTION_MAX},
 }
 
 

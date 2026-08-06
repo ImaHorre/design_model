@@ -65,6 +65,11 @@ PLOT_METRICS: list[tuple[str, str, str, bool]] = [
     ("t_stage1_s", "Stage-1 refill (s)", "g3", True),
     ("t_cycle_s", "Cycle time (s)", "g3", True),
     ("droplet_um", "Droplet (µm)", "f1", False),
+    # Both are real curves across a pressure sweep — active climbs 0.20 → 1.00
+    # and reverse falls away as Po rises — so they plot as trends, not verdicts.
+    # `off_fraction` is the third of three that sum to one and is table-only.
+    ("active_fraction", "Active rungs", "pct1", False),
+    ("reverse_fraction", "Reverse rungs", "pct1", False),
     ("area_used_cm2", "Area (cm²)", "f1", False),
     ("emulsion_pct", "Emulsion (%)", "f1", False),
     ("margin", "Margin from failure", "pct0", False),
