@@ -1,0 +1,117 @@
+# studio_defaults.yaml — house defaults for the Design Studio front door (plan C3)
+# ─────────────────────────────────────────────────────────────────────────────
+# What this is: the values the form starts from, in one checked-in reviewable
+# place, so "what did we assume?" has a file to point at instead of a default
+# buried in a function signature.
+#
+# What this is NOT: a study. Nothing here is swept and nothing here runs. A
+# study config (see configs/study_my_designs.yaml) may override any of it, and
+# the form's "adjust axes" expander writes those overrides.
+#
+# Changing a number here changes what a NEW study starts from. It does not
+# touch any chapter already written — those carry their own verbatim config
+# snapshot in their sidecar.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── what a new study starts from ─────────────────────────────────────────────
+sweep_defaults:
+
+  footprint:
+    square_side_mm: 100.0
+    # No reserve_border_mm. The unroutable share of the die is MEASURED per
+    # family (serpentine 51%, radial 64% of a 100 mm die — reference_devices/),
+    # not guessed as an edge margin. Note the measurement is only valid at
+    # 100 mm; a row on another die carries active_fraction_note().
+
+  manufacturing:
+    max_main_depth_um: 200.0
+    max_main_width_um: 2000.0
+    min_wall_um: 5.0
+
+  fluids:
+    # The o/w system: sunflower oil dispersed in 2% SDS water.
+    # µ_dispersed and µ_continuous are the WHOLE hydraulic control —
+    # resistance.py reads mu_dispersed for the rung and oil main, mu_continuous
+    # for the continuous main, and nothing else in the ladder reads a fluid
+    # property.
+    mu_dispersed: 0.06        # Pa·s — sunflower oil (SO is ALWAYS sunflower oil)
+    mu_continuous: 0.00089    # Pa·s — 2% SDS water
+    gamma: 0.005              # N/m — UNMEASURED for this system. Ca ∝ 1/γ, so γ
+                              # alone would decide a Ca verdict; that is why the
+                              # operating gate is v_vs_demonstrated, in which γ
+                              # cancels exactly. γ still moves a reported number.
+    phase_system: o/w         # LABEL ONLY — branches no physics. All reads are
+                              # display (config.py:50-59, CLI, plot titles,
+                              # grouping). But study.py:161 makes it the row
+                              # DISCRIMINATOR, so a label that disagrees with the
+                              # viscosities changes how rows group. Keep it
+                              # consistent with µ by hand, or let the form's
+                              # o/w↔w/o toggle set it.
+
+  operating:
+    Po_mbar: [25, 40, 60, 80, 100, 150, 200, 300, 500, 700, 1000]
+    Qw_mlhr: 5.0
+    # Give Qw_mlhr OR target_emulsion_pct, never both. Fixed Qw is faster but
+    # the emulsion fraction then drifts across the sweep and differs per design,
+    # which makes the comparison partly a comparison of emulsion fractions.
+
+  scoring:
+    uniformity_pct:    { green: 15,     orange: 30 }
+    operating_Po_mbar: { green: 500,    orange: 1000 }
+    throughput_mlhr:   { green: 5,      orange: 1, higher_better: true }
+    regime_Ca:         { green: 0.0125, orange: 0.03 }
+    build:             { from: manufacturing, fits_square: required }
+
+
+# ── what a solve costs ───────────────────────────────────────────────────────
+# Measured 2026-08-06 on the dev machine, median of 10–15 reps after warm-up.
+# Re-measure with scripts/bench_solve_cost.py; these are wall-clock on one
+# machine and are used ONLY to put an estimate on the form before you commit to
+# a run. Nothing scores or gates on them.
+#
+# The headline finding: there is no single ms/point. Serpentine and manifold are
+# linear in the number of elements they solve, across a 30x range; radial does
+# no network solve at all and is ~2000x cheaper than either. An estimate that
+# ignores this is wrong by more than it is right.
+solve_cost:
+
+  serpentine:
+    # Linear in rung count — one ladder solve over N rungs.
+    #   N=  83 →   3.5 ms      N= 666 →  23.7 ms
+    #   N= 166 →   6.6 ms      N=1333 →  47.0 ms
+    #   N= 333 →  12.1 ms      N=2666 → 106.4 ms
+    us_per_element: 36.0        # µs per rung
+    ms_per_point: 12.1          # flat fallback, AT THE REFERENCE SIZE BELOW
+    reference_elements: 333     # 40 mm main at 120 µm pitch
+
+  manifold:
+    # Linear in total nodes (arms × rungs_per_arm) — nodal graph solve.
+    #   80 →   3.9 ms       1280 →  65.2 ms
+    #  320 →  15.8 ms       3200 → 140.4 ms
+    us_per_element: 48.0        # µs per node
+    ms_per_point: 15.8
+    reference_elements: 320     # 8 arms × 40 rungs
+
+  radial:
+    # Closed form — no network solve, so cost does not scale with spoke count.
+    us_per_element: 0.0
+    ms_per_point: 0.017
+    reference_elements: 0
+
+  # Used for a family with no entry above.
+  default:
+    us_per_element: 36.0
+    ms_per_point: 12.1
+    reference_elements: 333
+
+
+# ── things that cost extra, and are opt-in for that reason ───────────────────
+extras:
+  production_threshold:
+    # ~40 network solves per DESIGN (not per point) — it does not depend on the
+    # swept Po, so a 350-point pressure sweep needs it a handful of times.
+    solves_per_design: 40
+  diagnose:
+    # `auto` prices only when nothing scored green; `always` costs one full
+    # re-run per active constraint.
+    default: auto

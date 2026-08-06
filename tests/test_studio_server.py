@@ -76,7 +76,12 @@ def test_preview_counts_template_points_without_solving(client):
     assert d["ok"] is True
     assert d["n_points"] == 27
     assert d["per_family"] == {"serpentine": 27}
-    assert d["est_seconds"] == round(27 * MS_PER_POINT / 1000.0, 1)
+    # estimate now comes from the per-family measured rates (C3), not the flat
+    # legacy MS_PER_POINT — 27 serpentine points at the reference size.
+    from stepgen.studio.defaults import load_defaults
+    expected = load_defaults().estimate_seconds({"serpentine": 27})
+    assert d["est_seconds"] == round(expected, 1)
+    assert d["est_basis"] == "per-family measured rates"
 
 
 def test_preview_reports_bad_yaml_as_a_message_not_a_500(client):
@@ -156,3 +161,25 @@ def test_run_name_cannot_escape_book_dir(client, tmp_path):
 
 def test_missing_chapter_is_404(client):
     assert client.get("/book/nope.html").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# House defaults, served read-only (C3)
+# ---------------------------------------------------------------------------
+
+def test_defaults_route_serves_values_and_verbatim_text(client):
+    r = client.get("/defaults")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True
+    assert d["sweep_defaults"]["footprint"]["square_side_mm"] == 100.0
+    assert "serpentine" in d["solve_cost"]
+    # the comments are most of the value of that file, so the raw text ships too
+    assert "sweep_defaults" in d["source_text"]
+    assert "#" in d["source_text"]
+
+
+def test_form_shows_the_defaults_panel(client):
+    body = client.get("/").text
+    assert "House defaults" in body
+    assert "/defaults" in body

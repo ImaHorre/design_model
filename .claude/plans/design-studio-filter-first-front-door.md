@@ -1184,9 +1184,35 @@ Scope reduced by decision 12: the chapter already filters, so C is the **front d
   is what makes W/O one click instead of a hand-edited YAML, and a W/O row on a long,
   narrow main scores today with no disclosure that a third of its rungs run backwards.
   C1 and C3 are not blocked.
-- **C3.** House sweep-level defaults as a checked-in, reviewable file — shown read-only in
-  the form, with an "adjust axes" expander for full control. Carries the measured
-  ms/point per family for C2's estimate.
+- **C3.** House sweep-level defaults as a checked-in, reviewable file. ✅ `<this commit>`
+
+  `configs/studio_defaults.yaml` + `stepgen/studio/defaults.py`, served read-only at
+  `GET /defaults` and shown in the form as a collapsible panel — the parsed values *and*
+  the verbatim file text, because the comments are most of that file's value. The
+  "adjust axes" expander is C2's job, since it needs the form's axis region to adjust.
+
+  **The plan's "~19 ms/point" is superseded — it was one geometry's average hiding a 30×
+  range.** Re-measured 2026-08-06 (`scripts/bench_solve_cost.py`, median of 10–15 reps
+  after warm-up):
+
+  | family | scaling | rate | span |
+  |---|---|---|---|
+  | serpentine | linear in rung count | ~36 µs/rung | 3.5 ms (N=83) → 106 ms (N=2666) |
+  | manifold | linear in node count | ~48 µs/node | 3.9 ms (80) → 140 ms (3200) |
+  | radial | **closed form, no network solve** | — | 0.017 ms, flat |
+
+  Radial is ~700× cheaper than serpentine at the reference size, so a single flat rate
+  across families is wrong by more than it is right. The file therefore carries
+  `us_per_element` *and* a flat `ms_per_point` quoted at a stated `reference_elements`;
+  `SolveCost.seconds()` uses the element rate when given a count and the flat rate
+  otherwise. Tests pin the element rate against the measured curve at 20% — loose enough
+  to survive a machine change, tight enough to catch a shape change.
+
+  **Known gap, deliberate:** `/preview` passes no element counts, so it quotes the flat
+  rate (352 flagship points → 4.3 s, against a true ~5 s since that study's N runs 66 to
+  1333). Deriving N per point means compiling every point, and the derivation lives in
+  the family compile — duplicating it here is exactly what W2-2 exists to prevent. The
+  response labels its basis (`est_basis`) rather than hiding the approximation.
 
 ---
 

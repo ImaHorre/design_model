@@ -66,13 +66,17 @@ class RunRequest(BaseModel):
     production_threshold: bool = False
     extends: str | None = None
 
-#: Measured solve cost — 1,368 points in ~26 s (plan, "Solve cost").  Used only
-#: to put a number on the preview; it is a straight-line estimate and says so.
+#: Legacy flat rate — 1,368 points in ~26 s (plan, "Solve cost").  Kept only as
+#: the last-resort fallback if ``configs/studio_defaults.yaml`` cannot be read.
+#: It is a single geometry's average: measurement on 2026-08-06 put serpentine
+#: at 3.5 ms (83 rungs) to 106 ms (2666 rungs) and radial at 0.017 ms, so one
+#: number across all families is wrong by more than it is right.  Per-family
+#: rates live in the defaults file — see ``studio.defaults``.
 MS_PER_POINT: float = 19.0
 
 
 def estimate_seconds(n_points: int) -> float:
-    """Straight-line runtime estimate for *n_points*, in seconds."""
+    """Flat fallback estimate, in seconds.  Prefer ``StudioDefaults.estimate_seconds``."""
     return n_points * MS_PER_POINT / 1000.0
 
 
@@ -125,13 +129,26 @@ def _expand(text: str) -> dict[str, Any]:
         per_family[point.family] = per_family.get(point.family, 0) + 1
 
     n = len(study.points)
+
+    # Per-family rates from the checked-in defaults; the flat legacy rate only
+    # if that file is unreadable, so a broken defaults file degrades the
+    # estimate rather than the preview.
+    try:
+        from stepgen.studio.defaults import load_defaults
+        est = load_defaults().estimate_seconds(per_family)
+        est_basis = "per-family measured rates"
+    except Exception:
+        est = estimate_seconds(n)
+        est_basis = f"flat {MS_PER_POINT:g} ms/point (defaults file unreadable)"
+
     return {
         "ok": True,
         "title": study.title,
         "families": list(study.families),
         "n_points": n,
         "per_family": per_family,
-        "est_seconds": round(estimate_seconds(n), 1),
+        "est_seconds": round(est, 1),
+        "est_basis": est_basis,
         "from_intent": study.from_intent,
     }
 
@@ -161,6 +178,38 @@ def create_app(
     @app.get("/configs")
     def configs() -> JSONResponse:
         return JSONResponse({"configs": _study_configs(configs_path)})
+
+    @app.get("/defaults")
+    def defaults() -> JSONResponse:
+        """
+        The house defaults, read-only (plan C3).
+
+        Served as the parsed values *and* the verbatim file text, so the form
+        can show what it starts from and the reader can see the comments that
+        explain why — the reasoning is most of the value of that file.
+        """
+        from stepgen.studio.defaults import load_defaults
+
+        try:
+            d = load_defaults()
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                status_code=500,
+            )
+        return JSONResponse({
+            "ok": True,
+            "sweep_defaults": d.sweep_defaults,
+            "solve_cost": {
+                k: {"us_per_element": v.us_per_element,
+                    "ms_per_point": v.ms_per_point,
+                    "reference_elements": v.reference_elements}
+                for k, v in d.solve_cost.items()
+            },
+            "extras": d.extras,
+            "source_path": d.source_path,
+            "source_text": d.source_text,
+        })
 
     @app.get("/configs/{name}", response_class=PlainTextResponse)
     def config_text(name: str) -> str:
@@ -330,6 +379,12 @@ _FORM_HTML = """<!doctype html>
   .r { background:#a51d2d22; color:var(--bad); }
   a { color:var(--accent); }
   .note { color:var(--mut); font-size:.82rem; margin-top:.5rem; }
+  .mut { color:var(--mut); font-weight:400; font-size:.8rem; }
+  details { margin-top:1.5rem; border-top:1px solid var(--line); padding-top:.9rem; }
+  summary { cursor:pointer; font-weight:600; }
+  pre { overflow-x:auto; background:var(--panel); border:1px solid var(--line);
+        border-radius:8px; padding:.8rem 1rem; max-height:26rem;
+        font:12.5px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
 </style>
 </head>
 <body>
@@ -367,7 +422,15 @@ _FORM_HTML = """<!doctype html>
 
   <div id="out"></div>
   <p class="note">Adding an axis with k levels multiplies runtime by k.
-     Estimate assumes ~19 ms/point (measured).</p>
+     Solve cost is linear in rung count for serpentine and node count for
+     manifold; radial is closed-form and effectively free.</p>
+
+  <details id="dwrap">
+    <summary>House defaults <span class="mut" id="dpath"></span></summary>
+    <p class="note">Read-only. A study config overrides any of it; edit the file
+       to change what a new study starts from.</p>
+    <pre id="dtext"></pre>
+  </details>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -408,7 +471,8 @@ async function preview() {
   show('<div class="big">' + d.n_points + " points</div>" +
        "<div>" + esc(d.title) + "</div>" +
        '<div class="note">' + fam + " &mdash; about " + d.est_seconds +
-       " s to solve" + (d.from_intent ? " &middot; generated from intent" : "") +
+       " s to solve (" + esc(d.est_basis) + ")" +
+       (d.from_intent ? " &middot; generated from intent" : "") +
        "</div>");
 }
 
@@ -447,6 +511,12 @@ async function run() {
 
 $("btn-preview").addEventListener("click", preview);
 $("btn-run").addEventListener("click", run);
+
+fetch("/defaults").then(r => r.json()).then(d => {
+  if (!d.ok) { $("dtext").textContent = d.error; return; }
+  $("dpath").textContent = d.source_path || "";
+  $("dtext").textContent = d.source_text || "";
+});
 </script>
 </body>
 </html>
