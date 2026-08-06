@@ -27,7 +27,7 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
 | **D (explorer)** | ✅ **complete.** D1 · D4 · D5 `c20df77` · D2 `6e34dc8` · D6 `7f346f4` · D7 `f54ee49` · D3 `<this commit>` |
 | **E** | not started. **E2 is part-done**: D3 defined the stable chapter id it was blocked on. **E1 is not free — read the note at the end of section E** |
-| **F (guard follow-ons)** | F1 ✅ `<this commit>` · **F2 needs a ruling before anyone touches it** |
+| **F (guard follow-ons)** | F1 ✅ `e819e8c` · **F2 needs a ruling before anyone touches it** |
 
 **Start here**: **F2 — the Mode B oracle**, which needs a decision, not code. Then **E —
 provenance**, weighed against lab work per `CLAUDE.md`. Sections C and D are complete.
@@ -1540,7 +1540,7 @@ The guard (`1cdcb0b`) made `stepgen design` fail on the oil-starved default spec
 right to. But the search's row builder has no field for *why* a candidate failed, so the
 correct verdict arrives as a blank table.
 
-### F1 — `stepgen design` records why a candidate failed ✅ `<this commit>`
+### F1 — `stepgen design` records why a candidate failed ✅ `e819e8c`
 
 **The gap.** `run_design_search` builds three row dicts: the footprint reject
 (`design_search.py:286`), the solver error (`:330`) and the success path (`:378`). The two
