@@ -23,15 +23,15 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **Batch 1** | ✅ **complete.** B0 `e53ddc6` · B1 `e21798e` · A4a+A4b `39e7342` · plan `5674636` |
 | **Wave 1** | ✅ **complete.** W1-4 `77ac36a` · W1-1 `d347643` · W1-2 `747a3ce` · W1-3 `9556202` · W1-6 `fd99045` · W1-5 `6ad1f33` |
 | **Wave 2** | ✅ **complete.** W2-2 `3a55423` · W2-1 `71be939` + viscosity `2d51aa6` · W2-1a `76772af` · W2-7 `19ceb65` · W2-3 `1ced3ac` · W2-4 `2f06095` · W2-5 `a1e2e75` · W2-6 `ec606eb` · W2-8 `<this commit>` |
-| **C (server)** | **unblocked** — W2-8 passed. Not started |
+| **C (server)** | ✅ **complete.** C1 `5cee613` · C3 `2463848` · reverse-flow guard `1cdcb0b` · C2 `49a3b27` |
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
 | **D (explorer)** | ✅ **complete.** D1 · D4 · D5 `c20df77` · D2 `6e34dc8` · D6 `7f346f4` · D7 `f54ee49` · D3 `<this commit>` |
 | **E** | not started. **E2 is part-done**: D3 defined the stable chapter id it was blocked on |
 
-**Start here**: **C — the server**, the only section left before E. Section D is
+**Start here**: **E — provenance**, the only section left. Sections C and D are
 complete.
 
-**Baseline is now `pytest -q` → 636 passed, 0 failed, 5 skipped** (from 605/3/5 at
+**Baseline is now `pytest -q` → 717 passed, 0 failed, 5 skipped** at `49a3b27` (636/0/5 at
 `bf8afd4`). **The known-failures list is empty for the first time.** Both `test_cli`
 defects W2-8 diagnosed are fixed in `<this commit>`: `stepgen report` now writes the six
 figures it documents (it wrote two; the five profile builders existed and were never
@@ -1180,10 +1180,35 @@ Scope reduced by decision 12: the chapter already filters, so C is the **front d
   swap button was — a swap offers two vetted systems, a number field accepts 60 cP against
   a long main and scores it silently.
 
-  **Blocked on the reverse-flow guard** (see *Explicitly deferred* below). The swap button
-  is what makes W/O one click instead of a hand-edited YAML, and a W/O row on a long,
-  narrow main scores today with no disclosure that a third of its rungs run backwards.
-  C1 and C3 are not blocked.
+  ✅ **`49a3b27`.** `stepgen/studio/form.py` (generation + validation, testable without a
+  web server) plus two routes: `GET /form/start` seeds the regions from
+  `configs/studio_defaults.yaml`, `POST /build` returns YAML + issues. The textarea stays
+  and stays editable — it is still what `/preview` and `/run` read, so the builder writes
+  the file rather than becoming a second execution path.
+
+  Generated output uses **no anchors**; every block is emitted in full, so the shallow-
+  merge trap cannot be fallen into. The file explains the set-vs-axis rule in its own
+  comments, because it is a file the user goes on to edit.
+
+  **The o/w↔w/o mismatch WARNS, it does not block** — ruled 2026-08-06. `phase_system`
+  branches no physics, so a mismatch cannot make a solved number wrong, only make the row
+  group oddly; and the check is a heuristic that holds only because one phase here is
+  always oil and one always water. Two oils of similar viscosity would trip it while
+  correctly labelled, so refusing on it would be the tool overruling the user. What blocks
+  is only what cannot produce a study: an empty region, or both `Qw` and
+  `target_emulsion_pct` (and that one is not a judgement — the solve raises).
+
+  The swap button **adds** the inverse system rather than mutating a row in place: the
+  pairing is the point of a fluid comparison, and a toggle that rewrote the row you were
+  looking at would lose the other half.
+
+  Departure from C3's sketch: the axis region is a first-class fieldset, not an "adjust
+  axes" expander. It is one of the three regions, and hiding a multiplier behind a
+  disclosure triangle is the wrong shape for the one control that changes runtime.
+
+  Verified: form 48 == `/build` 48 == `/preview` 48 == engine expansion 48; the built YAML
+  runs and writes a chapter; booted under real uvicorn; the served page's JS parses under
+  `node --check`. 31 tests (`tests/test_studio_form.py` 23, `tests/test_studio_server.py` 8).
 - **C3.** House sweep-level defaults as a checked-in, reviewable file. ✅ `<this commit>`
 
   `configs/studio_defaults.yaml` + `stepgen/studio/defaults.py`, served read-only at
@@ -1570,8 +1595,44 @@ clean: 636 passed, 0 failed, 5 skipped.**
   explicit port/strip model would say *why* and would scale to a different die size, where
   an area fraction will not — see W1-2's caveat.
 - **Streamlit retirement.** `ui.py` (941 lines) untouched at v1.
-- **Reverse-flow hard constraint.** *(deferred 2026-08-06, after measurement — Conor ruled
-  "move on")* **Prerequisite for C2, not for C1/C3.**
+- ~~**Reverse-flow hard constraint.**~~ ✅ **LANDED `1cdcb0b` (2026-08-06)** — no longer
+  deferred. Kept below for the measurements and the four corrections, which still stand.
+
+  **What shipped, and the judgement calls:**
+  - Threshold **0.10**, defined once as `operating_map.REVERSE_FRACTION_MAX`; the
+    `compute_operating_map` default argument and the studio's default metric spec both
+    read it. Green in the studio is exact **zero**, so any reverse flow warns and only
+    past the tolerance does it fail.
+  - `SCHEMA_VERSION` **stays at 3**. No existing number moved (352/352 live-study rows
+    bit-identical), the fields are additive, and `_assert_poolable` requires `git_hash`
+    **and** `schema_version` — the `git_hash` half already refuses to pool across this
+    commit, so a bump buys nothing.
+  - `off_fraction` is **in scope, reported, never gated.** An OFF rung is one below its
+    capillary threshold at this drive pressure — a legitimate low-Po point on a working
+    device — so failing it would delete the bottom of every pressure sweep. Rows with
+    `active_fraction < 1` carry a note saying what their ΔP and frequency were averaged
+    over, because the error *flatters*: the rungs that switch off first are the starved
+    far-end ones, so dead rungs improve the reported flatness.
+
+  **Correction to the "adjacent" note below**: `off_fraction` is not merely reachable by
+  extending `main.length_mm` — it is **already live in 53/352 rows** of
+  `study_my_designs.yaml` (32 of them fully off, and 7 reading **orange** with up to 75%
+  of their DFUs dead), because that study sweeps Po down to 25 mbar.
+
+  **Found by the guard, not fixed:** the design-search test fixture's 10 cm² spec is not a
+  working device. Mode B asks the *linear* solver for the Po delivering Qo = 1.0 mL/hr;
+  that solve has no capillary thresholds, so it answers 65 mbar, at which a 500×100 µm
+  main cannot feed 13,326 rungs — 46% reverse and **negative** net oil flow. Two tests
+  asserted `passes_hard` on it. This is **o/w**, so reverse flow is not a W/O-only
+  pathology. Correcting the Mode B oracle is separate work and was not done.
+
+  **Also noted, not fixed:** the chapter sidecar's `metrics` dict is a *third* hand-kept
+  list after `_COLUMNS` and `PLOT_METRICS`, and had already drifted — `Qw_mlhr`,
+  `emulsion_pct`, `dP_rung_mbar`, `t_stage1_s`, `t_cycle_s` and `Po_min_production_mbar`
+  are table columns that never reach the sidecar.
+
+  *(original entry, kept for its measurements)* **Was: prerequisite for C2, not for
+  C1/C3.**
 
   The defect is real but narrow. `configs/wo_v5_30.yaml` at Po=200 returns
   `passes_hard_constraints=True` with `rev=0.315 off=0.327 act=0.358` (Qw=5) and
