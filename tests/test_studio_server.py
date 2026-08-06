@@ -183,3 +183,121 @@ def test_form_shows_the_defaults_panel(client):
     body = client.get("/").text
     assert "House defaults" in body
     assert "/defaults" in body
+
+
+# ---------------------------------------------------------------------------
+# The three-region builder (C2)
+# ---------------------------------------------------------------------------
+
+#: The plan's worked example: 4 designs x 2 fluids x 6 pressures = 48 points.
+_FLAGSHIP = {
+    "title": "flagship",
+    "designs": [
+        {"label": "30x10", "exit_width_um": 30, "exit_depth_um": 10,
+         "pitch_um": 60, "upstream_width_um": 8, "rung_length_mm": 4},
+        {"label": "60x20", "exit_width_um": 60, "exit_depth_um": 20,
+         "pitch_um": 120, "upstream_width_um": 40, "rung_length_mm": 4},
+        {"label": "30x20", "exit_width_um": 30, "exit_depth_um": 20,
+         "pitch_um": 60, "upstream_width_um": 20, "rung_length_mm": 4},
+        {"label": "15x10", "exit_width_um": 15, "exit_depth_um": 10,
+         "pitch_um": 30, "upstream_width_um": 8, "rung_length_mm": 4},
+    ],
+    "fluids": [
+        {"mu_dispersed": 0.06, "mu_continuous": 0.00089,
+         "phase_system": "o/w", "gamma": 0.005},
+        {"mu_dispersed": 0.00089, "mu_continuous": 0.06,
+         "phase_system": "w/o", "gamma": 0.005},
+    ],
+    "axes": {"Po_mbar": [200, 400, 600, 800, 1000, 1200],
+             "main_length_mm": [40], "Qw_mlhr": 5.0,
+             "target_emulsion_pct": None},
+}
+
+
+def test_form_start_seeds_from_the_house_defaults(client):
+    r = client.get("/form/start")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True
+    assert d["designs"] and d["fluids"]
+    assert d["phase_systems"] == ["o/w", "w/o"]
+    # seeded from configs/studio_defaults.yaml, not restated in JavaScript
+    assert d["fluids"][0]["mu_dispersed"] == 0.06
+    assert d["axes"]["Po_mbar"][0] == 25.0
+
+
+def test_build_returns_the_worked_example_count(client):
+    r = client.post("/build", json=_FLAGSHIP)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["ok"] is True
+    assert (d["n_designs"], d["n_fluids"], d["n_crossed"]) == (4, 2, 6)
+    assert d["n_points"] == 48
+    assert d["issues"] == []
+    assert "family: serpentine" in d["yaml"]
+
+
+def test_build_then_preview_agree_on_the_count(client):
+    """
+    The number on the form and the number the engine expands to are the same
+    number, or the count is decoration.
+    """
+    built = client.post("/build", json=_FLAGSHIP).json()
+    previewed = client.post("/preview", json={"yaml": built["yaml"]}).json()
+    assert previewed["ok"] is True
+    assert previewed["n_points"] == built["n_points"] == 48
+
+
+def test_built_yaml_runs_and_writes_a_chapter(client, tmp_path):
+    """The generated text is a real study, not a mock-up of one."""
+    built = client.post("/build", json=_FLAGSHIP).json()
+    r = client.post("/run", json={"yaml": built["yaml"], "name": "c2_built",
+                                  "diagnose": "never"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["ok"] is True
+    assert d["n_points"] == 48 and d["n_errors"] == 0
+    assert (tmp_path / "book" / "c2_built.html").is_file()
+
+
+def test_build_warns_on_a_label_that_disagrees_with_its_viscosities(client):
+    """Warns; does NOT block. The label sets no physics, only grouping."""
+    spec = dict(_FLAGSHIP)
+    spec["fluids"] = [{"mu_dispersed": 0.06, "mu_continuous": 0.00089,
+                       "phase_system": "w/o", "gamma": None}]
+    d = client.post("/build", json=spec).json()
+    assert d["ok"] is True                      # not blocked
+    assert d["yaml"], "a warning must not suppress the generated YAML"
+    warnings = [i for i in d["issues"] if i["level"] == "warning"]
+    assert any("labelled w/o" in i["message"] for i in warnings)
+
+
+def test_build_blocks_an_empty_design_region(client):
+    spec = dict(_FLAGSHIP)
+    spec["designs"] = []
+    d = client.post("/build", json=spec).json()
+    assert d["ok"] is False
+    assert any(i["level"] == "error" and i["where"] == "designs"
+               for i in d["issues"])
+
+
+def test_build_accepts_nonsense_without_a_422(client):
+    """
+    Validation is the form's job, not pydantic's — a schema rejection would turn
+    a correctable warning into an opaque 422 with no message the user can act on.
+    """
+    r = client.post("/build", json={"designs": [], "fluids": [], "axes": {}})
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+    assert r.json()["issues"]
+
+
+def test_the_page_carries_the_three_regions(client):
+    body = client.get("/").text
+    for region in ("Designs", "Fluids", "Axes"):
+        assert region in body
+    # the set-vs-axis distinction has to be visible, not just implemented
+    assert "a set, concatenated" in body
+    assert "a grid, crossed" in body
+    # and the textarea is still the thing that runs
+    assert "/build" in body and 'id="yaml"' in body

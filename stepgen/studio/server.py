@@ -12,16 +12,24 @@ back a link to the chapter that pipeline wrote.
 Routes
 ------
     GET  /              the form page
+    GET  /form/start    what the three regions load with (from the house defaults)
+    POST /build         three regions -> study YAML + validation (C2)
     POST /preview       expand only — point count, no solve (~1-4 ms)
     POST /run           solve -> score -> diagnose -> write_workbook -> chapter
     GET  /book          the book index
     GET  /book/{name}   one chapter (or its JSON sidecar)
     GET  /configs       study YAMLs discoverable on disk
 
-The form here is the minimal one: paste or load a study YAML.  The structured
-three-region builder (designs / fluids / axes, with the fluid-swap button) is
-C2, and is blocked on the reverse-flow guard — see the plan's *Explicitly
-deferred* section for why a one-click W/O swap needs that guard first.
+The page has two ways in and one way out.  The **three regions** (designs /
+fluids / axes, per decision 11) generate a study YAML through ``POST /build``;
+that text lands in the textarea, which stays editable and is what ``/preview``
+and ``/run`` actually read.  So the builder is a way to write the file, never a
+second execution path — pasting a hand-written study still works exactly as it
+did, and a generated study can be hand-tuned before it runs.
+
+The generation logic lives in :mod:`stepgen.studio.form`, not here: the
+set-versus-axis rule is the substance of C2 and belongs somewhere testable
+without a web server.
 """
 
 from __future__ import annotations
@@ -52,6 +60,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
+from stepgen.studio.form import PHASE_SYSTEMS
+
 
 class StudyText(BaseModel):
     """Body of ``POST /preview`` — a study YAML, nothing else."""
@@ -65,6 +75,23 @@ class RunRequest(BaseModel):
     diagnose: str = "auto"
     production_threshold: bool = False
     extends: str | None = None
+
+
+class FormSpec(BaseModel):
+    """
+    Body of ``POST /build`` — the three regions the C2 form collects.
+
+    Loosely typed on purpose: the browser posts whatever the user has entered,
+    including nonsense, and :func:`stepgen.studio.form.validate` is what decides
+    whether it can be run.  Rejecting at the schema layer would turn a
+    correctable warning into an opaque 422.
+    """
+    title: str = "Untitled study"
+    designs: list[dict[str, Any]] = []
+    fluids: list[dict[str, Any]] = []
+    axes: dict[str, Any] = {}
+    main_depth_um: float | None = None
+    main_width_um: float | None = None
 
 #: Legacy flat rate — 1,368 points in ~26 s (plan, "Solve cost").  Kept only as
 #: the last-resort fallback if ``configs/studio_defaults.yaml`` cannot be read.
@@ -220,6 +247,88 @@ def create_app(
         if not target.is_file():
             raise HTTPException(status_code=404, detail=f"no such study: {name}")
         return target.read_text(encoding="utf-8")
+
+    @app.get("/form/start")
+    def form_start() -> JSONResponse:
+        """
+        What the three-region form loads with, seeded from the house defaults.
+
+        Served rather than hard-coded in the page so `configs/studio_defaults.yaml`
+        stays the single reviewable place those numbers live (plan C3) — a second
+        copy in JavaScript is exactly the drift that file exists to prevent.
+        """
+        from stepgen.studio.form import form_from_defaults
+
+        try:
+            f = form_from_defaults()
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                status_code=500,
+            )
+        return JSONResponse({
+            "ok": True,
+            "title": f.title,
+            "designs": [vars(d) for d in f.designs],
+            "fluids": [vars(x) for x in f.fluids],
+            "axes": vars(f.axes),
+            "main_depth_um": f.main_depth_um,
+            "main_width_um": f.main_width_um,
+            "phase_systems": list(PHASE_SYSTEMS),
+        })
+
+    # ── the three regions -> YAML ──────────────────────────────────────────
+    @app.post("/build")
+    def build(body: FormSpec) -> JSONResponse:
+        """
+        Turn the form's three regions into a study YAML.
+
+        Generates and validates; it does **not** solve, and it does not refuse.
+        Blocking issues come back as ``ok: false`` with the YAML still attached
+        where one could be produced, because seeing the text is often how a user
+        works out what the complaint means.
+        """
+        from stepgen.studio.form import build_yaml, form_from_payload, validate
+
+        payload = body.model_dump()
+        if payload.get("main_depth_um") is None:
+            payload.pop("main_depth_um", None)
+        if payload.get("main_width_um") is None:
+            payload.pop("main_width_um", None)
+
+        try:
+            spec = form_from_payload(payload)
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}",
+                 "issues": [], "yaml": ""},
+                status_code=400,
+            )
+
+        issues = validate(spec)
+        blocking = [i for i in issues if i.blocking]
+
+        text = ""
+        if not blocking:
+            try:
+                text = build_yaml(spec)
+            except Exception as exc:
+                return JSONResponse(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}",
+                     "issues": [vars(i) for i in issues], "yaml": ""},
+                    status_code=500,
+                )
+
+        return JSONResponse({
+            "ok": not blocking,
+            "yaml": text,
+            "n_points": spec.n_points,
+            "n_designs": len(spec.designs),
+            "n_fluids": len(spec.fluids),
+            "n_crossed": spec.axes.n_crossed,
+            "issues": [{"level": i.level, "where": i.where, "message": i.message}
+                       for i in issues],
+        })
 
     # ── expand only, no solve ──────────────────────────────────────────────
     @app.post("/preview")
@@ -385,6 +494,38 @@ _FORM_HTML = """<!doctype html>
   pre { overflow-x:auto; background:var(--panel); border:1px solid var(--line);
         border-radius:8px; padding:.8rem 1rem; max-height:26rem;
         font:12.5px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
+
+  /* ── the three regions ─────────────────────────────────────────────────── */
+  fieldset { border:1px solid var(--line); border-radius:8px; padding:.5rem .9rem 1rem;
+             margin:1.25rem 0 0; }
+  legend { font-weight:700; font-size:.85rem; letter-spacing:.04em;
+           text-transform:uppercase; padding:0 .4rem; }
+  legend .kind { font-weight:400; text-transform:none; letter-spacing:0;
+                 color:var(--mut); font-size:.8rem; }
+  .region-note { color:var(--mut); font-size:.8rem; margin:.1rem 0 .7rem; }
+  table.grid { width:100%; border-collapse:collapse; font-size:.85rem; }
+  table.grid th { text-align:left; font-weight:600; color:var(--mut);
+                  font-size:.75rem; padding:.2rem .35rem; white-space:nowrap; }
+  table.grid td { padding:.15rem .35rem; }
+  table.grid input, table.grid select { padding:.3rem .4rem; font-size:.85rem; }
+  table.grid td.del { width:2rem; }
+  button.mini { padding:.25rem .55rem; font-size:.78rem; font-weight:600; }
+  button.x { padding:.2rem .45rem; font-size:.8rem; line-height:1;
+             color:var(--mut); background:transparent; border-color:transparent; }
+  button.x:hover { color:var(--bad); border-color:var(--line); }
+  .dial { display:flex; gap:.9rem; flex-wrap:wrap; align-items:flex-end; }
+  .dial label { margin:0; font-size:.78rem; font-weight:600; color:var(--mut); }
+  .dial input { width:6.5rem; }
+  .levels { font:12.5px/1.5 ui-monospace,Consolas,monospace; color:var(--mut);
+            margin-top:.5rem; }
+  #count { font-size:1.05rem; font-weight:700; }
+  #count .mutx { font-weight:400; color:var(--mut); font-size:.85rem; }
+  .issues { margin-top:.6rem; }
+  .issue { font-size:.83rem; padding:.35rem .6rem; border-radius:6px;
+           margin-top:.3rem; border-left:3px solid; }
+  .issue.warning { border-color:#c68010; background:#c6801014; }
+  .issue.error { border-color:var(--bad); background:#a51d2d14; }
+  .issue b { text-transform:uppercase; font-size:.72rem; letter-spacing:.04em; }
 </style>
 </head>
 <body>
@@ -394,11 +535,84 @@ _FORM_HTML = """<!doctype html>
      runtime scales with point count.</p>
 
   <label for="pick">Load a study</label>
-  <select id="pick"><option value="">— paste your own below —</option></select>
+  <select id="pick"><option value="">— build one below, or paste your own —</option></select>
 
-  <label for="yaml">Study YAML</label>
+  <!-- ── THE THREE REGIONS (decision 11) ───────────────────────────────────
+       Which region a thing lives in decides whether it ADDS or MULTIPLIES.
+       Designs and fluids are SETS: four designs cost four points. Axes CROSS:
+       adding a sixth pressure multiplies everything by 6/5. Exits belong in
+       the design region and never on the dial — a 4-exit x fluid-swap study
+       written as crossed axes produced 64 points of which 32 were fluid
+       systems that do not exist. -->
+  <fieldset>
+    <legend>Designs <span class="kind">— a set, concatenated</span></legend>
+    <p class="region-note">One row per design. Four designs cost four points, not
+       four times anything. The exit geometry lives here.</p>
+    <table class="grid">
+      <thead><tr>
+        <th>label</th><th>exit w (µm)</th><th>exit d (µm)</th><th>pitch (µm)</th>
+        <th>rung w (µm)</th><th>rung L (mm)</th><th></th>
+      </tr></thead>
+      <tbody id="designs"></tbody>
+    </table>
+    <div class="row">
+      <button class="mini" id="add-design">+ design</button>
+      <span class="mut">shared ladder:
+        main depth <input type="number" id="mdepth" step="10" style="width:5.5rem;display:inline-block">µm
+        &middot; width <input type="number" id="mwidth" step="50" style="width:5.5rem;display:inline-block">µm
+      </span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Fluids <span class="kind">— a set, concatenated</span></legend>
+    <p class="region-note">Whole systems, never independent viscosity lists —
+       those would cross, and half the points would be fluids where both phases
+       are the same liquid. <b>µ_dispersed and µ_continuous are the entire
+       hydraulic control</b>; the o/w &harr; w/o toggle only sets the label.</p>
+    <table class="grid">
+      <thead><tr>
+        <th>µ_dispersed (cP)</th><th>µ_continuous (cP)</th><th>phase</th>
+        <th>γ (mN/m, optional)</th><th></th>
+      </tr></thead>
+      <tbody id="fluids"></tbody>
+    </table>
+    <div class="row">
+      <button class="mini" id="add-fluid">+ fluid</button>
+      <button class="mini" id="add-swapped" title="Add this system with the two viscosities exchanged and the opposite label">+ the inverse system</button>
+    </div>
+    <p class="region-note" style="margin-top:.6rem">γ is <b>unmeasured</b> for the
+       Peak system. Ca &prop; 1/γ, so γ alone would decide a Ca verdict — which is
+       why the operating gate is <code>v_vs_demonstrated</code>, where γ cancels.
+       Leave it blank unless you have a number.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Axes <span class="kind">— a grid, crossed</span></legend>
+    <p class="region-note">Everything here <b>multiplies</b> the point count.</p>
+    <div class="dial">
+      <div><label for="po-lo">Po from (mbar)</label>
+           <input type="number" id="po-lo" step="10"></div>
+      <div><label for="po-hi">to</label><input type="number" id="po-hi" step="10"></div>
+      <div><label for="po-n">levels</label><input type="number" id="po-n" min="1" max="40"></div>
+      <div><label for="lengths">main length (mm)</label>
+           <input type="text" id="lengths" style="width:13rem" placeholder="40, 80, 160"></div>
+      <div><label for="qw">Qw (mL/hr)</label><input type="number" id="qw" step="1"></div>
+      <div><label for="emul">or target emulsion (%)</label>
+           <input type="number" id="emul" step="1" placeholder="blank"></div>
+    </div>
+    <div class="levels" id="po-levels"></div>
+  </fieldset>
+
+  <div class="row">
+    <div id="count"></div>
+  </div>
+  <div class="issues" id="issues"></div>
+
+  <label for="yaml">Study YAML <span class="mut">— generated from the regions
+    above; edit freely, this text is what runs</span></label>
   <textarea id="yaml" spellcheck="false"
-    placeholder="Paste a study YAML, or pick one above."></textarea>
+    placeholder="Build above, paste your own, or pick one from the list."></textarea>
 
   <div class="row">
     <button id="btn-preview">Preview</button>
@@ -457,6 +671,184 @@ $("pick").addEventListener("change", async (e) => {
     $("name").value = name.replace(/\\.ya?ml$/, "");
     preview();
   }
+});
+
+// ── the three regions ──────────────────────────────────────────────────────
+// Viscosity is entered in cP and gamma in mN/m because those are the units the
+// numbers are spoken in; the wire format is SI, converted at exactly these two
+// boundaries so nothing downstream has to know.
+let PHASES = ["o/w", "w/o"];
+
+function el(tag, attrs) {
+  const n = document.createElement(tag);
+  for (const k in (attrs || {})) n.setAttribute(k, attrs[k]);
+  return n;
+}
+
+function numCell(value, step) {
+  const td = el("td"), i = el("input", {type: "number", step: step || "any"});
+  i.value = value; i.addEventListener("input", rebuild);
+  td.appendChild(i); return td;
+}
+
+function delCell(row) {
+  const td = el("td", {class: "del"}), b = el("button", {class: "x", title: "remove"});
+  b.textContent = "\\u2715";
+  b.addEventListener("click", () => { row.remove(); rebuild(); });
+  td.appendChild(b); return td;
+}
+
+function addDesign(d) {
+  d = d || {label: "", exit_width_um: 30, exit_depth_um: 10, pitch_um: 60,
+            upstream_width_um: 8, rung_length_mm: 4};
+  const tr = el("tr");
+  const lab = el("td"), li = el("input", {type: "text", placeholder: "name"});
+  li.value = d.label || ""; li.addEventListener("input", rebuild);
+  lab.appendChild(li); tr.appendChild(lab);
+  tr.appendChild(numCell(d.exit_width_um, "1"));
+  tr.appendChild(numCell(d.exit_depth_um, "1"));
+  tr.appendChild(numCell(d.pitch_um, "1"));
+  tr.appendChild(numCell(d.upstream_width_um, "1"));
+  tr.appendChild(numCell(d.rung_length_mm, "0.5"));
+  tr.appendChild(delCell(tr));
+  $("designs").appendChild(tr);
+}
+
+function addFluid(f) {
+  f = f || {mu_dispersed: 0.06, mu_continuous: 0.00089, phase_system: "o/w", gamma: null};
+  const tr = el("tr");
+  tr.appendChild(numCell(f.mu_dispersed * 1000, "any"));   // Pa.s -> cP
+  tr.appendChild(numCell(f.mu_continuous * 1000, "any"));
+  const pt = el("td"), sel = el("select");
+  for (const p of PHASES) {
+    const o = el("option"); o.value = p; o.textContent = p;
+    if (p === f.phase_system) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.addEventListener("change", rebuild);
+  pt.appendChild(sel); tr.appendChild(pt);
+  const gt = el("td"), gi = el("input", {type: "number", step: "any", placeholder: "unmeasured"});
+  gi.value = (f.gamma === null || f.gamma === undefined) ? "" : f.gamma * 1000;
+  gi.addEventListener("input", rebuild);
+  gt.appendChild(gi); tr.appendChild(gt);
+  tr.appendChild(delCell(tr));
+  $("fluids").appendChild(tr);
+}
+
+function readDesigns() {
+  return [...$("designs").rows].map(r => ({
+    label: r.cells[0].firstChild.value,
+    exit_width_um: +r.cells[1].firstChild.value,
+    exit_depth_um: +r.cells[2].firstChild.value,
+    pitch_um: +r.cells[3].firstChild.value,
+    upstream_width_um: +r.cells[4].firstChild.value,
+    rung_length_mm: +r.cells[5].firstChild.value,
+  }));
+}
+
+function readFluids() {
+  return [...$("fluids").rows].map(r => {
+    const g = r.cells[3].firstChild.value;
+    return {
+      mu_dispersed: +r.cells[0].firstChild.value / 1000,   // cP -> Pa.s
+      mu_continuous: +r.cells[1].firstChild.value / 1000,
+      phase_system: r.cells[2].firstChild.value,
+      gamma: g === "" ? null : +g / 1000,                  // mN/m -> N/m
+    };
+  });
+}
+
+function poLevels() {
+  const lo = +$("po-lo").value, hi = +$("po-hi").value, n = Math.max(1, +$("po-n").value | 0);
+  if (n === 1) return [Math.round(lo)];
+  const step = (hi - lo) / (n - 1);
+  return Array.from({length: n}, (_, i) => Math.round(lo + step * i));
+}
+
+function readAxes() {
+  const lengths = $("lengths").value.split(/[,\\s]+/).filter(Boolean).map(Number);
+  const qw = $("qw").value, em = $("emul").value;
+  return {
+    Po_mbar: poLevels(),
+    main_length_mm: lengths,
+    Qw_mlhr: qw === "" ? null : +qw,
+    target_emulsion_pct: em === "" ? null : +em,
+  };
+}
+
+let rebuildTimer = null;
+function rebuild() {
+  // debounced: every keystroke in a number box would otherwise be a round-trip
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(doBuild, 180);
+}
+
+async function doBuild() {
+  const levels = poLevels();
+  $("po-levels").textContent = levels.length
+    ? "Po = [" + levels.join(", ") + "]" : "";
+  const r = await fetch("/build", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      title: $("name").value || "Untitled study",
+      designs: readDesigns(), fluids: readFluids(), axes: readAxes(),
+      main_depth_um: +$("mdepth").value, main_width_um: +$("mwidth").value,
+    }),
+  });
+  const d = await r.json();
+
+  $("count").innerHTML = d.n_points + " points " +
+    '<span class="mutx">= ' + d.n_designs + " designs \\u00d7 " + d.n_fluids +
+    " fluids \\u00d7 " + d.n_crossed + " crossed</span>";
+
+  $("issues").innerHTML = (d.issues || []).map(i =>
+    '<div class="issue ' + i.level + '"><b>' + i.level + "</b> \\u2014 " +
+    esc(i.message) + "</div>").join("");
+
+  if (d.yaml) $("yaml").value = d.yaml;
+}
+
+$("add-design").addEventListener("click", (e) => { e.preventDefault(); addDesign(); rebuild(); });
+$("add-fluid").addEventListener("click", (e) => { e.preventDefault(); addFluid(); rebuild(); });
+
+// The o/w <-> w/o "swap" as a button that ADDS the inverse system rather than
+// mutating one in place: the pairing is the point of a fluid comparison, and a
+// toggle that rewrote the row you were looking at would lose the other half.
+$("add-swapped").addEventListener("click", (e) => {
+  e.preventDefault();
+  const fs = readFluids();
+  if (!fs.length) { addFluid(); rebuild(); return; }
+  const last = fs[fs.length - 1];
+  addFluid({
+    mu_dispersed: last.mu_continuous,
+    mu_continuous: last.mu_dispersed,
+    phase_system: last.phase_system === "o/w" ? "w/o" : "o/w",
+    gamma: last.gamma,
+  });
+  rebuild();
+});
+
+for (const id of ["po-lo", "po-hi", "po-n", "lengths", "qw", "emul",
+                  "mdepth", "mwidth", "name"]) {
+  $(id).addEventListener("input", rebuild);
+}
+
+fetch("/form/start").then(r => r.json()).then(d => {
+  if (!d.ok) return;
+  PHASES = d.phase_systems || PHASES;
+  (d.designs || []).forEach(addDesign);
+  (d.fluids || []).forEach(addFluid);
+  const a = d.axes || {}, po = a.Po_mbar || [];
+  $("po-lo").value = po.length ? po[0] : 200;
+  $("po-hi").value = po.length ? po[po.length - 1] : 1000;
+  $("po-n").value = po.length || 6;
+  $("lengths").value = (a.main_length_mm || []).join(", ");
+  $("qw").value = a.Qw_mlhr === null || a.Qw_mlhr === undefined ? "" : a.Qw_mlhr;
+  $("emul").value = a.target_emulsion_pct === null ||
+    a.target_emulsion_pct === undefined ? "" : a.target_emulsion_pct;
+  $("mdepth").value = d.main_depth_um;
+  $("mwidth").value = d.main_width_um;
+  doBuild();
 });
 
 async function preview() {
