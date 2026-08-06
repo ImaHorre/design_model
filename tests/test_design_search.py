@@ -225,6 +225,9 @@ class TestRunDesignSearch:
             "mcw_um", "mcl_rung_um",
             "Q_total_mlhr", "Po_required_mbar", "active_fraction",
             "D_pred_um", "passes_hard", "soft_flags",
+            # F1 (2026-08-06): a verdict with no reason beside it is what made
+            # the reverse-flow guard read as a blank table.
+            "hard_constraint_failures", "reverse_fraction", "off_fraction",
         }
         spec = _small_spec()
         df = run_design_search(spec)
@@ -424,3 +427,136 @@ class TestDefaultSpecIsOilStarved:
         df = run_design_search(_small_spec(footprint_area_cm2=4.0))
         assert df["passes_hard"].any()
         assert (df["active_fraction"] < 1.0).any()
+
+
+class TestEveryFailureRecordsAReason:
+    """
+    F1 (2026-08-06).  The reverse-flow guard made the design search correctly
+    reject the oil-starved default spec — and the search had no field for *why*,
+    so the correct verdict arrived as a table of `passes_hard: False` with no
+    reason anywhere in the CSV.
+
+    `passes_hard` is a conjunction of FOUR screens (geometry pre-filter, derived
+    Po limits, delamination, and `evaluate_candidate`'s own hard constraints).
+    Only the last had a reason string in existence, and it was dropped.  These
+    tests pin the invariant that matters: **no silent False.**
+    """
+
+    def test_the_verdict_is_derived_from_the_reasons_not_kept_beside_them(self):
+        """
+        The bug class this closes is a boolean and a reason list drifting apart.
+        They cannot drift if one is computed from the other, and this asserts
+        exactly that, on every row of a frame containing both outcomes.
+        """
+        df = run_design_search(_small_spec(Mcd_um=(100, 150), junction_ar=(2.5, 3.0)))
+        for _, row in df.iterrows():
+            has_reason = bool(str(row["hard_constraint_failures"]).strip())
+            assert row["passes_hard"] is not has_reason, (
+                f"passes_hard={row['passes_hard']} with "
+                f"reasons={row['hard_constraint_failures']!r}"
+            )
+
+    def test_no_failing_row_is_silent(self):
+        df = run_design_search(_small_spec())      # the oil-starved 10 cm² default
+        failing = df[~df["passes_hard"]]
+        assert len(failing) > 0, "fixture no longer fails; pick another"
+        for blob in failing["hard_constraint_failures"]:
+            assert str(blob).strip(), "a candidate failed with no reason recorded"
+
+    def test_the_reverse_flow_failure_names_reverse_flow(self):
+        """
+        The specific regression: this is the guard's own verdict, and before F1
+        it did not survive the trip from `evaluate_candidate` into the frame.
+        """
+        df = run_design_search(_small_spec())
+        blobs = " ".join(df["hard_constraint_failures"].astype(str))
+        assert "reverse_fraction" in blobs
+        assert (df["reverse_fraction"] > 0.4).any(), (
+            "the fraction that caused the failure must be a column too"
+        )
+
+    def test_a_geometry_failure_names_the_config_field(self):
+        """
+        A reason a reader cannot act on is barely better than none, so the
+        message carries the YAML key and the value that breached it.
+        """
+        df = run_design_search(_small_spec(mcw_um=(0.1,)))   # < 0.5 µm min
+        blobs = " ".join(df["hard_constraint_failures"].astype(str))
+        assert "min_feature_width_um" in blobs
+        assert "0.10" in blobs      # the offending value, in YAML units
+
+    def test_no_reason_contains_the_separator_that_joins_reasons(self):
+        """
+        Reasons are joined with "; ", so no reason may contain "; " — otherwise
+        the blob cannot be split back into fields.
+
+        This is not hypothetical: the reverse-flow message read "... entering
+        the dispersed main; device-level metrics are computed over the 36.0% of
+        rungs still active", so `stepgen design`'s reason tally tore it in half
+        and reported the tail — which carries a per-candidate percentage — as a
+        constraint in its own right, once per distinct percentage.  On the
+        checked-in 100 cm² spec that was 15 spurious tally lines under one real
+        one.
+        """
+        df = run_design_search(_small_spec())      # reverse-flow failures
+        blobs = list(df["hard_constraint_failures"].astype(str))
+        assert any("reverse_fraction" in b for b in blobs), "fixture no longer reverses"
+        for blob in blobs:
+            for reason in blob.split("; "):
+                assert ";" not in reason, (
+                    f"reason contains the field separator: {reason!r}"
+                )
+
+    def test_a_collapse_index_tie_says_it_is_a_tie(self):
+        """
+        Found by the reason column on its first run.  `Mcw/Mcd` is a ratio of
+        two values converted from µm, so an intended exact tie is not exact:
+        2000/200 is 10.000000000000002 and fails `> 10.0`.  The comparison is
+        deliberately unchanged — which candidates pass is a ruling — but the
+        message must not read "10.0 > 10.0" and send the reader hunting.
+
+        Asserted on the helper rather than end to end, because which ratios tie
+        is a floating-point fact, not a modelling one: 800/100 is exactly 8.0
+        and does not tie, so an end-to-end version of this test passes
+        vacuously.  2000/200 is the case `configs/design_search_10um.yaml`
+        actually hits.
+
+        The unit conversion has to be written exactly as the search writes it.
+        `200e-6` is a parsed literal and `200 * 1e-6` is a multiplication, and
+        they are **different floats** (0.0002 vs 0.00019999999999999998) — so
+        the literal form gives an exact 10.0 and no tie at all.  The tie is
+        manufactured by the µm → m conversion, which is the loop's own first
+        move.
+        """
+        from stepgen.design.design_search import _geometry_failure_reasons
+
+        Mcd_m, Mcw_m = 200 * 1e-6, 2000 * 1e-6      # as design_search.py:253-254
+        collapse_index = Mcw_m / max(Mcd_m, 1e-12)  # as design_search.py:269
+        assert collapse_index != 10.0, "premise gone: this ratio is exact now"
+
+        hc = DesignHardConstraints(max_collapse_index=10.0)
+        reasons = _geometry_failure_reasons(
+            hc, Mcd_m, Mcw_m, mcd_m=5e-6, mcw_m=5e-6,
+            collapse_index=collapse_index, ar=2.75,
+        )
+        blob = " ".join(reasons)
+        assert "max_collapse_index" in blob
+        assert "floating-point tie" in blob
+        assert "raise max_collapse_index" in blob
+
+    def test_a_candidate_that_merely_does_not_fit_still_appears(self):
+        """
+        The extreme form of the same defect.  The footprint-reject append was
+        guarded by `if not passes_hard_geom`, so a candidate whose geometry was
+        FINE and which simply did not fit was dropped from the output entirely
+        — no row, no reason, and (being the only candidate) an empty frame with
+        no columns at all.
+        """
+        df = run_design_search(_small_spec(footprint_area_cm2=0.01))
+        assert len(df) > 0, "candidate vanished instead of being reported"
+        assert not df["passes_hard"].any()
+        blobs = " ".join(df["hard_constraint_failures"].astype(str))
+        assert "footprint" in blobs
+        assert "min_feature_width_um" not in blobs, (
+            "geometry is fine here; only the footprint should be blamed"
+        )

@@ -26,10 +26,11 @@ noise, they were the duplicated lane-pitch formula, and W1-1 fixed them. See W1-
 | **C (server)** | ✅ **complete.** C1 `5cee613` · C3 `2463848` · reverse-flow guard `1cdcb0b` · C2 `49a3b27` |
 | **Regime policy** | ⚠️ **changed `7bf5044`.** Ca no longer fails a row; designs are compared against `v_vs_demonstrated` (× the fastest DFU Peak has run). **D5 is re-specified** — read its entry before executing it |
 | **D (explorer)** | ✅ **complete.** D1 · D4 · D5 `c20df77` · D2 `6e34dc8` · D6 `7f346f4` · D7 `f54ee49` · D3 `<this commit>` |
-| **E** | not started. **E2 is part-done**: D3 defined the stable chapter id it was blocked on |
+| **E** | not started. **E2 is part-done**: D3 defined the stable chapter id it was blocked on. **E1 is not free — read the note at the end of section E** |
+| **F (guard follow-ons)** | F1 ✅ `<this commit>` · **F2 needs a ruling before anyone touches it** |
 
-**Start here**: **E — provenance**, the only section left. Sections C and D are
-complete.
+**Start here**: **F2 — the Mode B oracle**, which needs a decision, not code. Then **E —
+provenance**, weighed against lab work per `CLAUDE.md`. Sections C and D are complete.
 
 **Baseline is now `pytest -q` → 717 passed, 0 failed, 5 skipped** at `49a3b27` (636/0/5 at
 `bf8afd4`). **The known-failures list is empty for the first time.** Both `test_cli`
@@ -1523,6 +1524,142 @@ remains:
 - **E3.** Refine sweep → child chapter recording parent + the starred designs it was built
   around. Same lineage mechanism as D3.
 
+**E1 is not the free item this section claims.** `write_workbook` takes a `StudyResult`
+(`workbook.py:1578`); `stepgen sweep` produces a DataFrame of `evaluate_candidate` rows
+with different field names and no scoring. "Reusing `write_workbook()` unchanged" means
+manufacturing a `StudyResult` from a sweep, and an adapter written as a **second row
+serialiser is A4a's bug class arriving a third time.** Either the adapter is real work, or
+`sweep` routes through the study pipeline. That is a decision, not plumbing — settle it
+before E1 is scheduled as the small one.
+
+---
+
+## F — follow-ons from the reverse-flow guard
+
+The guard (`1cdcb0b`) made `stepgen design` fail on the oil-starved default spec. It was
+right to. But the search's row builder has no field for *why* a candidate failed, so the
+correct verdict arrives as a blank table.
+
+### F1 — `stepgen design` records why a candidate failed ✅ `<this commit>`
+
+**The gap.** `run_design_search` builds three row dicts: the footprint reject
+(`design_search.py:286`), the solver error (`:330`) and the success path (`:378`). The two
+error paths carry a reason; **the success path carries `passes_hard` and drops
+`hard_constraint_failures`**, which `evaluate_candidate` computed at `sweep.py:296`.
+Before the guard that was cosmetic — candidates rarely failed on solved metrics. Now a
+search over an oil-starved geometry returns `passes_hard: False` for every row with no
+reason recorded anywhere in the CSV.
+
+**Two things the first framing of this item got wrong:**
+
+1. **It is not a pass-through.** `passes_hard` (`:363-368`) is a conjunction of **four**
+   sources — `eval_row["passes_hard_constraints"]`, `passes_hard_geom`, `passes_Po`,
+   `passes_delam` — and only the first has a reason string in existence anywhere.
+   `passes_hard_geom` (`:269-277`) collapses six conditions into one boolean and records
+   nothing. Carrying the eval_row string alone fixes **one quarter** of the surface. The
+   fix builds a local `failures: list[str]` the way `_check_hard_constraints` does and
+   extends it with the eval_row string.
+2. **The console is blind too.** `_cmd_design` (`cli.py:372-379`) prints `Hard-pass: 0`
+   and stops. `cli.py:122-125` already prints `hard_constraint_failures` for `simulate` —
+   the pattern existed one command over and was not used.
+
+Also carried: `reverse_fraction` and `off_fraction`, which are on `eval_row` and dropped
+while `active_fraction` survives (`:399`). The guard is what now fails these rows and the
+fraction that caused it was the one number not carried.
+
+**What the reason column found the moment it was switched on.** Two things, both of which
+had been invisible rather than absent:
+
+1. **The duplicated limits do not merely *risk* disagreeing — they already disagree in a
+   checked-in config.** `DesignHardConstraints` (`config.py:302-306`) and
+   `ManufacturingConfig` (`config.py:157-160`) carry the same three limits (max main
+   depth, max main width, min feature width) on the same `DesignSearchSpec`, checked here
+   and again in `sweep._check_hard_constraints`. In `configs/design_search_10um.yaml`:
+
+   ```
+   hard_constraints.max_main_width_um: 2000     manufacturing.max_main_width: 1000e-6
+   hard_constraints.min_feature_width_um: 5     manufacturing.min_feature_width: 0.5e-6
+   ```
+
+   So that config **sweeps `Mcw_um: [500, 1000, 2000]` and the 2000 µm level can never
+   pass** — permitted by one limit, rejected by the other — and one candidate now reports
+   `mcw < min_feature_width_um (5.00)` and `mcw < min_feature_width (0.50µm)` on the same
+   row: one constraint, two ceilings, both fired. **This is W2-2's bug class in the
+   design-search path**, and W2-2's grep went past it because it was scoped to *physical
+   formulas*. Fixing it is a config-schema change and does not belong in a reason-column
+   commit — but it is no longer hypothetical, so it should not sit long.
+
+2. **`max_collapse_index` fails on an intended exact tie.** `Mcw/Mcd` is a ratio of two
+   values converted from µm, so 2000/200 is `10.000000000000002`, which fails `> 10.0`.
+   The comparison is **unchanged** — tightening or loosening it changes which candidates
+   pass and is a ruling, not a reason-column edit — but the message would have read
+   "10.0 > 10.0", so it now names the tie and says which key to raise. Worth noting that
+   this is the reason column earning its place on its first run: the constraint had been
+   silently deleting a swept level since the search was written.
+
+   The tie is **manufactured by the unit conversion**, which matters for anyone writing a
+   test against it: `200e-6` is a parsed literal and `200 * 1e-6` is a multiplication, and
+   they are different floats (`0.0002` vs `0.00019999999999999998`). The literal form
+   gives an exact `10.0` and no tie, so a test that does not reproduce the loop's own
+   µm → m conversion passes vacuously. One did, and was rewritten.
+
+3. **A failure message contained the string used to join failure messages.** Reasons are
+   joined with `"; "`, and the reverse-flow message (`sweep.py`) read *"… entering the
+   dispersed main**;** device-level metrics are computed over the 36.0% of rungs still
+   active"*. So the tally split it in half and reported the tail — which carries a
+   per-candidate percentage — as a constraint in its own right, **once per distinct
+   percentage**: on `configs/design_search_10um.yaml`, 15 spurious tally lines under one
+   real one. Fixed at the source (the message uses a comma) and pinned by
+   `test_no_reason_contains_the_separator_that_joins_reasons`, which is the durable half —
+   the next message with a semicolon in it fails a test instead of quietly fragmenting a
+   report.
+
+**Verified end to end, not only in tests.** On `configs/design_search_10um.yaml` (54
+candidates, 100 cm²): **33 fail on `reverse_fraction`**, 18 on the collapse tie, 18 on
+`Mcw` against the *manufacturing* ceiling its own `hard_constraints` permits, 6 on
+footprint. Before F1 that run printed `Hard-pass: 0` and nothing else. This is the F2 cliff
+in its natural habitat — a third of a real checked-in spec — not a test-fixture artefact.
+
+### F2 — the Mode B oracle — **decision pending, do not guess at it**
+
+**The mechanism, stated exactly.** The linear solve has no capillary thresholds, so every
+rung conducts. In the real model the sub-threshold rungs do not. A ladder where every rung
+conducts needs **less** pressure to move a given total than the real device does, so
+`_mode_b_derive_po` returns a systematic **lower bound** on Po, and the error grows with
+how many rungs sit near threshold. At 65 mbar into 13,326 rungs the far end drops below
+the water rail and the ladder runs backwards.
+
+**The docstring is the trap.** `sweep.py:112-114` reads *"the actual Q_oil will be ~10-15%
+below the requested value due to capillary thresholds — this is physical, not a bug."*
+True for a healthy ladder. In the starved limit it is not 15% low, it is **negative**, and
+the sentence reads as pre-authorisation for that. Corrected in F1's commit, since a
+one-line warning costs nothing and the fix may be a while.
+
+**The recommendation** (Claude's, 2026-08-06 — Conor has not ruled): keep the linear solve
+as a **seed and lower bracket**, then root-find Po against the real `iterative_solve` for
+`Q_oil_total == Qo`. `Q_oil_total` is monotone in Po, so bisection is safe and a secant
+with bisection fallback converges in ~6-10 solves. Record `Po_solve_status` on the row
+(converged / hit ceiling / non-monotone) and the achieved-vs-requested shortfall. When no
+Po ≤ `hc.max_Po_in_mbar` delivers the target, the answer is not a blank row — it is *"this
+geometry cannot deliver 1.0 mL/hr below 1000 mbar"*, the most useful sentence the search
+can produce.
+
+**Cost, priced before starting rather than discovered.** At C3's measured ~36 µs/rung a
+13,326-rung candidate is ~0.5 s/solve, so 8 iterations ≈ **4 s/candidate** against ~1 s
+today.
+
+**The consequence nobody has priced: fixing the oracle breaks the objective function.**
+Mode B prescribes Qo, and `run_design_search` ranks by `Q_total_mlhr` (`:414-424`) — which
+today ranks candidates by *how far short of the target they fell*. With a correct oracle
+every converged candidate lands on the same Q_total and the ranking degenerates to noise.
+Whatever replaces it (`Po_required` ascending, robustness) has to be decided in the same
+change.
+
+**The cheap alternative**, if 4 s/candidate is unacceptable: keep the single linear derive,
+then post-check — if `reverse_fraction > 0` or `Q_oil_total < 0.8·Qo`, take one secant
+correction and re-solve. Two solves instead of one; catches the pathology, promises nothing
+about convergence.
+
 ---
 
 ## Sequencing
@@ -1570,7 +1707,14 @@ D3 this commit). What it turned out to be about, in one line each:
   timestamp version gave two ids for one chapter and collided between a real parent and
   child anyway.
 
-**Next**: C, the server — the last section before E.
+**Next**: F1 (landed with this commit), then a ruling on F2. **E after that, if at all** —
+`CLAUDE.md` puts this repo's active focus on experimental validation, and E is polish on a
+front door that already works end to end. If there is lab data waiting, it outranks E.
+
+*(This line read "Next: C, the server — the last section before E" until 2026-08-06, three
+commits after C completed. It contradicted the status table at the top of the file, which
+was current. **A stale pointer in the navigation is worse than one in the content** — the
+content gets read sceptically and the pointer gets followed.)*
 
 ~~**Also outstanding, found during W2-8 and not fixed**: `stepgen report` emits 2 of the 6
 PNGs it documents.~~ **Fixed 2026-08-05.** The five profile builders needed one solve at a
@@ -1625,6 +1769,8 @@ clean: 636 passed, 0 failed, 5 skipped.**
   main cannot feed 13,326 rungs — 46% reverse and **negative** net oil flow. Two tests
   asserted `passes_hard` on it. This is **o/w**, so reverse flow is not a W/O-only
   pathology. Correcting the Mode B oracle is separate work and was not done.
+  **This opened a cliff in `stepgen design` and is now section F** — F1 makes the failure
+  legible, F2 is the oracle itself.
 
   **Also noted, not fixed:** the chapter sidecar's `metrics` dict is a *third* hand-kept
   list after `_COLUMNS` and `PLOT_METRICS`, and had already drifted — `Qw_mlhr`,

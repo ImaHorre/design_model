@@ -34,6 +34,7 @@ Entry point (pyproject.toml):
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -377,6 +378,34 @@ def _cmd_design(args: argparse.Namespace) -> int:
             print(f"  Top candidate   : Mcd={top['Mcd_um']:.0f}µm  Mcw={top['Mcw_um']:.0f}µm  "
                   f"Nmc={top['Nmc_derived']}  Q_total={top['Q_total_mlhr']:.2f} mL/hr  "
                   f"Po={top['Po_required_mbar']:.1f} mbar")
+        # Why the rest failed.  `stepgen simulate` has printed this since v1
+        # (see _print_hard_constraints); `design` did not, so a search where
+        # every candidate failed printed "Hard-pass: 0" and stopped, leaving
+        # the user with a blank table and nothing to act on.
+        if n_pass < len(df) and "hard_constraint_failures" in df.columns:
+            counts: dict[str, int] = {}
+            for blob in df.loc[~df["passes_hard"], "hard_constraint_failures"]:
+                for reason in str(blob or "").split(";"):
+                    reason = reason.strip()
+                    if reason:
+                        # Strip the parenthesised values so reasons tally
+                        # instead of printing one unique line per candidate.
+                        # Drop the bracket CONTENTS, not everything after the
+                        # first bracket — "mcd (3.5µm) < min_feature_width_um
+                        # (5.0)" truncates to a bare "mcd", which names no
+                        # constraint and is not actionable.
+                        key = re.sub(r"\s*(\([^)]*\)|\[[^\]]*\])", "", reason)
+                        # Cut the explanatory tail at the em-dash.  These
+                        # messages are "<constraint breached> — <what it
+                        # means>", and the tail carries per-candidate numbers
+                        # that are not all parenthesised, so leaving it in
+                        # yields one tally line per candidate.
+                        key = key.split("—")[0].strip() or reason
+                        counts[key] = counts.get(key, 0) + 1
+            if counts:
+                print(f"  Hard-fail       : {len(df) - n_pass}, by reason:")
+                for key, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+                    print(f"      {n:5d}  {key}")
 
     out = args.out
     save_results(df, out)

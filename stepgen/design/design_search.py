@@ -192,6 +192,115 @@ def _build_device_config(
 # Constraint checks
 # ---------------------------------------------------------------------------
 
+def _geometry_failure_reasons(
+    hc,                      # DesignHardConstraints
+    Mcd_m: float,
+    Mcw_m: float,
+    mcd_m: float,
+    mcw_m: float,
+    collapse_index: float,
+    ar: float,
+) -> list[str]:
+    """
+    Return one human-readable reason per violated *geometry* hard constraint.
+
+    This is the pre-solve screen: everything checkable from the candidate's
+    dimensions alone, before a config is built.  The caller derives
+    ``passes_hard_geom`` from ``not _geometry_failure_reasons(...)`` rather than
+    keeping a parallel boolean — this used to be a single collapsed ``and`` of
+    six conditions with nothing recorded, so a rejected candidate reached the
+    CSV as ``passes_hard=False`` and no reason at all.
+
+    Messages name the *config field*, in the units the YAML is written in, so a
+    reader can go straight to the key that has to change.
+
+    Note for whoever generalises this: :class:`~stepgen.config.DesignHardConstraints`
+    and :class:`~stepgen.config.ManufacturingConfig` carry the **same three
+    limits** (max main depth, max main width, min feature width) on the same
+    ``DesignSearchSpec``, checked here and again in
+    :func:`stepgen.design.sweep._check_hard_constraints`.  They agree today only
+    because nothing sets one without the other.  Deliberately left alone — it is
+    a config-schema change, not a reason-column one.
+    """
+    fails: list[str] = []
+    if Mcd_m > hc.max_main_depth_um * 1e-6:
+        fails.append(
+            f"Mcd ({Mcd_m*1e6:.0f}µm) > max_main_depth_um ({hc.max_main_depth_um:.0f})"
+        )
+    if Mcw_m > hc.max_main_width_um * 1e-6:
+        fails.append(
+            f"Mcw ({Mcw_m*1e6:.0f}µm) > max_main_width_um ({hc.max_main_width_um:.0f})"
+        )
+    if mcd_m < hc.min_feature_width_um * 1e-6:
+        fails.append(
+            f"mcd ({mcd_m*1e6:.2f}µm, derived from the droplet target) "
+            f"< min_feature_width_um ({hc.min_feature_width_um:.2f})"
+        )
+    if mcw_m < hc.min_feature_width_um * 1e-6:
+        fails.append(
+            f"mcw ({mcw_m*1e6:.2f}µm) < min_feature_width_um ({hc.min_feature_width_um:.2f})"
+        )
+    if collapse_index > hc.max_collapse_index:
+        # Mcw/Mcd is a ratio of two values converted from µm, so an intended
+        # exact tie is not exact: Mcw = 2000 µm, Mcd = 200 µm gives
+        # 10.000000000000002, which fails `> 10.0`.  The comparison is
+        # unchanged here — tightening or loosening it changes which candidates
+        # pass and is a ruling, not a reason-column edit — but the message must
+        # not read "10.0 > 10.0" and leave the reader hunting a phantom.
+        tie = f"{collapse_index:.1f}" == f"{hc.max_collapse_index:.1f}"
+        fails.append(
+            f"collapse_index Mcw/Mcd ({collapse_index:.1f}) "
+            f"> max_collapse_index ({hc.max_collapse_index:.1f})"
+            + (
+                # No em-dash and no "; " inside this bracket: the first is
+                # where the reason tally cuts an explanatory tail, the second
+                # is the field separator.
+                f" [floating-point tie: {collapse_index!r} vs "
+                f"{float(hc.max_collapse_index)!r}, raise max_collapse_index "
+                f"if this ratio is meant to pass]"
+                if tie else ""
+            )
+        )
+    if ar < hc.min_junction_aspect_ratio:
+        fails.append(
+            f"junction_ar ({ar:.2f}) < min_junction_aspect_ratio "
+            f"({hc.min_junction_aspect_ratio:.2f})"
+        )
+    elif ar > hc.max_junction_aspect_ratio:
+        fails.append(
+            f"junction_ar ({ar:.2f}) > max_junction_aspect_ratio "
+            f"({hc.max_junction_aspect_ratio:.2f})"
+        )
+    return fails
+
+
+def _operating_failure_reasons(hc, Po_mbar: float, delam: float) -> list[str]:
+    """
+    Return one reason per violated *operating-point* hard constraint.
+
+    Separate from the geometry screen because these need a solve first: in
+    Mode B the drive pressure is derived, not swept, so ``Po_required_mbar``
+    breaching its ceiling is a statement about the candidate's oil demand rather
+    than about anything the user asked for.
+    """
+    fails: list[str] = []
+    if Po_mbar < hc.min_Po_in_mbar:
+        fails.append(
+            f"Po_required ({Po_mbar:.0f} mbar) < min_Po_in_mbar ({hc.min_Po_in_mbar:.0f})"
+        )
+    if Po_mbar > hc.max_Po_in_mbar:
+        fails.append(
+            f"Po_required ({Po_mbar:.0f} mbar) > max_Po_in_mbar ({hc.max_Po_in_mbar:.0f})"
+        )
+    if hc.max_delam_line_load_N_per_m is not None:
+        if delam > hc.max_delam_line_load_N_per_m:
+            fails.append(
+                f"delam_line_load ({delam:.2f} N/m) > max_delam_line_load_N_per_m "
+                f"({hc.max_delam_line_load_N_per_m:.2f})"
+            )
+    return fails
+
+
 def _check_soft_constraints(row: dict, soft) -> list[str]:
     """Return a list of soft-constraint violation labels (empty if all pass)."""
     flags: list[str] = []
@@ -266,45 +375,57 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
         junction_ar      = ar      # already the AR value being swept
 
         # ── Pre-filter: geometry hard constraints ───────────────────────────
+        # The boolean is DERIVED from the reasons, not kept beside them: a
+        # collapsed `and` of six conditions is what made a rejected candidate
+        # reach the CSV with no reason recorded anywhere.
         collapse_index = Mcw_m / max(Mcd_m, 1e-12)
-        passes_hard_geom = (
-            Mcd_m <= hc.max_main_depth_um * 1e-6
-            and Mcw_m <= hc.max_main_width_um * 1e-6
-            and mcd_m >= hc.min_feature_width_um * 1e-6
-            and mcw_m >= hc.min_feature_width_um * 1e-6
-            and collapse_index <= hc.max_collapse_index
-            and hc.min_junction_aspect_ratio <= ar <= hc.max_junction_aspect_ratio
+        geom_failures = _geometry_failure_reasons(
+            hc, Mcd_m, Mcw_m, mcd_m, mcw_m, collapse_index, ar
         )
+        passes_hard_geom = not geom_failures
 
         # ── Compute Mcl_max from footprint ──────────────────────────────────
         Mcl_max_m = _max_mcl_for_footprint(fp, Mcw_m, mcl_rung_m)
         Nmc_derived = int(math.floor(Mcl_max_m / max(pitch_m, 1e-12)))
 
         if Nmc_derived < 2:
-            # Footprint can't fit a usable device
-            if not passes_hard_geom:
-                row = {
-                    "Mcd_um": Mcd_um, "Mcw_um": Mcw_um,
-                    "Mcl_derived_mm": 0.0, "Nmc_derived": Nmc_derived,
-                    "junction_ar": ar,
-                    "mcd_derived_um": mcd_um, "pitch_derived_um": pitch_derived_um,
-                    "mcw_um": mcw_um, "mcl_rung_um": mcl_rung_um,
-                    "exit_width_um": exit_w_m * 1e6,
-                    "exit_depth_um": exit_d_m * 1e6,
-                    "Q_total_mlhr": float("nan"),
-                    "Q_oil_mlhr": float("nan"),
-                    "Q_water_mlhr": spec.design_targets.Qw_in_mlhr,
-                    "Q_spread_pct": float("nan"),
-                    "Po_required_mbar": float("nan"),
-                    "active_fraction": float("nan"),
-                    "D_pred_um": exit_d_m * 1e6,   # rough proxy
-                    "f_pred_mean_Hz": float("nan"),
-                    "collapse_index": collapse_index,
-                    "passes_hard": False,
-                    "soft_flags": "footprint_too_small",
-                    "error": "footprint_too_small",
-                }
-                rows.append(row)
+            # Footprint can't fit a usable device.
+            #
+            # This append used to be guarded by `if not passes_hard_geom`, so a
+            # candidate whose geometry was FINE and which merely did not fit was
+            # dropped from the output entirely — no row, no reason, no trace.
+            # That is the same defect as a missing reason column, in its extreme
+            # form, so it is fixed here: every candidate the search considers now
+            # appears in the frame with a verdict.
+            fails = [
+                f"footprint fits only {Nmc_derived} DFUs (need >= 2) — "
+                f"Mcl_max {Mcl_max_m*1e3:.1f} mm at pitch {pitch_derived_um:.1f} µm"
+            ] + geom_failures
+            row = {
+                "Mcd_um": Mcd_um, "Mcw_um": Mcw_um,
+                "Mcl_derived_mm": 0.0, "Nmc_derived": Nmc_derived,
+                "junction_ar": ar,
+                "mcd_derived_um": mcd_um, "pitch_derived_um": pitch_derived_um,
+                "mcw_um": mcw_um, "mcl_rung_um": mcl_rung_um,
+                "exit_width_um": exit_w_m * 1e6,
+                "exit_depth_um": exit_d_m * 1e6,
+                "Q_total_mlhr": float("nan"),
+                "Q_oil_mlhr": float("nan"),
+                "Q_water_mlhr": spec.design_targets.Qw_in_mlhr,
+                "Q_spread_pct": float("nan"),
+                "Po_required_mbar": float("nan"),
+                "active_fraction": float("nan"),
+                "reverse_fraction": float("nan"),
+                "off_fraction": float("nan"),
+                "D_pred_um": exit_d_m * 1e6,   # rough proxy
+                "f_pred_mean_Hz": float("nan"),
+                "collapse_index": collapse_index,
+                "passes_hard": False,
+                "hard_constraint_failures": "; ".join(fails),
+                "soft_flags": "footprint_too_small",
+                "error": "footprint_too_small",
+            }
+            rows.append(row)
             continue
 
         Mcl_derived_m = Mcl_max_m   # use the maximum available Mcl
@@ -339,9 +460,14 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
                 "Q_total_mlhr": nan, "Q_oil_mlhr": nan,
                 "Q_water_mlhr": spec.design_targets.Qw_in_mlhr,
                 "Q_spread_pct": nan, "Po_required_mbar": nan,
-                "active_fraction": nan, "D_pred_um": nan,
+                "active_fraction": nan,
+                "reverse_fraction": nan, "off_fraction": nan,
+                "D_pred_um": nan,
                 "f_pred_mean_Hz": nan, "collapse_index": collapse_index,
                 "passes_hard": False,
+                "hard_constraint_failures": "; ".join(
+                    [f"solver error: {exc}"] + geom_failures
+                ),
                 "soft_flags": "solver_error",
                 "error": str(exc),
             }
@@ -351,21 +477,26 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
         # ── Soft constraints ────────────────────────────────────────────────
         soft_flags = _check_soft_constraints(eval_row, soft)
 
-        # passes_hard from evaluate_candidate + collapse_index check + pressure/delam limits
+        # ── Hard constraints: FOUR sources, one reason list ──────────────────
+        # `passes_hard` is a conjunction of four independent screens, and until
+        # 2026-08-06 only one of them (`evaluate_candidate`'s) had a reason
+        # string in existence anywhere — and the search dropped even that.  So a
+        # search over an oil-starved geometry returned `passes_hard: False` on
+        # every row and the CSV said nothing about why.  All four now write into
+        # one list, and the verdict is derived from it.
         Po_mbar = eval_row.get("Po_in_mbar", 0.0) or 0.0
-        passes_Po = hc.min_Po_in_mbar <= Po_mbar <= hc.max_Po_in_mbar
+        delam   = eval_row.get("delam_line_load", 0.0) or 0.0
 
-        passes_delam = True
-        if hc.max_delam_line_load_N_per_m is not None:
-            delam = eval_row.get("delam_line_load", 0.0) or 0.0
-            passes_delam = delam <= hc.max_delam_line_load_N_per_m
+        hard_failures = list(geom_failures)
+        hard_failures += _operating_failure_reasons(hc, Po_mbar, delam)
 
-        passes_hard = (
-            bool(eval_row.get("passes_hard_constraints", False))
-            and passes_hard_geom
-            and passes_Po
-            and passes_delam
-        )
+        # `evaluate_candidate` already joined its own (fab caps, footprint fit
+        # and — since `1cdcb0b` — reverse flow) with "; ".  Carried verbatim.
+        solved_failures = eval_row.get("hard_constraint_failures", "") or ""
+        if solved_failures:
+            hard_failures.append(solved_failures)
+
+        passes_hard = not hard_failures
 
         Q_water = spec.design_targets.Qw_in_mlhr
         Q_oil   = eval_row.get("Q_oil_total", float("nan"))
@@ -393,12 +524,18 @@ def run_design_search(spec: "DesignSearchSpec") -> pd.DataFrame:
             "Q_spread_pct":    eval_row.get("Q_spread_pct", float("nan")),
             "Po_required_mbar": eval_row.get("Po_in_mbar", float("nan")),
             "active_fraction":  eval_row.get("active_fraction", float("nan")),
+            # Carried because the reverse-flow guard is what now fails these
+            # rows, and the fraction that caused the failure was the one number
+            # the search dropped while keeping `active_fraction`.
+            "reverse_fraction": eval_row.get("reverse_fraction", float("nan")),
+            "off_fraction":     eval_row.get("off_fraction", float("nan")),
             "D_pred_um":        eval_row.get("D_pred", float("nan")) * 1e6
                                 if "D_pred" in eval_row and not math.isnan(eval_row.get("D_pred", float("nan")))
                                 else float("nan"),
             "f_pred_mean_Hz":   eval_row.get("f_pred_mean", float("nan")),
             "collapse_index":   collapse_index,
             "passes_hard":      passes_hard,
+            "hard_constraint_failures": "; ".join(hard_failures),
             "soft_flags":       ";".join(soft_flags) if soft_flags else "",
             "error":            None,
         }

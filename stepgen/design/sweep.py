@@ -92,9 +92,15 @@ def _check_hard_constraints(
         failures.append("footprint too large for chip")
     if metrics is not None and metrics.reverse_fraction > REVERSE_FRACTION_MAX:
         failures.append(
+            # No "; " inside this string.  The caller joins failures with
+            # "; ", so a semicolon here makes the field separator ambiguous —
+            # anything splitting the joined blob back apart (the reason tally
+            # in `stepgen design`) tears this message in half and reports the
+            # tail, which carries a per-candidate percentage, as if it were a
+            # distinct constraint.
             f"reverse_fraction ({metrics.reverse_fraction*100:.1f}%) > "
             f"max ({REVERSE_FRACTION_MAX*100:.0f}%) — continuous phase is entering "
-            f"the dispersed main; device-level metrics are computed over the "
+            f"the dispersed main, and device-level metrics are computed over the "
             f"{metrics.active_fraction*100:.1f}% of rungs still active"
         )
     return failures
@@ -110,8 +116,31 @@ def _mode_b_derive_po(
     prescribed oil and water flows.
 
     Returns Po_in_mbar (derived).  The iterative solve is then run with
-    this pressure, so the actual Q_oil will be ~10-15 % below the requested
-    value due to capillary thresholds — this is physical, not a bug.
+    this pressure, so the actual Q_oil comes out below the requested value
+    because of capillary thresholds.
+
+    **The derived pressure is a systematic LOWER BOUND, and on a starved
+    geometry it is not a small one.**  The linear solve has no capillary
+    thresholds, so every rung conducts; in the real model the sub-threshold
+    rungs do not.  A ladder in which every rung conducts needs *less* pressure
+    to move a given total than the device does, and the error grows with how
+    many rungs sit near threshold.
+
+    This docstring used to read "~10-15 % below the requested value — this is
+    physical, not a bug."  That holds for a healthy ladder and is false in the
+    starved limit, where the shortfall is not 15 % but a **sign change**:
+    measured on the design-search default spec (10 cm², 500 × 100 µm main,
+    13 326 rungs, Qo = 1.0 mL/hr) the oracle answers 65 mbar, at which 46 % of
+    the rungs run backwards and net ``Q_oil_total`` is negative — the device
+    consumes oil.  Read as pre-authorisation, the old sentence is how that
+    reached a passing verdict.
+
+    Correcting the oracle — root-find Po against the real ``iterative_solve``
+    with this value as the lower bracket — is section F2 of
+    ``.claude/plans/design-studio-filter-first-front-door.md`` and needs a
+    ruling first: it costs ~8 solves per candidate and it degenerates the
+    search's ``max_throughput`` objective, since in Mode B every converged
+    candidate then delivers the same prescribed Qo.
     """
     from stepgen.config import mlhr_to_m3s
     from stepgen.models.hydraulics import solve_linear
